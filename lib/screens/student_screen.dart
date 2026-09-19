@@ -1,0 +1,466 @@
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import '../utils/list_sorting.dart';
+
+class StudentsScreen extends StatefulWidget {
+  final String batchId;
+  final String batchName;
+
+  const StudentsScreen({
+    super.key,
+    required this.batchId,
+    required this.batchName,
+  });
+
+  @override
+  State<StudentsScreen> createState() => _StudentsScreenState();
+}
+
+class _StudentsScreenState extends State<StudentsScreen> {
+  final supabase = Supabase.instance.client;
+  List<dynamic> students = [];
+  bool isLoading = true;
+
+  Map<String, String?> attendanceStatus =
+      {}; // student_id -> 'present' / 'absent' / null
+  Set<String> lockedStudents = {}; // Jin ki attendance already lag chuki hai
+
+  final String todayDate = DateTime.now().toIso8601String().split('T')[0];
+
+  @override
+  void initState() {
+    super.initState();
+    fetchStudentsAndAttendance();
+  }
+
+  Future<void> fetchStudentsAndAttendance() async {
+    try {
+      // 1. Fetch Students
+      final studentsResponse = await supabase
+          .from('students')
+          .select()
+          .eq('batch_id', widget.batchId)
+          .order('name', ascending: true);
+
+      // 2. Fetch Today's Attendance for this Batch (Agar kisi aur teacher ne lagai ho)
+      final attendanceResponse = await supabase
+          .from('attendance')
+          .select('student_id, status')
+          .eq('batch_id', widget.batchId)
+          .eq('date', todayDate);
+
+      setState(() {
+        students = sortStudents(studentsResponse);
+
+        // Sab ko pehle unmarked (null) set karo
+        for (var student in students) {
+          attendanceStatus[student['id']] = null;
+        }
+
+        // Jin ki attendance mil gai, unhe lock karo aur unka status update karo
+        for (var record in attendanceResponse) {
+          final sId = record['student_id'];
+          attendanceStatus[sId] = record['status'];
+          lockedStudents.add(sId);
+        }
+
+        isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Error fetching data: $e');
+      setState(() => isLoading = false);
+    }
+  }
+
+  void markAll(String status) {
+    setState(() {
+      for (var student in students) {
+        // Sirf unhein mark karo jo locked nahi hain
+        if (!lockedStudents.contains(student['id'])) {
+          attendanceStatus[student['id']] = status;
+        }
+      }
+    });
+  }
+
+  void _showAddStudentDialog() {
+    final nameController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Add New Student'),
+          content: TextField(
+            controller: nameController,
+            decoration: const InputDecoration(labelText: 'Student Name'),
+            textCapitalization: TextCapitalization.words,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final name = nameController.text.trim();
+                if (name.isEmpty) return;
+
+                Navigator.pop(dialogContext);
+                setState(() => isLoading = true);
+
+                try {
+                  final newStudent = await supabase
+                      .from('students')
+                      .insert({'name': name, 'batch_id': widget.batchId})
+                      .select()
+                      .single();
+
+                  await supabase.from('attendance').insert({
+                    'student_id': newStudent['id'],
+                    'batch_id': widget.batchId,
+                    'date': todayDate,
+                    'status': 'present',
+                  });
+
+                  if (!mounted) return;
+
+                  setState(() {
+                    students.add(newStudent);
+                    students = sortStudents(students);
+                    attendanceStatus[newStudent['id']] = 'present';
+                    lockedStudents.add(newStudent['id']);
+                    isLoading = false;
+                  });
+
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Student added and marked Present for today! ✅',
+                        ),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  debugPrint('Error adding student: $e');
+                  if (mounted) {
+                    setState(() => isLoading = false);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Failed to add student.'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              },
+              child: const Text('Save & Mark P'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<bool> _confirmSubmitAttendance() async {
+    final presentCount = attendanceStatus.values
+        .where((status) => status == 'present')
+        .length;
+
+    return await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Confirm Attendance'),
+            content: Text(
+              'Total Present Students: $presentCount\n\n'
+              'Aik baar count karlo ke bachay poore hain kya? '
+              'Kya attendance submit karni hai?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Submit'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('${widget.batchName} Attendance'),
+        actions: [
+          IconButton(
+            onPressed: _showAddStudentDialog,
+            tooltip: 'Add student',
+            icon: const Icon(Icons.person_add),
+          ),
+        ],
+      ),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : students.isEmpty
+          ? const Center(child: Text('No students found for this batch.'))
+          : Column(
+              children: [
+                // Header Row for Mark All
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  color: Colors.grey.shade100,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: () => markAll('present'),
+                        icon: const Icon(Icons.check, size: 18),
+                        label: const Text('All P'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton.icon(
+                        onPressed: () => markAll('absent'),
+                        icon: const Icon(Icons.close, size: 18),
+                        label: const Text('All A'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: students.length,
+                    itemBuilder: (context, index) {
+                      final student = students[index];
+                      final studentId = student['id'];
+                      final currentStatus = attendanceStatus[studentId];
+                      final isLocked = lockedStudents.contains(studentId);
+
+                      return Card(
+                        margin: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        elevation: currentStatus == null ? 0 : 1,
+                        color: currentStatus == null
+                            ? Colors.white
+                            : Colors.grey.shade50,
+                        shape: RoundedRectangleBorder(
+                          side: BorderSide(
+                            color: Colors.grey.shade300,
+                            width: 1,
+                          ),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: ListTile(
+                          leading: isLocked
+                              ? const Icon(
+                                  Icons.lock,
+                                  color: Colors.grey,
+                                  size: 20,
+                                )
+                              : null,
+                          title: Text(
+                            student['name'],
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: currentStatus == null
+                                  ? Colors.black54
+                                  : (isLocked ? Colors.grey : Colors.black),
+                              decoration: isLocked
+                                  ? TextDecoration.lineThrough
+                                  : null, // Locked bacho pe line aa jayegi
+                            ),
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // Present Button
+                              InkWell(
+                                onTap: isLocked
+                                    ? null
+                                    : () {
+                                        setState(() {
+                                          attendanceStatus[studentId] =
+                                              'present';
+                                        });
+                                      },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: currentStatus == 'present'
+                                        ? (isLocked
+                                              ? Colors.green.withOpacity(0.5)
+                                              : Colors.green)
+                                        : Colors.grey.shade200,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    'P',
+                                    style: TextStyle(
+                                      color: currentStatus == 'present'
+                                          ? Colors.white
+                                          : Colors.black54,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              // Absent Button
+                              InkWell(
+                                onTap: isLocked
+                                    ? null
+                                    : () {
+                                        setState(() {
+                                          attendanceStatus[studentId] =
+                                              'absent';
+                                        });
+                                      },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: currentStatus == 'absent'
+                                        ? (isLocked
+                                              ? Colors.red.withOpacity(0.5)
+                                              : Colors.red)
+                                        : Colors.grey.shade200,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    'A',
+                                    style: TextStyle(
+                                      color: currentStatus == 'absent'
+                                          ? Colors.white
+                                          : Colors.black54,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                // Submit Button
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.all(16),
+                    ),
+                    onPressed: () async {
+                      final shouldSubmit = await _confirmSubmitAttendance();
+                      if (!shouldSubmit || !mounted) return;
+
+                      // Filter out students that are either locked or not marked yet
+                      List<Map<String, dynamic>> newAttendanceData = [];
+
+                      attendanceStatus.forEach((studentId, status) {
+                        if (status != null &&
+                            !lockedStudents.contains(studentId)) {
+                          newAttendanceData.add({
+                            'student_id': studentId,
+                            'batch_id': widget.batchId,
+                            'date': todayDate,
+                            'status': status,
+                          });
+                        }
+                      });
+
+                      if (newAttendanceData.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Koi nayi attendance mark nahi ki gayi.',
+                            ),
+                            backgroundColor: Colors.orange,
+                          ),
+                        );
+                        return;
+                      }
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Saving attendance...')),
+                      );
+
+                      final offlineBox = Hive.box('offline_attendance');
+                      final String localKey = '${widget.batchId}_$todayDate';
+
+                      // Hive mein save (is code ko aage auto-sync ke sath refine karenge)
+                      await offlineBox.put(localKey, newAttendanceData);
+
+                      try {
+                        await supabase
+                            .from('attendance')
+                            .upsert(
+                              newAttendanceData,
+                              onConflict: 'student_id, date',
+                            );
+                        await offlineBox.delete(
+                          localKey,
+                        ); // Cloud pe push ho gaya tou local se uda do
+
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Attendance synced! ✅'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                          Navigator.pop(context);
+                        }
+                      } catch (e) {
+                        debugPrint('Supabase push failed: $e');
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Saved offline. 💾'),
+                              backgroundColor: Colors.blueGrey,
+                            ),
+                          );
+                          Navigator.pop(context);
+                        }
+                      }
+                    },
+                    child: const Text(
+                      'Submit Attendance',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+}

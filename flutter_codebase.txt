@@ -1,0 +1,2330 @@
+================================================================================
+FLUTTER PROJECT CODEBASE
+Project Root: D:\academy_portal
+Total Dart Files: 12
+================================================================================
+
+lib/main.dart:
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'app_theme.dart';
+import 'constants.dart';
+import 'screens/splash_screen.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Hive.initFlutter();
+  await Hive.openBox('offline_attendance');
+  await Hive.openBox('settings'); // Auth session save rakhne ke liye
+
+  await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
+
+  runApp(const AcademyAttendanceApp());
+}
+
+class AcademyAttendanceApp extends StatelessWidget {
+  const AcademyAttendanceApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'FG Academy Portal',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.officialTheme,
+      home: const SplashScreen(),
+    );
+  }
+}
+
+
+lib/app_theme.dart:
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+class AppTheme {
+  // FG School typical colors
+  static const Color fgNavyBlue = Color(0xFF0B2B5E);
+  static const Color fgGold = Color(0xFFD4AF37);
+  static const Color backgroundLight = Color(0xFFF5F7FA);
+
+  static ThemeData get officialTheme {
+    return ThemeData(
+      useMaterial3: true,
+      scaffoldBackgroundColor: backgroundLight,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: fgNavyBlue,
+        primary: fgNavyBlue,
+        secondary: fgGold,
+      ),
+      // Poppins font gives a very modern, structured look
+      textTheme: GoogleFonts.poppinsTextTheme(),
+      appBarTheme: AppBarTheme(
+        backgroundColor: fgNavyBlue,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        centerTitle: true,
+        titleTextStyle: GoogleFonts.poppins(
+          fontSize: 20,
+          fontWeight: FontWeight.w600,
+          color: Colors.white,
+        ),
+      ),
+      cardTheme: CardThemeData(
+        color: Colors.white,
+        elevation: 2,
+        shadowColor: Colors.black.withOpacity(0.1),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: fgNavyBlue,
+          foregroundColor: Colors.white,
+          elevation: 2,
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 24),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          textStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: Colors.white,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 16,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(color: Colors.grey.shade300),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(color: Colors.grey.shade300),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: fgNavyBlue, width: 2),
+        ),
+      ),
+    );
+  }
+}
+
+
+lib/constants.dart:
+const String supabaseUrl = 'https://acwpurtriixeweteipjl.supabase.co';
+const String supabaseAnonKey = 'sb_publishable_xSUf6MaL26tLNLo3cGHriA_bWfHhXhb';
+
+
+lib/screens/admin/admin_attendance_tab.dart:
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../utils/list_sorting.dart';
+
+class AdminAttendanceTab extends StatefulWidget {
+  const AdminAttendanceTab({super.key});
+
+  @override
+  State<AdminAttendanceTab> createState() => _AdminAttendanceTabState();
+}
+
+class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
+  final supabase = Supabase.instance.client;
+  List<dynamic> batches = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    fetchBatches();
+  }
+
+  Future<void> fetchBatches() async {
+    try {
+      final response = await supabase.from('batches').select().order('name');
+      setState(() {
+        batches = sortBatches(response);
+        isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Error: $e');
+      setState(() => isLoading = false);
+    }
+  }
+
+  void _openAttendance(BuildContext context, String batchId, String batchName) {
+    // Default initial date aaj ki set kardi
+    final String today = DateTime.now().toIso8601String().split('T')[0];
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EditAttendanceScreen(
+          batchId: batchId,
+          batchName: batchName,
+          initialDate: today,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) return const Center(child: CircularProgressIndicator());
+    if (batches.isEmpty) return const Center(child: Text('No batches found.'));
+
+    return Container(
+      decoration: BoxDecoration(
+        image: DecorationImage(
+          image: const AssetImage('assets/images/school_bg.png'),
+          fit: BoxFit.cover,
+          colorFilter: ColorFilter.mode(
+            Colors.black.withOpacity(0.05),
+            BlendMode.dstATop,
+          ),
+        ),
+      ),
+      child: ListView.builder(
+        itemCount: batches.length,
+        itemBuilder: (context, index) {
+          final batch = batches[index];
+          return Card(
+            margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            child: ListTile(
+              leading: const Icon(Icons.fact_check, color: Colors.teal),
+              title: Text(
+                batch['name'],
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              subtitle: const Text('Tap to view and edit attendance'),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: () => _openAttendance(context, batch['id'], batch['name']),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// Sub-Screen: Attendance Viewer & Editor with Date Navigator
+// Sub-Screen: Attendance Viewer & Editor with Date Navigator & Safe Save
+class EditAttendanceScreen extends StatefulWidget {
+  final String batchId;
+  final String batchName;
+  final String initialDate;
+
+  const EditAttendanceScreen({
+    super.key,
+    required this.batchId,
+    required this.batchName,
+    required this.initialDate,
+  });
+
+  @override
+  State<EditAttendanceScreen> createState() => _EditAttendanceScreenState();
+}
+
+class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
+  final supabase = Supabase.instance.client;
+  List<dynamic> students = [];
+  Map<String, String> attendanceData = {};
+  Set<String> modifiedStudents =
+      {}; // Track karega kis bache ka data change hua
+  bool isLoading = true;
+  late DateTime currentDate;
+
+  @override
+  void initState() {
+    super.initState();
+    currentDate = DateTime.parse(widget.initialDate);
+    fetchStudentsAndAttendance();
+  }
+
+  Future<void> fetchStudentsAndAttendance() async {
+    final String dateString = currentDate.toIso8601String().split('T')[0];
+
+    try {
+      final studentsRes = await supabase
+          .from('students')
+          .select()
+          .eq('batch_id', widget.batchId)
+          .order('name');
+      final attendanceRes = await supabase
+          .from('attendance')
+          .select('student_id, status')
+          .eq('batch_id', widget.batchId)
+          .eq('date', dateString);
+
+      attendanceData.clear();
+      modifiedStudents.clear(); // Nayi date par reset kar do
+
+      for (var record in attendanceRes) {
+        attendanceData[record['student_id']] = record['status'];
+      }
+
+      setState(() {
+        students = sortStudents(studentsRes);
+        isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Error: $e');
+      setState(() => isLoading = false);
+    }
+  }
+
+  void _updateLocalStatus(String studentId, String newStatus) {
+    setState(() {
+      attendanceData[studentId] = newStatus;
+      modifiedStudents.add(studentId); // Mark as modified
+    });
+  }
+
+  Future<void> _saveChangesToSupabase() async {
+    if (modifiedStudents.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Koi change nahi kiya gaya.')),
+      );
+      return;
+    }
+
+    setState(() => isLoading = true);
+    final String dateString = currentDate.toIso8601String().split('T')[0];
+    List<Map<String, dynamic>> updates = [];
+
+    // Sirf unko update karo jin me change aya ha
+    for (String sId in modifiedStudents) {
+      updates.add({
+        'student_id': sId,
+        'batch_id': widget.batchId,
+        'date': dateString,
+        'status': attendanceData[sId],
+      });
+    }
+
+    try {
+      await supabase
+          .from('attendance')
+          .upsert(updates, onConflict: 'student_id, date');
+      setState(() {
+        modifiedStudents.clear(); // Save hone k baad clear kar do
+        isLoading = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Attendance updated successfully! ✅',
+              style: TextStyle(color: Colors.white),
+            ),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Update failed: $e');
+      setState(() => isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Error saving attendance!',
+              style: TextStyle(color: Colors.white),
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _changeDate(int days) {
+    if (modifiedStudents.isNotEmpty) {
+      // Agar unsaved changes hain to warn karo
+      _showUnsavedWarningDialog(() {
+        setState(() {
+          currentDate = currentDate.add(Duration(days: days));
+          isLoading = true;
+        });
+        fetchStudentsAndAttendance();
+      });
+      return;
+    }
+
+    setState(() {
+      currentDate = currentDate.add(Duration(days: days));
+      isLoading = true;
+    });
+    fetchStudentsAndAttendance();
+  }
+
+  void _pickDate() async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: currentDate,
+      firstDate: DateTime(2026, 8, 1),
+      lastDate: DateTime.now(),
+    );
+
+    if (picked != null) {
+      if (modifiedStudents.isNotEmpty) {
+        _showUnsavedWarningDialog(() {
+          setState(() {
+            currentDate = picked;
+            isLoading = true;
+          });
+          fetchStudentsAndAttendance();
+        });
+        return;
+      }
+
+      setState(() {
+        currentDate = picked;
+        isLoading = true;
+      });
+      fetchStudentsAndAttendance();
+    }
+  }
+
+  void _showUnsavedWarningDialog(VoidCallback onConfirm) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Unsaved Changes'),
+        content: const Text(
+          'Tumne kuch attendance change ki ha par save nahi ki. Date change karne se changes zaya ho jayengi. Proceed?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              Navigator.pop(context);
+              onConfirm();
+            },
+            child: const Text('Discard & Proceed'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final String dateString = currentDate.toIso8601String().split('T')[0];
+    final bool canGoForward = currentDate.isBefore(
+      DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day),
+    );
+
+    return PopScope(
+      canPop: modifiedStudents.isEmpty,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && modifiedStudents.isNotEmpty) {
+          _showUnsavedWarningDialog(() => Navigator.pop(context));
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(widget.batchName),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.calendar_month),
+              onPressed: _pickDate,
+            ),
+          ],
+        ),
+        body: Column(
+          children: [
+            // Date Navigator Bar
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              color: Colors.teal.shade50,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.chevron_left, size: 30),
+                    onPressed: () => _changeDate(-1),
+                  ),
+                  const SizedBox(width: 20),
+                  Text(
+                    dateString,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.teal,
+                    ),
+                  ),
+                  const SizedBox(width: 20),
+                  IconButton(
+                    icon: const Icon(Icons.chevron_right, size: 30),
+                    onPressed: canGoForward ? () => _changeDate(1) : null,
+                    color: canGoForward ? Colors.black : Colors.grey,
+                  ),
+                ],
+              ),
+            ),
+            // Students List
+            Expanded(
+              child: isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : ListView.builder(
+                      itemCount: students.length,
+                      itemBuilder: (context, index) {
+                        final student = students[index];
+                        final sId = student['id'];
+                        final status = attendanceData[sId] ?? 'unmarked';
+
+                        return ListTile(
+                          title: Text(student['name']),
+                          trailing: SegmentedButton<String>(
+                            segments: const [
+                              ButtonSegment(value: 'present', label: Text('P')),
+                              ButtonSegment(value: 'absent', label: Text('A')),
+                            ],
+                            selected: {
+                              status == 'unmarked' ? 'absent' : status,
+                            },
+                            onSelectionChanged: (Set<String> newSelection) {
+                              _updateLocalStatus(sId, newSelection.first);
+                            },
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+        // Save Button (Sirf tab show hoga jab koi change aya ho)
+        floatingActionButton: modifiedStudents.isNotEmpty
+            ? FloatingActionButton.extended(
+                onPressed: _saveChangesToSupabase,
+                icon: const Icon(Icons.save),
+                label: const Text('Save Changes'),
+              )
+            : null,
+      ),
+    );
+  }
+}
+
+
+lib/screens/admin/batches_tab.dart:
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../utils/list_sorting.dart';
+
+class BatchesTab extends StatefulWidget {
+  const BatchesTab({super.key});
+
+  @override
+  State<BatchesTab> createState() => _BatchesTabState();
+}
+
+class _BatchesTabState extends State<BatchesTab> {
+  final supabase = Supabase.instance.client;
+  List<dynamic> batches = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    fetchBatches();
+  }
+
+  Future<void> fetchBatches() async {
+    try {
+      final response = await supabase.from('batches').select().order('name');
+      setState(() {
+        batches = sortBatches(response);
+        isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Error fetching batches: $e');
+      setState(() => isLoading = false);
+    }
+  }
+
+  void _showBatchFormDialog({Map<String, dynamic>? batch}) {
+    final isEditing = batch != null;
+    final nameController = TextEditingController(
+      text: isEditing ? batch['name'] : '',
+    );
+    final whatsappController = TextEditingController(
+      text: isEditing ? batch['whatsapp_group_id'] ?? '' : '',
+    );
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(isEditing ? 'Edit Batch' : 'Add New Batch'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(labelText: 'Batch Name'),
+              ),
+              const SizedBox(height: 15),
+              TextField(
+                controller: whatsappController,
+                decoration: const InputDecoration(
+                  labelText: 'WhatsApp Group ID',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final name = nameController.text.trim();
+                final wId = whatsappController.text.trim();
+                if (name.isEmpty) return;
+
+                Navigator.pop(context);
+                setState(() => isLoading = true);
+
+                try {
+                  if (isEditing) {
+                    await supabase
+                        .from('batches')
+                        .update({
+                          'name': name,
+                          'whatsapp_group_id': wId.isEmpty ? null : wId,
+                        })
+                        .eq('id', batch['id']);
+                  } else {
+                    await supabase.from('batches').insert({
+                      'name': name,
+                      'whatsapp_group_id': wId.isEmpty ? null : wId,
+                    });
+                  }
+                  fetchBatches();
+                } catch (e) {
+                  debugPrint('Error saving batch: $e');
+                  setState(() => isLoading = false);
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _deleteBatch(String id, String name) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Batch?'),
+        content: Text(
+          'Kiya tum waqai "$name" ko delete karna chahte ho? Is se jure tamam students error generate kar sakte hain.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              Navigator.pop(context);
+              setState(() => isLoading = true);
+              try {
+                await supabase.from('batches').delete().eq('id', id);
+                fetchBatches();
+              } catch (e) {
+                debugPrint('Delete error: $e');
+                setState(() => isLoading = false);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Error: Pehle is batch k students ko remove karo!',
+                      ),
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) return const Center(child: CircularProgressIndicator());
+
+    return Scaffold(
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _showBatchFormDialog(),
+        child: const Icon(Icons.add),
+      ),
+      body: Container(
+        decoration: BoxDecoration(
+          image: DecorationImage(
+            image: const AssetImage('assets/images/school_bg.png'),
+            fit: BoxFit.cover,
+            colorFilter: ColorFilter.mode(
+              Colors.black.withOpacity(0.05),
+              BlendMode.dstATop,
+            ),
+          ),
+        ),
+        child: batches.isEmpty
+            ? const Center(child: Text('No batches found in Supabase.'))
+            : SingleChildScrollView(
+                scrollDirection: Axis.vertical,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: DataTable(
+                    columns: const [
+                      DataColumn(label: Text('Batch Name')),
+                      DataColumn(label: Text('WhatsApp ID')),
+                      DataColumn(label: Text('Actions')),
+                    ],
+                    rows: batches.map((b) {
+                      return DataRow(
+                        cells: [
+                          DataCell(Text(b['name'] ?? '')),
+                          DataCell(Text(b['whatsapp_group_id'] ?? 'Not Set')),
+                          DataCell(
+                            Row(
+                              children: [
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.edit,
+                                    color: Colors.blue,
+                                  ),
+                                  onPressed: () =>
+                                      _showBatchFormDialog(batch: b),
+                                ),
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.delete,
+                                    color: Colors.red,
+                                  ),
+                                  onPressed: () =>
+                                      _deleteBatch(b['id'], b['name']),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ),
+      ),
+    );
+  }
+}
+
+
+lib/screens/admin/students_tab.dart:
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../utils/list_sorting.dart';
+
+// 1. Main Tab: Shows list of Batches
+class StudentsTab extends StatefulWidget {
+  const StudentsTab({super.key});
+
+  @override
+  State<StudentsTab> createState() => _StudentsTabState();
+}
+
+class _StudentsTabState extends State<StudentsTab> {
+  final supabase = Supabase.instance.client;
+  List<dynamic> batches = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    fetchBatches();
+  }
+
+  Future<void> fetchBatches() async {
+    try {
+      final response = await supabase.from('batches').select().order('name');
+      setState(() {
+        batches = sortBatches(response);
+        isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Error fetching batches: $e');
+      setState(() => isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) return const Center(child: CircularProgressIndicator());
+    if (batches.isEmpty)
+      return const Center(child: Text('No batches found in Supabase.'));
+
+    return ListView.builder(
+      itemCount: batches.length,
+      itemBuilder: (context, index) {
+        final batch = batches[index];
+        return Card(
+          margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          child: ListTile(
+            title: Text(
+              batch['name'],
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => BatchStudentsScreen(
+                    batchId: batch['id'],
+                    batchName: batch['name'],
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+}
+
+// 2. Sub-Screen: Shows students of the selected Batch with full CRUD
+class BatchStudentsScreen extends StatefulWidget {
+  final String batchId;
+  final String batchName;
+
+  const BatchStudentsScreen({
+    super.key,
+    required this.batchId,
+    required this.batchName,
+  });
+
+  @override
+  State<BatchStudentsScreen> createState() => _BatchStudentsScreenState();
+}
+
+class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
+  final supabase = Supabase.instance.client;
+  List<dynamic> students = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    fetchStudents();
+  }
+
+  Future<void> fetchStudents() async {
+    try {
+      final response = await supabase
+          .from('students')
+          .select()
+          .eq('batch_id', widget.batchId)
+          .order('name');
+      setState(() {
+        students = sortStudents(response);
+        isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Error fetching students: $e');
+      setState(() => isLoading = false);
+    }
+  }
+
+  void _showStudentFormDialog({Map<String, dynamic>? student}) {
+    final isEditing = student != null;
+    final nameController = TextEditingController(
+      text: isEditing ? student['name'] : '',
+    );
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(isEditing ? 'Edit Student Name' : 'Add New Student'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(labelText: 'Student Name'),
+              ),
+              // Note: Subject Stream ka dropdown baad me yahan add hoga
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final name = nameController.text.trim();
+                if (name.isEmpty) return;
+
+                Navigator.pop(context); // Dialog band karo
+                setState(() => isLoading = true); // Spinner chalao
+
+                try {
+                  if (isEditing) {
+                    // Update Query
+                    await supabase
+                        .from('students')
+                        .update({'name': name})
+                        .eq('id', student['id']);
+                  } else {
+                    // Insert Query
+                    await supabase.from('students').insert({
+                      'name': name,
+                      'batch_id': widget.batchId,
+                    });
+                  }
+                  fetchStudents(); // Naya data load karo
+                } catch (e) {
+                  debugPrint('Error saving student: $e');
+                  setState(() => isLoading = false);
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _deleteStudent(String id, String name) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Delete Student?'),
+          content: Text(
+            'Kiya tum waqai "$name" ko delete karna chahte ho? Iski saari attendance history bhi hamesha ke liye delete ho jayegi.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () async {
+                Navigator.pop(context);
+                setState(() => isLoading = true);
+
+                try {
+                  // Foreign key constraint avoid karne ke liye pehle uski attendance delete karni paregi
+                  await supabase
+                      .from('attendance')
+                      .delete()
+                      .eq('student_id', id);
+                  // Phir student delete hoga
+                  await supabase.from('students').delete().eq('id', id);
+                  fetchStudents();
+                } catch (e) {
+                  debugPrint('Error deleting student: $e');
+                  setState(() => isLoading = false);
+                }
+              },
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('${widget.batchName} - Students')),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _showStudentFormDialog(),
+        child: const Icon(Icons.add),
+      ),
+      body: Container(
+        decoration: BoxDecoration(
+          image: DecorationImage(
+            image: const AssetImage('assets/images/school_bg.png'),
+            fit: BoxFit.cover,
+            colorFilter: ColorFilter.mode(
+              Colors.black.withOpacity(0.05),
+              BlendMode.dstATop,
+            ),
+          ),
+        ),
+        child: isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : students.isEmpty
+            ? const Center(child: Text('Is batch mein koi student nahi hai.'))
+            : LayoutBuilder(
+                builder: (context, constraints) {
+                  return SingleChildScrollView(
+                    scrollDirection: Axis.vertical,
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          minWidth: constraints.maxWidth,
+                        ),
+                        child: DataTable(
+                          columnSpacing: 24,
+                          columns: const [
+                            DataColumn(label: Text('Name')),
+                            DataColumn(numeric: true, label: Text('Actions')),
+                          ],
+                          rows: students.map((s) {
+                            return DataRow(
+                              cells: [
+                                DataCell(Text(s['name'])),
+                                DataCell(
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          icon: const Icon(
+                                            Icons.edit,
+                                            color: Colors.blue,
+                                          ),
+                                          onPressed: () =>
+                                              _showStudentFormDialog(
+                                                student: s,
+                                              ),
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(
+                                            Icons.delete,
+                                            color: Colors.red,
+                                          ),
+                                          onPressed: () => _deleteStudent(
+                                            s['id'],
+                                            s['name'],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+      ),
+    );
+  }
+}
+
+
+lib/screens/dashboard_screen.dart:
+import 'package:flutter/material.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'login_screen.dart';
+import 'teacher_batches_screen.dart';
+import 'admin/students_tab.dart';
+import 'admin/batches_tab.dart';
+import 'admin/admin_attendance_tab.dart';
+
+class DashboardScreen extends StatefulWidget {
+  final String userRole;
+  const DashboardScreen({super.key, required this.userRole});
+
+  @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  int _selectedIndex = 0;
+
+  // Real-time stats variables
+  int _totalStudents = 0;
+  int _totalBatches = 0;
+  int _todayPresent = 0;
+  int _todayAbsent = 0;
+  bool _isLoadingStats = true;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.userRole == 'admin') {
+      _fetchDashboardStats();
+    }
+  }
+
+  Future<void> _fetchDashboardStats() async {
+    final supabase = Supabase.instance.client;
+    final String today = DateTime.now().toIso8601String().split('T')[0];
+
+    try {
+      final students = await supabase.from('students').select('id');
+      final batches = await supabase.from('batches').select('id');
+
+      // Aaj ki overall attendance
+      final todayAttendance = await supabase
+          .from('attendance')
+          .select('status')
+          .eq('date', today);
+
+      int presentCount = 0;
+      int absentCount = 0;
+      for (var record in todayAttendance) {
+        if (record['status'] == 'present') presentCount++;
+        if (record['status'] == 'absent') absentCount++;
+      }
+
+      if (mounted) {
+        setState(() {
+          _totalStudents = students.length;
+          _totalBatches = batches.length;
+          _todayPresent = presentCount;
+          _todayAbsent = absentCount;
+          _isLoadingStats = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching stats: $e');
+      if (mounted) setState(() => _isLoadingStats = false);
+    }
+  }
+
+  void _logout(BuildContext context) {
+    Hive.box('settings').put('isLoggedIn', false);
+    Hive.box('settings').put('role', '');
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const LoginScreen()),
+    );
+  }
+
+  Widget _getAdminScreen(bool isDesktop) {
+    switch (_selectedIndex) {
+      case 0:
+        return _buildAdminView(context, isDesktop);
+      case 1:
+        return const StudentsTab();
+      case 2:
+        return const BatchesTab();
+      case 3:
+        return const AdminAttendanceTab();
+      default:
+        return _buildAdminView(context, isDesktop);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        bool isDesktop = constraints.maxWidth > 600;
+
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Academy Portal'),
+            actions: [
+              // Refresh button stats update karne k liye
+              if (widget.userRole == 'admin' && _selectedIndex == 0)
+                IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: () {
+                    setState(() => _isLoadingStats = true);
+                    _fetchDashboardStats();
+                  },
+                ),
+              IconButton(
+                icon: const Icon(Icons.logout),
+                onPressed: () => _logout(context),
+              ),
+            ],
+          ),
+          drawer: (!isDesktop && widget.userRole == 'admin')
+              ? Drawer(
+                  child: ListView(
+                    padding: EdgeInsets.zero,
+                    children: [
+                      DrawerHeader(
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        child: Text(
+                          'Admin Menu',
+                          style: TextStyle(color: Colors.white, fontSize: 24),
+                        ),
+                      ),
+                      _buildDrawerItem(Icons.dashboard, 'Dashboard', 0),
+                      _buildDrawerItem(Icons.people, 'Students', 1),
+                      _buildDrawerItem(Icons.class_, 'Batches', 2),
+                      _buildDrawerItem(Icons.fact_check, 'Attendance', 3),
+                    ],
+                  ),
+                )
+              : null,
+          body: Container(
+            decoration: BoxDecoration(
+              image: DecorationImage(
+                image: const AssetImage('assets/images/school_bg.png'),
+                fit: BoxFit.cover,
+                colorFilter: ColorFilter.mode(
+                  Colors.black.withOpacity(0.05),
+                  BlendMode.dstATop,
+                ),
+              ),
+            ),
+            child: Row(
+              children: [
+                if (isDesktop && widget.userRole == 'admin')
+                  NavigationRail(
+                    selectedIndex: _selectedIndex,
+                    onDestinationSelected: (int index) =>
+                        setState(() => _selectedIndex = index),
+                    extended: constraints.maxWidth > 800,
+                    destinations: const [
+                      NavigationRailDestination(
+                        icon: Icon(Icons.dashboard),
+                        label: Text('Dashboard'),
+                      ),
+                      NavigationRailDestination(
+                        icon: Icon(Icons.people),
+                        label: Text('Students'),
+                      ),
+                      NavigationRailDestination(
+                        icon: Icon(Icons.class_),
+                        label: Text('Batches'),
+                      ),
+                      NavigationRailDestination(
+                        icon: Icon(Icons.fact_check),
+                        label: Text('Attendance'),
+                      ),
+                    ],
+                  ),
+                if (isDesktop && widget.userRole == 'admin')
+                  const VerticalDivider(thickness: 1, width: 1),
+
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: widget.userRole == 'admin'
+                        ? _getAdminScreen(isDesktop)
+                        : const TeacherBatchesScreen(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  ListTile _buildDrawerItem(IconData icon, String title, int index) {
+    return ListTile(
+      leading: Icon(icon),
+      title: Text(title),
+      selected: _selectedIndex == index,
+      onTap: () {
+        setState(() => _selectedIndex = index);
+        Navigator.pop(context); // Mobile par drawer close karne k liye
+      },
+    );
+  }
+
+  Widget _buildAdminView(BuildContext context, bool isDesktop) {
+    if (_isLoadingStats) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Admin Overview',
+          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 20),
+        Expanded(
+          child: GridView.count(
+            crossAxisCount: isDesktop ? 4 : 2,
+            shrinkWrap: true,
+            crossAxisSpacing: 16,
+            mainAxisSpacing: 16,
+            childAspectRatio: isDesktop ? 1.5 : 1.2,
+            children: [
+              // Cards ko direct respective screen par index map kar diya
+              _buildStatCard(
+                'Total Students',
+                _totalStudents.toString(),
+                Colors.blue,
+                1,
+              ),
+              _buildStatCard(
+                'Active Batches',
+                _totalBatches.toString(),
+                Colors.orange,
+                2,
+              ),
+              _buildStatCard(
+                'Today Present',
+                _todayPresent.toString(),
+                Colors.green,
+                3,
+              ),
+              _buildStatCard('Absents', _todayAbsent.toString(), Colors.red, 3),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatCard(
+    String title,
+    String value,
+    Color color,
+    int targetIndex,
+  ) {
+    return InkWell(
+      onTap: () => setState(() => _selectedIndex = targetIndex),
+      borderRadius: BorderRadius.circular(12),
+      child: Card(
+        elevation: 4,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    color: Colors.black87,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+lib/screens/login_screen.dart:
+import 'package:flutter/material.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'dashboard_screen.dart';
+
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final emailController = TextEditingController();
+  final passwordController = TextEditingController();
+
+  void signIn() {
+    final email = emailController.text.trim().toLowerCase();
+    final password = passwordController.text;
+
+    String role = '';
+
+    // Hardcoded Checks
+    if (email == 'admin' && password == 'fgei2026') {
+      role = 'admin';
+    } else if (email == 'teacher' && password == '1234') {
+      role = 'teacher';
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Invalid Credentials'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Hive mein hamesha ke liye save kar lo
+    final settingsBox = Hive.box('settings');
+    settingsBox.put('isLoggedIn', true);
+    settingsBox.put('role', role);
+
+    // Navigate to Dashboard
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => DashboardScreen(userRole: role)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          image: DecorationImage(
+            image: const AssetImage('assets/images/school_bg.png'),
+            fit: BoxFit.cover,
+            colorFilter: ColorFilter.mode(
+              Colors.black.withOpacity(0.05),
+              BlendMode.dstATop,
+            ),
+          ),
+        ),
+        child: Center(
+          child: SingleChildScrollView(
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 400),
+              padding: const EdgeInsets.all(24),
+              child: Card(
+                elevation: 4,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.school,
+                        size: 60,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Academy Portal',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                      TextField(
+                        controller: emailController,
+                        decoration: const InputDecoration(
+                          labelText: 'Username (admin/teacher)',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.person),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: passwordController,
+                        decoration: const InputDecoration(
+                          labelText: 'Password',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.lock),
+                        ),
+                        obscureText: true,
+                      ),
+                      const SizedBox(height: 24),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: ElevatedButton(
+                          onPressed: signIn,
+                          child: const Text(
+                            'Login',
+                            style: TextStyle(fontSize: 18),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+lib/screens/splash_screen.dart:
+import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'dashboard_screen.dart';
+import 'login_screen.dart';
+
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({super.key});
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen> {
+  static const navyBlue = Color(0xFF0B2B5E);
+  static const gold = Color(0xFFD4AF37);
+
+  @override
+  void initState() {
+    super.initState();
+    _openNextScreen();
+  }
+
+  Future<void> _openNextScreen() async {
+    await Future<void>.delayed(const Duration(seconds: 3));
+    if (!mounted) return;
+
+    final settingsBox = Hive.box('settings');
+    final isLoggedIn = settingsBox.get('isLoggedIn', defaultValue: false);
+    final role = settingsBox.get('role', defaultValue: 'teacher');
+
+    final Widget nextScreen = isLoggedIn
+        ? DashboardScreen(userRole: role)
+        : const LoginScreen();
+
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => nextScreen));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: navyBlue,
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Image.asset('assets/images/app_logo.png')
+                .animate()
+                .fadeIn(duration: 900.ms)
+                .scale(
+                  begin: const Offset(0.7, 0.7),
+                  end: const Offset(1, 1),
+                  duration: 900.ms,
+                  curve: Curves.easeOutBack,
+                ),
+            const SizedBox(height: 24),
+            const Text(
+                  'Evening Coaching Classes',
+                  style: TextStyle(
+                    color: gold,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w600,
+                  ),
+                )
+                .animate()
+                .fadeIn(delay: 500.ms, duration: 700.ms)
+                .slideY(
+                  begin: 1,
+                  end: 0,
+                  delay: 500.ms,
+                  duration: 700.ms,
+                  curve: Curves.easeOut,
+                ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+lib/screens/student_screen.dart:
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import '../utils/list_sorting.dart';
+
+class StudentsScreen extends StatefulWidget {
+  final String batchId;
+  final String batchName;
+
+  const StudentsScreen({
+    super.key,
+    required this.batchId,
+    required this.batchName,
+  });
+
+  @override
+  State<StudentsScreen> createState() => _StudentsScreenState();
+}
+
+class _StudentsScreenState extends State<StudentsScreen> {
+  final supabase = Supabase.instance.client;
+  List<dynamic> students = [];
+  bool isLoading = true;
+
+  Map<String, String?> attendanceStatus =
+      {}; // student_id -> 'present' / 'absent' / null
+  Set<String> lockedStudents = {}; // Jin ki attendance already lag chuki hai
+
+  final String todayDate = DateTime.now().toIso8601String().split('T')[0];
+
+  @override
+  void initState() {
+    super.initState();
+    fetchStudentsAndAttendance();
+  }
+
+  Future<void> fetchStudentsAndAttendance() async {
+    try {
+      // 1. Fetch Students
+      final studentsResponse = await supabase
+          .from('students')
+          .select()
+          .eq('batch_id', widget.batchId)
+          .order('name', ascending: true);
+
+      // 2. Fetch Today's Attendance for this Batch (Agar kisi aur teacher ne lagai ho)
+      final attendanceResponse = await supabase
+          .from('attendance')
+          .select('student_id, status')
+          .eq('batch_id', widget.batchId)
+          .eq('date', todayDate);
+
+      setState(() {
+        students = sortStudents(studentsResponse);
+
+        // Sab ko pehle unmarked (null) set karo
+        for (var student in students) {
+          attendanceStatus[student['id']] = null;
+        }
+
+        // Jin ki attendance mil gai, unhe lock karo aur unka status update karo
+        for (var record in attendanceResponse) {
+          final sId = record['student_id'];
+          attendanceStatus[sId] = record['status'];
+          lockedStudents.add(sId);
+        }
+
+        isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Error fetching data: $e');
+      setState(() => isLoading = false);
+    }
+  }
+
+  void markAll(String status) {
+    setState(() {
+      for (var student in students) {
+        // Sirf unhein mark karo jo locked nahi hain
+        if (!lockedStudents.contains(student['id'])) {
+          attendanceStatus[student['id']] = status;
+        }
+      }
+    });
+  }
+
+  void _showAddStudentDialog() {
+    final nameController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Add New Student'),
+          content: TextField(
+            controller: nameController,
+            decoration: const InputDecoration(labelText: 'Student Name'),
+            textCapitalization: TextCapitalization.words,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final name = nameController.text.trim();
+                if (name.isEmpty) return;
+
+                Navigator.pop(dialogContext);
+                setState(() => isLoading = true);
+
+                try {
+                  final newStudent = await supabase
+                      .from('students')
+                      .insert({'name': name, 'batch_id': widget.batchId})
+                      .select()
+                      .single();
+
+                  await supabase.from('attendance').insert({
+                    'student_id': newStudent['id'],
+                    'batch_id': widget.batchId,
+                    'date': todayDate,
+                    'status': 'present',
+                  });
+
+                  if (!mounted) return;
+
+                  setState(() {
+                    students.add(newStudent);
+                    students = sortStudents(students);
+                    attendanceStatus[newStudent['id']] = 'present';
+                    lockedStudents.add(newStudent['id']);
+                    isLoading = false;
+                  });
+
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Student added and marked Present for today! ✅',
+                        ),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  debugPrint('Error adding student: $e');
+                  if (mounted) {
+                    setState(() => isLoading = false);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Failed to add student.'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              },
+              child: const Text('Save & Mark P'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<bool> _confirmSubmitAttendance() async {
+    final presentCount = attendanceStatus.values
+        .where((status) => status == 'present')
+        .length;
+
+    return await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Confirm Attendance'),
+            content: Text(
+              'Total Present Students: $presentCount\n\n'
+              'Aik baar count karlo ke bachay poore hain kya? '
+              'Kya attendance submit karni hai?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Submit'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('${widget.batchName} Attendance'),
+        actions: [
+          IconButton(
+            onPressed: _showAddStudentDialog,
+            tooltip: 'Add student',
+            icon: const Icon(Icons.person_add),
+          ),
+        ],
+      ),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : students.isEmpty
+          ? const Center(child: Text('No students found for this batch.'))
+          : Column(
+              children: [
+                // Header Row for Mark All
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  color: Colors.grey.shade100,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: () => markAll('present'),
+                        icon: const Icon(Icons.check, size: 18),
+                        label: const Text('All P'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton.icon(
+                        onPressed: () => markAll('absent'),
+                        icon: const Icon(Icons.close, size: 18),
+                        label: const Text('All A'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: students.length,
+                    itemBuilder: (context, index) {
+                      final student = students[index];
+                      final studentId = student['id'];
+                      final currentStatus = attendanceStatus[studentId];
+                      final isLocked = lockedStudents.contains(studentId);
+
+                      return Card(
+                        margin: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        elevation: currentStatus == null ? 0 : 1,
+                        color: currentStatus == null
+                            ? Colors.white
+                            : Colors.grey.shade50,
+                        shape: RoundedRectangleBorder(
+                          side: BorderSide(
+                            color: Colors.grey.shade300,
+                            width: 1,
+                          ),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: ListTile(
+                          leading: isLocked
+                              ? const Icon(
+                                  Icons.lock,
+                                  color: Colors.grey,
+                                  size: 20,
+                                )
+                              : null,
+                          title: Text(
+                            student['name'],
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: currentStatus == null
+                                  ? Colors.black54
+                                  : (isLocked ? Colors.grey : Colors.black),
+                              decoration: isLocked
+                                  ? TextDecoration.lineThrough
+                                  : null, // Locked bacho pe line aa jayegi
+                            ),
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // Present Button
+                              InkWell(
+                                onTap: isLocked
+                                    ? null
+                                    : () {
+                                        setState(() {
+                                          attendanceStatus[studentId] =
+                                              'present';
+                                        });
+                                      },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: currentStatus == 'present'
+                                        ? (isLocked
+                                              ? Colors.green.withOpacity(0.5)
+                                              : Colors.green)
+                                        : Colors.grey.shade200,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    'P',
+                                    style: TextStyle(
+                                      color: currentStatus == 'present'
+                                          ? Colors.white
+                                          : Colors.black54,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              // Absent Button
+                              InkWell(
+                                onTap: isLocked
+                                    ? null
+                                    : () {
+                                        setState(() {
+                                          attendanceStatus[studentId] =
+                                              'absent';
+                                        });
+                                      },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: currentStatus == 'absent'
+                                        ? (isLocked
+                                              ? Colors.red.withOpacity(0.5)
+                                              : Colors.red)
+                                        : Colors.grey.shade200,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    'A',
+                                    style: TextStyle(
+                                      color: currentStatus == 'absent'
+                                          ? Colors.white
+                                          : Colors.black54,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                // Submit Button
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.all(16),
+                    ),
+                    onPressed: () async {
+                      final shouldSubmit = await _confirmSubmitAttendance();
+                      if (!shouldSubmit || !mounted) return;
+
+                      // Filter out students that are either locked or not marked yet
+                      List<Map<String, dynamic>> newAttendanceData = [];
+
+                      attendanceStatus.forEach((studentId, status) {
+                        if (status != null &&
+                            !lockedStudents.contains(studentId)) {
+                          newAttendanceData.add({
+                            'student_id': studentId,
+                            'batch_id': widget.batchId,
+                            'date': todayDate,
+                            'status': status,
+                          });
+                        }
+                      });
+
+                      if (newAttendanceData.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Koi nayi attendance mark nahi ki gayi.',
+                            ),
+                            backgroundColor: Colors.orange,
+                          ),
+                        );
+                        return;
+                      }
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Saving attendance...')),
+                      );
+
+                      final offlineBox = Hive.box('offline_attendance');
+                      final String localKey = '${widget.batchId}_$todayDate';
+
+                      // Hive mein save (is code ko aage auto-sync ke sath refine karenge)
+                      await offlineBox.put(localKey, newAttendanceData);
+
+                      try {
+                        await supabase
+                            .from('attendance')
+                            .upsert(
+                              newAttendanceData,
+                              onConflict: 'student_id, date',
+                            );
+                        await offlineBox.delete(
+                          localKey,
+                        ); // Cloud pe push ho gaya tou local se uda do
+
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Attendance synced! ✅'),
+                              backgroundColor: Colors.green,
+                            ),
+                          );
+                          Navigator.pop(context);
+                        }
+                      } catch (e) {
+                        debugPrint('Supabase push failed: $e');
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Saved offline. 💾'),
+                              backgroundColor: Colors.blueGrey,
+                            ),
+                          );
+                          Navigator.pop(context);
+                        }
+                      }
+                    },
+                    child: const Text(
+                      'Submit Attendance',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+
+lib/screens/teacher_batches_screen.dart:
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'student_screen.dart';
+import '../utils/list_sorting.dart';
+
+class TeacherBatchesScreen extends StatefulWidget {
+  const TeacherBatchesScreen({super.key});
+
+  @override
+  State<TeacherBatchesScreen> createState() => _TeacherBatchesScreenState();
+}
+
+class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
+  final supabase = Supabase.instance.client;
+  List<dynamic> batches = [];
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    fetchBatches();
+    syncOfflineData();
+  }
+
+  Future<void> syncOfflineData() async {
+    final offlineBox = Hive.box('offline_attendance');
+    if (offlineBox.isEmpty) return;
+
+    bool syncedSomething = false;
+
+    for (var key in offlineBox.keys.toList()) {
+      try {
+        final data = offlineBox.get(key);
+        final List<Map<String, dynamic>> syncData =
+            List<Map<String, dynamic>>.from(
+              (data as List).map((item) => Map<String, dynamic>.from(item)),
+            );
+
+        await supabase
+            .from('attendance')
+            .upsert(syncData, onConflict: 'student_id, date');
+        await offlineBox.delete(key);
+        syncedSomething = true;
+      } catch (e) {
+        debugPrint('Background sync failed for key $key: $e');
+      }
+    }
+
+    if (syncedSomething && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Offline attendance synced to cloud! ☁️✅'),
+          backgroundColor: Colors.teal,
+          duration: Duration(seconds: 4),
+        ),
+      );
+    }
+  }
+
+  Future<void> fetchBatches() async {
+    try {
+      final response = await supabase.from('batches').select().order('name');
+      setState(() {
+        batches = sortBatches(response);
+        isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Error fetching data: $e');
+      setState(() => isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return isLoading
+        ? const Center(child: CircularProgressIndicator())
+        : batches.isEmpty
+        ? const Center(child: Text('No batches found. Check Supabase.'))
+        : ListView.builder(
+            itemCount: batches.length,
+            itemBuilder: (context, index) {
+              final batch = batches[index];
+              return Card(
+                margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                child: ListTile(
+                  title: Text(
+                    batch['name'],
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => StudentsScreen(
+                          batchId: batch['id'],
+                          batchName: batch['name'],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              );
+            },
+          );
+  }
+}
+
+
+lib/utils/list_sorting.dart:
+int compareBatchNames(dynamic first, dynamic second) {
+  final firstName = (first['name'] as String? ?? '').trim();
+  final secondName = (second['name'] as String? ?? '').trim();
+  final firstMatch = RegExp(
+    r'(\d+).*?(boys?|girls?)',
+    caseSensitive: false,
+  ).firstMatch(firstName);
+  final secondMatch = RegExp(
+    r'(\d+).*?(boys?|girls?)',
+    caseSensitive: false,
+  ).firstMatch(secondName);
+
+  if (firstMatch == null && secondMatch == null) {
+    return firstName.toLowerCase().compareTo(secondName.toLowerCase());
+  }
+  if (firstMatch == null) return 1;
+  if (secondMatch == null) return -1;
+
+  final gradeComparison = int.parse(
+    firstMatch.group(1)!,
+  ).compareTo(int.parse(secondMatch.group(1)!));
+  if (gradeComparison != 0) return gradeComparison;
+
+  final firstGender = firstMatch.group(2)!.toLowerCase();
+  final secondGender = secondMatch.group(2)!.toLowerCase();
+  final genderComparison = _genderRank(
+    firstGender,
+  ).compareTo(_genderRank(secondGender));
+  if (genderComparison != 0) return genderComparison;
+
+  return firstName.toLowerCase().compareTo(secondName.toLowerCase());
+}
+
+int _genderRank(String gender) => gender.startsWith('boy') ? 0 : 1;
+
+List<dynamic> sortBatches(List<dynamic> batches) {
+  final sortedBatches = List<dynamic>.from(batches);
+  sortedBatches.sort(compareBatchNames);
+  return sortedBatches;
+}
+
+int compareStudentNames(dynamic first, dynamic second) {
+  final firstName = (first['name'] as String? ?? '').trim().toLowerCase();
+  final secondName = (second['name'] as String? ?? '').trim().toLowerCase();
+  return firstName.compareTo(secondName);
+}
+
+List<dynamic> sortStudents(List<dynamic> students) {
+  final sortedStudents = List<dynamic>.from(students);
+  sortedStudents.sort(compareStudentNames);
+  return sortedStudents;
+}
+
+
+pubspec.yaml:
+name: academy_portal
+description: "A new Flutter project."
+# The following line prevents the package from being accidentally published to
+# pub.dev using `flutter pub publish`. This is preferred for private packages.
+publish_to: "none" # Remove this line if you wish to publish to pub.dev
+
+# The following defines the version and build number for your application.
+# A version number is three numbers separated by dots, like 1.2.43
+# followed by an optional build number separated by a +.
+# Both the version and the builder number may be overridden in flutter
+# build by specifying --build-name and --build-number, respectively.
+# In Android, build-name is used as versionName while build-number used as versionCode.
+# Read more about Android versioning at https://developer.android.com/studio/publish/versioning
+# In iOS, build-name is used as CFBundleShortVersionString while build-number is used as CFBundleVersion.
+# Read more about iOS versioning at
+# https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
+# In Windows, build-name is used as the major, minor, and patch parts
+# of the product and file versions while build-number is used as the build suffix.
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.1
+
+# Dependencies specify other packages that your package needs in order to work.
+# To automatically upgrade your package dependencies to the latest versions
+# consider running `flutter pub upgrade --major-versions`. Alternatively,
+# dependencies can be manually updated by changing the version numbers below to
+# the latest version available on pub.dev. To see which dependencies have newer
+# versions available, run `flutter pub outdated`.
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # The following adds the Cupertino Icons font to your application.
+  # Use with the CupertinoIcons class for iOS style icons.
+  cupertino_icons: ^1.0.8
+  supabase_flutter: ^2.17.2
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  path_provider: ^2.1.6
+  google_fonts: ^8.2.1
+  flutter_animate: ^4.5.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_launcher_icons: ^0.14.4
+
+  # The "flutter_lints" package below contains a set of recommended lints to
+  # encourage good coding practices. The lint set provided by the package is
+  # activated in the `analysis_options.yaml` file located at the root of your
+  # package. See that file for information about deactivating specific lint
+  # rules and activating additional ones.
+  flutter_lints: ^6.0.0
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  windows:
+    generate: true
+    image_path: "assets/images/app_logo.png"
+  image_path: "assets/images/app_logo.png"
+  remove_alpha_ios: true
+
+# For information on the generic Dart part of this file, see the
+# following page: https://dart.dev/tools/pub/pubspec
+
+# The following section is specific to Flutter packages.
+flutter:
+  # The following line ensures that the Material Icons font is
+  # included with your application, so that you can use the icons in
+  # the material Icons class.
+  uses-material-design: true
+
+  assets:
+    - assets/images/app_logo.png
+    - assets/images/school_bg.png
+
+  # To add assets to your application, add an assets section, like this:
+  # assets:
+  #   - images/a_dot_burr.jpeg
+  #   - images/a_dot_ham.jpeg
+
+  # An image asset can refer to one or more resolution-specific "variants", see
+  # https://flutter.dev/to/resolution-aware-images
+
+  # For details regarding adding assets from package dependencies, see
+  # https://flutter.dev/to/asset-from-package
+
+  # To add custom fonts to your application, add a fonts section here,
+  # in this "flutter" section. Each entry in this list should have a
+  # "family" key with the font family name, and a "fonts" key with a
+  # list giving the asset and other descriptors for the font. For
+  # example:
+  # fonts:
+  #   - family: Schyler
+  #     fonts:
+  #       - asset: fonts/Schyler-Regular.ttf
+  #       - asset: fonts/Schyler-Italic.ttf
+  #         style: italic
+  #   - family: Trajan Pro
+  #     fonts:
+  #       - asset: fonts/TrajanPro.ttf
+  #       - asset: fonts/TrajanPro_Bold.ttf
+  #         weight: 700
+  #
+  # For details regarding fonts from package dependencies,
+  # see https://flutter.dev/to/font-from-package
+
+
