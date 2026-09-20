@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'student_screen.dart';
+import '../app_theme.dart';
 import '../utils/list_sorting.dart';
 
 class TeacherBatchesScreen extends StatefulWidget {
-  const TeacherBatchesScreen({super.key});
+  final Function(Widget screen)? onNavigate;
+
+  const TeacherBatchesScreen({super.key, this.onNavigate});
 
   @override
   State<TeacherBatchesScreen> createState() => _TeacherBatchesScreenState();
@@ -71,6 +74,17 @@ class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
     }
   }
 
+  void _openStudentsScreen(String batchId, String batchName) {
+    final screen = StudentsScreen(batchId: batchId, batchName: batchName);
+
+    if (widget.onNavigate != null) {
+      widget.onNavigate!(screen);
+      return;
+    }
+
+    Navigator.push(context, MaterialPageRoute(builder: (context) => screen));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -78,43 +92,53 @@ class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
         image: DecorationImage(
           image: const AssetImage('assets/images/school_bg.png'),
           fit: BoxFit.cover,
-          opacity: 0.25,
+          opacity: 0.18,
         ),
       ),
-      child: isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : batches.isEmpty
-          ? const Center(child: Text('No batches found. Check Supabase.'))
-          : ListView.builder(
-              itemCount: batches.length,
-              itemBuilder: (context, index) {
-                final batch = batches[index];
-                return Card(
-                  margin: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 5,
-                  ),
-                  child: ListTile(
-                    title: Text(
-                      batch['name'],
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => StudentsScreen(
-                            batchId: batch['id'],
-                            batchName: batch['name'],
-                          ),
+      child: SafeArea(
+        child: isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : batches.isEmpty
+            ? const Center(child: Text('No batches found. Check Supabase.'))
+            : ListView.builder(
+                padding: const EdgeInsets.all(12),
+                itemCount: batches.length,
+                itemBuilder: (context, index) {
+                  final batch = batches[index];
+                  final batchName = batch['name']?.toString() ?? 'Batch';
+
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    elevation: 3,
+                    color: Colors.white.withValues(alpha: 0.96),
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 8,
+                      ),
+                      leading: Icon(
+                        Icons.folder_open,
+                        color: AppTheme.fgNavyBlue,
+                        size: 28,
+                      ),
+                      title: Text(
+                        batchName,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 17,
                         ),
-                      );
-                    },
-                  ),
-                );
-              },
-            ),
+                      ),
+                      subtitle: const Text('Open batch details'),
+                      trailing: const Icon(
+                        Icons.chevron_right,
+                        color: Colors.black54,
+                      ),
+                      onTap: () => _openStudentsScreen(batch['id'], batchName),
+                    ),
+                  );
+                },
+              ),
+      ),
     );
   }
 }

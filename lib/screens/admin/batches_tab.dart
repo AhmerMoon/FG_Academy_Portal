@@ -171,48 +171,54 @@ class _BatchesTabState extends State<BatchesTab> {
         ),
         child: batches.isEmpty
             ? const Center(child: Text('No batches found in Supabase.'))
-            : SingleChildScrollView(
-                scrollDirection: Axis.vertical,
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: DataTable(
-                    columns: const [
-                      DataColumn(label: Text('Batch Name')),
-                      DataColumn(label: Text('WhatsApp ID')),
-                      DataColumn(label: Text('Actions')),
-                    ],
-                    rows: batches.map((b) {
-                      return DataRow(
-                        cells: [
-                          DataCell(Text(b['name'] ?? '')),
-                          DataCell(Text(b['whatsapp_group_id'] ?? 'Not Set')),
-                          DataCell(
-                            Row(
-                              children: [
-                                IconButton(
-                                  icon: const Icon(
-                                    Icons.edit,
-                                    color: Colors.blue,
-                                  ),
-                                  onPressed: () =>
-                                      _showBatchFormDialog(batch: b),
-                                ),
-                                IconButton(
-                                  icon: const Icon(
-                                    Icons.delete,
-                                    color: Colors.red,
-                                  ),
-                                  onPressed: () =>
-                                      _deleteBatch(b['id'], b['name']),
-                                ),
-                              ],
-                            ),
+            : ListView.builder(
+                padding: const EdgeInsets.all(12),
+                itemCount: batches.length,
+                itemBuilder: (context, index) {
+                  final batch = batches[index];
+                  final batchName = batch['name']?.toString() ?? 'Batch';
+                  final whatsappId =
+                      batch['whatsapp_group_id']?.toString() ?? 'Not Set';
+
+                  return Card(
+                    elevation: 3,
+                    color: Colors.white.withValues(alpha: 0.96),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 8,
+                      ),
+                      leading: const Icon(
+                        Icons.class_,
+                        color: Color(0xFF0B2B5E),
+                        size: 26,
+                      ),
+                      title: Text(
+                        batchName,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 17,
+                        ),
+                      ),
+                      subtitle: Text(whatsappId),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.edit, color: Colors.blue),
+                            onPressed: () => _showBatchFormDialog(batch: batch),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () =>
+                                _deleteBatch(batch['id'], batch['name']),
                           ),
                         ],
-                      );
-                    }).toList(),
-                  ),
-                ),
+                      ),
+                    ),
+                  );
+                },
               ),
       ),
     );

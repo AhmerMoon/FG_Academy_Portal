@@ -3,7 +3,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../utils/list_sorting.dart';
 
 class AdminAttendanceTab extends StatefulWidget {
-  const AdminAttendanceTab({super.key});
+  final Function(Widget screen)? onNavigate;
+
+  const AdminAttendanceTab({super.key, this.onNavigate});
 
   @override
   State<AdminAttendanceTab> createState() => _AdminAttendanceTabState();
@@ -34,18 +36,19 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
   }
 
   void _openAttendance(BuildContext context, String batchId, String batchName) {
-    // Default initial date aaj ki set kardi
     final String today = DateTime.now().toIso8601String().split('T')[0];
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => EditAttendanceScreen(
-          batchId: batchId,
-          batchName: batchName,
-          initialDate: today,
-        ),
-      ),
+    final screen = EditAttendanceScreen(
+      batchId: batchId,
+      batchName: batchName,
+      initialDate: today,
     );
+
+    if (widget.onNavigate != null) {
+      widget.onNavigate!(screen);
+      return;
+    }
+
+    Navigator.push(context, MaterialPageRoute(builder: (context) => screen));
   }
 
   @override
@@ -58,24 +61,40 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
         image: DecorationImage(
           image: const AssetImage('assets/images/school_bg.png'),
           fit: BoxFit.cover,
-          opacity: 0.25,
+          opacity: 0.2,
         ),
       ),
       child: ListView.builder(
+        padding: const EdgeInsets.all(12),
         itemCount: batches.length,
         itemBuilder: (context, index) {
           final batch = batches[index];
+          final batchName = batch['name']?.toString() ?? 'Batch';
+
           return Card(
-            margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            elevation: 3,
+            color: Colors.white.withValues(alpha: 0.96),
+            margin: const EdgeInsets.only(bottom: 12),
             child: ListTile(
-              leading: const Icon(Icons.fact_check, color: Colors.teal),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 18,
+                vertical: 8,
+              ),
+              leading: const Icon(
+                Icons.fact_check,
+                color: Color(0xFF0B2B5E),
+                size: 26,
+              ),
               title: Text(
-                batch['name'],
-                style: const TextStyle(fontWeight: FontWeight.bold),
+                batchName,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 17,
+                ),
               ),
               subtitle: const Text('Tap to view and edit attendance'),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: () => _openAttendance(context, batch['id'], batch['name']),
+              trailing: const Icon(Icons.chevron_right, color: Colors.black54),
+              onTap: () => _openAttendance(context, batch['id'], batchName),
             ),
           );
         },
@@ -316,67 +335,88 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
             ),
           ],
         ),
-        body: Column(
-          children: [
-            // Date Navigator Bar
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              color: Colors.teal.shade50,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.chevron_left, size: 30),
-                    onPressed: () => _changeDate(-1),
-                  ),
-                  const SizedBox(width: 20),
-                  Text(
-                    dateString,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.teal,
+        body: Container(
+          decoration: BoxDecoration(
+            image: DecorationImage(
+              image: const AssetImage('assets/images/school_bg.png'),
+              fit: BoxFit.cover,
+              opacity: 0.18,
+            ),
+          ),
+          child: Column(
+            children: [
+              // Date Navigator Bar
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                color: Colors.teal.shade50,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.chevron_left, size: 30),
+                      onPressed: () => _changeDate(-1),
                     ),
-                  ),
-                  const SizedBox(width: 20),
-                  IconButton(
-                    icon: const Icon(Icons.chevron_right, size: 30),
-                    onPressed: canGoForward ? () => _changeDate(1) : null,
-                    color: canGoForward ? Colors.black : Colors.grey,
-                  ),
-                ],
+                    const SizedBox(width: 20),
+                    Text(
+                      dateString,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.teal,
+                      ),
+                    ),
+                    const SizedBox(width: 20),
+                    IconButton(
+                      icon: const Icon(Icons.chevron_right, size: 30),
+                      onPressed: canGoForward ? () => _changeDate(1) : null,
+                      color: canGoForward ? Colors.black : Colors.grey,
+                    ),
+                  ],
+                ),
               ),
-            ),
-            // Students List
-            Expanded(
-              child: isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : ListView.builder(
-                      itemCount: students.length,
-                      itemBuilder: (context, index) {
-                        final student = students[index];
-                        final sId = student['id'];
-                        final status = attendanceData[sId] ?? 'unmarked';
+              // Students List
+              Expanded(
+                child: isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : ListView.builder(
+                        padding: const EdgeInsets.all(12),
+                        itemCount: students.length,
+                        itemBuilder: (context, index) {
+                          final student = students[index];
+                          final sId = student['id'];
+                          final status = attendanceData[sId] ?? 'unmarked';
 
-                        return ListTile(
-                          title: Text(student['name']),
-                          trailing: SegmentedButton<String>(
-                            segments: const [
-                              ButtonSegment(value: 'present', label: Text('P')),
-                              ButtonSegment(value: 'absent', label: Text('A')),
-                            ],
-                            selected: {
-                              status == 'unmarked' ? 'absent' : status,
-                            },
-                            onSelectionChanged: (Set<String> newSelection) {
-                              _updateLocalStatus(sId, newSelection.first);
-                            },
-                          ),
-                        );
-                      },
-                    ),
-            ),
-          ],
+                          return Card(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            color: Colors.white.withValues(alpha: 0.96),
+                            elevation: 2,
+                            child: ListTile(
+                              title: Text(student['name']),
+                              trailing: SegmentedButton<String>(
+                                segments: const [
+                                  ButtonSegment(
+                                    value: 'present',
+                                    label: Text('P'),
+                                  ),
+                                  ButtonSegment(
+                                    value: 'absent',
+                                    label: Text('A'),
+                                  ),
+                                ],
+                                selected: {
+                                  status == 'unmarked' ? 'absent' : status,
+                                },
+                                onSelectionChanged: (Set<String> newSelection) {
+                                  _updateLocalStatus(sId, newSelection.first);
+                                },
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
         ),
         // Save Button (Sirf tab show hoga jab koi change aya ho)
         floatingActionButton: modifiedStudents.isNotEmpty

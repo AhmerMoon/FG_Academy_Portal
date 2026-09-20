@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../utils/list_sorting.dart';
 
-// 1. Main Tab: Shows list of Batches
 class StudentsTab extends StatefulWidget {
-  const StudentsTab({super.key});
+  final Function(Widget screen)? onNavigate;
+
+  const StudentsTab({super.key, this.onNavigate});
 
   @override
   State<StudentsTab> createState() => _StudentsTabState();
@@ -34,6 +35,17 @@ class _StudentsTabState extends State<StudentsTab> {
     }
   }
 
+  void _openBatchStudents(String batchId, String batchName) {
+    final screen = BatchStudentsScreen(batchId: batchId, batchName: batchName);
+
+    if (widget.onNavigate != null) {
+      widget.onNavigate!(screen);
+      return;
+    }
+
+    Navigator.push(context, MaterialPageRoute(builder: (context) => screen));
+  }
+
   @override
   Widget build(BuildContext context) {
     if (isLoading) return const Center(child: CircularProgressIndicator());
@@ -41,28 +53,32 @@ class _StudentsTabState extends State<StudentsTab> {
       return const Center(child: Text('No batches found in Supabase.'));
 
     return ListView.builder(
+      padding: const EdgeInsets.all(12),
       itemCount: batches.length,
       itemBuilder: (context, index) {
         final batch = batches[index];
+        final batchName = batch['name']?.toString() ?? 'Batch';
+
         return Card(
-          margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          elevation: 3,
+          color: Colors.white.withValues(alpha: 0.96),
+          margin: const EdgeInsets.only(bottom: 12),
           child: ListTile(
-            title: Text(
-              batch['name'],
-              style: const TextStyle(fontWeight: FontWeight.bold),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 18,
+              vertical: 8,
             ),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => BatchStudentsScreen(
-                    batchId: batch['id'],
-                    batchName: batch['name'],
-                  ),
-                ),
-              );
-            },
+            leading: const Icon(
+              Icons.groups,
+              color: Color(0xFF0B2B5E),
+              size: 26,
+            ),
+            title: Text(
+              batchName,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17),
+            ),
+            trailing: const Icon(Icons.chevron_right, color: Colors.black54),
+            onTap: () => _openBatchStudents(batch['id'], batchName),
           ),
         );
       },
@@ -241,60 +257,47 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
             ? const Center(child: CircularProgressIndicator())
             : students.isEmpty
             ? const Center(child: Text('Is batch mein koi student nahi hai.'))
-            : LayoutBuilder(
-                builder: (context, constraints) {
-                  return SingleChildScrollView(
-                    scrollDirection: Axis.vertical,
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: ConstrainedBox(
-                        constraints: BoxConstraints(
-                          minWidth: constraints.maxWidth,
+            : ListView.builder(
+                padding: const EdgeInsets.all(12),
+                itemCount: students.length,
+                itemBuilder: (context, index) {
+                  final student = students[index];
+
+                  return Card(
+                    elevation: 3,
+                    color: Colors.white.withValues(alpha: 0.96),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 8,
+                      ),
+                      leading: const Icon(
+                        Icons.person,
+                        color: Color(0xFF0B2B5E),
+                        size: 26,
+                      ),
+                      title: Text(
+                        student['name'],
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 17,
                         ),
-                        child: DataTable(
-                          columnSpacing: 24,
-                          columns: const [
-                            DataColumn(label: Text('Name')),
-                            DataColumn(numeric: true, label: Text('Actions')),
-                          ],
-                          rows: students.map((s) {
-                            return DataRow(
-                              cells: [
-                                DataCell(Text(s['name'])),
-                                DataCell(
-                                  Align(
-                                    alignment: Alignment.centerRight,
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        IconButton(
-                                          icon: const Icon(
-                                            Icons.edit,
-                                            color: Colors.blue,
-                                          ),
-                                          onPressed: () =>
-                                              _showStudentFormDialog(
-                                                student: s,
-                                              ),
-                                        ),
-                                        IconButton(
-                                          icon: const Icon(
-                                            Icons.delete,
-                                            color: Colors.red,
-                                          ),
-                                          onPressed: () => _deleteStudent(
-                                            s['id'],
-                                            s['name'],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            );
-                          }).toList(),
-                        ),
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.edit, color: Colors.blue),
+                            onPressed: () =>
+                                _showStudentFormDialog(student: student),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () =>
+                                _deleteStudent(student['id'], student['name']),
+                          ),
+                        ],
                       ),
                     ),
                   );

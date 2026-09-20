@@ -118,42 +118,50 @@ class _SplashScreenState extends State<SplashScreen> {
           image: DecorationImage(
             image: const AssetImage('assets/images/school_bg.png'),
             fit: BoxFit.cover,
-            opacity: 0.25,
+            opacity: 0.2,
           ),
         ),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Image.asset('assets/images/app_logo.png', width: 180)
-                  .animate()
-                  .fadeIn(duration: 900.ms)
-                  .scale(
-                    begin: const Offset(0.7, 0.7),
-                    end: const Offset(1, 1),
-                    duration: 900.ms,
-                    curve: Curves.easeOutBack,
-                  ),
-              const SizedBox(height: 24),
-              const Text(
-                    'Evening Coaching Classes',
-                    style: TextStyle(
-                      color: gold,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w600,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 60),
+              child: Center(
+                child: Image.asset('assets/images/app_logo.png', width: 200)
+                    .animate()
+                    .fadeIn(duration: 900.ms)
+                    .scale(
+                      begin: const Offset(0.7, 0.7),
+                      end: const Offset(1, 1),
+                      duration: 900.ms,
+                      curve: Curves.easeOutBack,
                     ),
-                  )
-                  .animate()
-                  .fadeIn(delay: 500.ms, duration: 700.ms)
-                  .slideY(
-                    begin: 1,
-                    end: 0,
-                    delay: 500.ms,
-                    duration: 700.ms,
-                    curve: Curves.easeOut,
-                  ),
-            ],
-          ),
+              ),
+            ),
+            const Spacer(),
+            Center(
+              child:
+                  const Text(
+                        'Evening Coaching Classes',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: gold,
+                          fontSize: 36,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
+                        ),
+                      )
+                      .animate()
+                      .fadeIn(delay: 500.ms, duration: 700.ms)
+                      .slideY(
+                        begin: 1,
+                        end: 0,
+                        delay: 500.ms,
+                        duration: 700.ms,
+                        curve: Curves.easeOut,
+                      ),
+            ),
+            const Spacer(),
+          ],
         ),
       ),
     );

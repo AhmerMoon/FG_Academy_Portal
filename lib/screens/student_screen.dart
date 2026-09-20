@@ -195,10 +195,17 @@ class _StudentsScreenState extends State<StudentsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final isDesktop = screenWidth >= 800;
+    final buttonTextSize = isDesktop ? 16.0 : 14.0;
+
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: AppBar(
-        title: Text('${widget.batchName} Attendance'),
+        title: Text(
+          '${widget.batchName} Attendance',
+          style: TextStyle(fontSize: isDesktop ? 22 : 18),
+        ),
         actions: [
           IconButton(
             onPressed: _showAddStudentDialog,
@@ -212,260 +219,300 @@ class _StudentsScreenState extends State<StudentsScreen> {
           image: DecorationImage(
             image: const AssetImage('assets/images/school_bg.png'),
             fit: BoxFit.cover,
-            opacity: 0.25,
+            opacity: 0.18,
           ),
         ),
-        child: isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : students.isEmpty
-            ? const Center(child: Text('No students found for this batch.'))
-            : Column(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                    color: Colors.grey.shade100,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        ElevatedButton.icon(
-                          onPressed: () => markAll('present'),
-                          icon: const Icon(Icons.check, size: 18),
-                          label: const Text('All P'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green,
-                            foregroundColor: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        ElevatedButton.icon(
-                          onPressed: () => markAll('absent'),
-                          icon: const Icon(Icons.close, size: 18),
-                          label: const Text('All A'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.red,
-                            foregroundColor: Colors.white,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    child: ListView.builder(
-                      itemCount: students.length,
-                      itemBuilder: (context, index) {
-                        final student = students[index];
-                        final studentId = student['id'];
-                        final currentStatus = attendanceStatus[studentId];
-                        final isLocked = lockedStudents.contains(studentId);
-
-                        return Card(
-                          margin: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          elevation: currentStatus == null ? 0 : 1,
-                          color: currentStatus == null
-                              ? Colors.white
-                              : Colors.grey.shade50,
-                          shape: RoundedRectangleBorder(
-                            side: BorderSide(
-                              color: Colors.grey.shade300,
-                              width: 1,
-                            ),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: ListTile(
-                            leading: isLocked
-                                ? const Icon(
-                                    Icons.lock,
-                                    color: Colors.grey,
-                                    size: 20,
-                                  )
-                                : null,
-                            title: Text(
-                              student['name'],
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: currentStatus == null
-                                    ? Colors.black54
-                                    : (isLocked ? Colors.grey : Colors.black),
-                                decoration: isLocked
-                                    ? TextDecoration.lineThrough
-                                    : null,
-                              ),
-                            ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                InkWell(
-                                  onTap: isLocked
-                                      ? null
-                                      : () {
-                                          setState(() {
-                                            attendanceStatus[studentId] =
-                                                'present';
-                                          });
-                                        },
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 8,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: currentStatus == 'present'
-                                          ? (isLocked
-                                                ? Colors.green.withValues(
-                                                    alpha: 0.5,
-                                                  )
-                                                : Colors.green)
-                                          : Colors.grey.shade200,
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Text(
-                                      'P',
-                                      style: TextStyle(
-                                        color: currentStatus == 'present'
-                                            ? Colors.white
-                                            : Colors.black54,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                InkWell(
-                                  onTap: isLocked
-                                      ? null
-                                      : () {
-                                          setState(() {
-                                            attendanceStatus[studentId] =
-                                                'absent';
-                                          });
-                                        },
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
-                                      vertical: 8,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: currentStatus == 'absent'
-                                          ? (isLocked
-                                                ? Colors.red.withValues(
-                                                    alpha: 0.5,
-                                                  )
-                                                : Colors.red)
-                                          : Colors.grey.shade200,
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Text(
-                                      'A',
-                                      style: TextStyle(
-                                        color: currentStatus == 'absent'
-                                            ? Colors.white
-                                            : Colors.black54,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(16),
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.all(16),
+        child: SafeArea(
+          child: isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : students.isEmpty
+              ? const Center(child: Text('No students found for this batch.'))
+              : Column(
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
                       ),
-                      onPressed: () async {
-                        final shouldSubmit = await _confirmSubmitAttendance();
-                        if (!shouldSubmit || !mounted) return;
-
-                        final List<Map<String, dynamic>> newAttendanceData = [];
-
-                        attendanceStatus.forEach((studentId, status) {
-                          if (status != null &&
-                              !lockedStudents.contains(studentId)) {
-                            newAttendanceData.add({
-                              'student_id': studentId,
-                              'batch_id': widget.batchId,
-                              'date': todayDate,
-                              'status': status,
-                            });
-                          }
-                        });
-
-                        if (newAttendanceData.isEmpty) {
-                          if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text(
-                                'Koi nayi attendance mark nahi ki gayi.',
-                              ),
-                              backgroundColor: Colors.orange,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.96),
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.08),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          ElevatedButton.icon(
+                            onPressed: () => markAll('present'),
+                            icon: const Icon(Icons.check, size: 18),
+                            label: Text(
+                              'All P',
+                              style: TextStyle(fontSize: buttonTextSize),
                             ),
-                          );
-                          return;
-                        }
-
-                        if (!mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Saving attendance...')),
-                        );
-
-                        final offlineBox = Hive.box('offline_attendance');
-                        final String localKey = '${widget.batchId}_$todayDate';
-
-                        await offlineBox.put(localKey, newAttendanceData);
-
-                        try {
-                          await supabase
-                              .from('attendance')
-                              .upsert(
-                                newAttendanceData,
-                                onConflict: 'student_id, date',
-                              );
-                          await offlineBox.delete(localKey);
-
-                          if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Attendance synced! ✅'),
+                            style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.green,
+                              foregroundColor: Colors.white,
+                              minimumSize: const Size(110, 42),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton.icon(
+                            onPressed: () => markAll('absent'),
+                            icon: const Icon(Icons.close, size: 18),
+                            label: Text(
+                              'All A',
+                              style: TextStyle(fontSize: buttonTextSize),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red,
+                              foregroundColor: Colors.white,
+                              minimumSize: const Size(110, 42),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: ListView.builder(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                        itemCount: students.length,
+                        itemBuilder: (context, index) {
+                          final student = students[index];
+                          final studentId = student['id'];
+                          final currentStatus = attendanceStatus[studentId];
+                          final isLocked = lockedStudents.contains(studentId);
+
+                          return Card(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            elevation: 3,
+                            color: Colors.white.withOpacity(0.96),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: ListTile(
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 8,
+                              ),
+                              leading: Icon(
+                                isLocked ? Icons.lock : Icons.person,
+                                color: isLocked
+                                    ? Colors.grey
+                                    : const Color(0xFF0B2B5E),
+                              ),
+                              title: Text(
+                                student['name'],
+                                style: TextStyle(
+                                  fontSize: isDesktop ? 18 : 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: currentStatus == null
+                                      ? Colors.black87
+                                      : (isLocked
+                                            ? Colors.grey
+                                            : Colors.black87),
+                                  decoration: isLocked
+                                      ? TextDecoration.lineThrough
+                                      : null,
+                                ),
+                              ),
+                              trailing: SizedBox(
+                                width: 150,
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    Expanded(
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(10),
+                                        onTap: isLocked
+                                            ? null
+                                            : () {
+                                                setState(() {
+                                                  attendanceStatus[studentId] =
+                                                      'present';
+                                                });
+                                              },
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 10,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: currentStatus == 'present'
+                                                ? (isLocked
+                                                      ? Colors.green.withValues(
+                                                          alpha: 0.5,
+                                                        )
+                                                      : Colors.green)
+                                                : Colors.grey.shade200,
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
+                                          ),
+                                          alignment: Alignment.center,
+                                          child: Text(
+                                            'P',
+                                            style: TextStyle(
+                                              color: currentStatus == 'present'
+                                                  ? Colors.white
+                                                  : Colors.black54,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: isDesktop ? 18 : 16,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(10),
+                                        onTap: isLocked
+                                            ? null
+                                            : () {
+                                                setState(() {
+                                                  attendanceStatus[studentId] =
+                                                      'absent';
+                                                });
+                                              },
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 10,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: currentStatus == 'absent'
+                                                ? (isLocked
+                                                      ? Colors.red.withValues(
+                                                          alpha: 0.5,
+                                                        )
+                                                      : Colors.red)
+                                                : Colors.grey.shade200,
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
+                                          ),
+                                          alignment: Alignment.center,
+                                          child: Text(
+                                            'A',
+                                            style: TextStyle(
+                                              color: currentStatus == 'absent'
+                                                  ? Colors.white
+                                                  : Colors.black54,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: isDesktop ? 18 : 16,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
                           );
-                          Navigator.pop(context);
-                        } catch (e) {
-                          debugPrint('Supabase push failed: $e');
+                        },
+                      ),
+                    ),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.all(16),
+                          minimumSize: const Size.fromHeight(52),
+                        ),
+                        onPressed: () async {
+                          final shouldSubmit = await _confirmSubmitAttendance();
+                          if (!shouldSubmit || !mounted) return;
+
+                          final List<Map<String, dynamic>> newAttendanceData =
+                              [];
+
+                          attendanceStatus.forEach((studentId, status) {
+                            if (status != null &&
+                                !lockedStudents.contains(studentId)) {
+                              newAttendanceData.add({
+                                'student_id': studentId,
+                                'batch_id': widget.batchId,
+                                'date': todayDate,
+                                'status': status,
+                              });
+                            }
+                          });
+
+                          if (newAttendanceData.isEmpty) {
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Koi nayi attendance mark nahi ki gayi.',
+                                ),
+                                backgroundColor: Colors.orange,
+                              ),
+                            );
+                            return;
+                          }
+
                           if (!mounted) return;
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
-                              content: Text('Saved offline. 💾'),
-                              backgroundColor: Colors.blueGrey,
+                              content: Text('Saving attendance...'),
                             ),
                           );
-                          Navigator.pop(context);
-                        }
-                      },
-                      child: const Text(
-                        'Submit Attendance',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
+
+                          final offlineBox = Hive.box('offline_attendance');
+                          final String localKey =
+                              '${widget.batchId}_$todayDate';
+
+                          await offlineBox.put(localKey, newAttendanceData);
+
+                          try {
+                            await supabase
+                                .from('attendance')
+                                .upsert(
+                                  newAttendanceData,
+                                  onConflict: 'student_id, date',
+                                );
+                            await offlineBox.delete(localKey);
+
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Attendance synced! ✅'),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
+                            Navigator.pop(context);
+                          } catch (e) {
+                            debugPrint('Supabase push failed: $e');
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Saved offline. 💾'),
+                                backgroundColor: Colors.blueGrey,
+                              ),
+                            );
+                            Navigator.pop(context);
+                          }
+                        },
+                        child: const Text(
+                          'Submit Attendance',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
+        ),
       ),
     );
   }
