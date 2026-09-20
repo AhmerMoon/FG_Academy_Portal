@@ -73,36 +73,48 @@ class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return isLoading
-        ? const Center(child: CircularProgressIndicator())
-        : batches.isEmpty
-        ? const Center(child: Text('No batches found. Check Supabase.'))
-        : ListView.builder(
-            itemCount: batches.length,
-            itemBuilder: (context, index) {
-              final batch = batches[index];
-              return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                child: ListTile(
-                  title: Text(
-                    batch['name'],
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+    return Container(
+      decoration: BoxDecoration(
+        image: DecorationImage(
+          image: const AssetImage('assets/images/school_bg.png'),
+          fit: BoxFit.cover,
+          opacity: 0.25,
+        ),
+      ),
+      child: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : batches.isEmpty
+          ? const Center(child: Text('No batches found. Check Supabase.'))
+          : ListView.builder(
+              itemCount: batches.length,
+              itemBuilder: (context, index) {
+                final batch = batches[index];
+                return Card(
+                  margin: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
                   ),
-                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => StudentsScreen(
-                          batchId: batch['id'],
-                          batchName: batch['name'],
+                  child: ListTile(
+                    title: Text(
+                      batch['name'],
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => StudentsScreen(
+                            batchId: batch['id'],
+                            batchName: batch['name'],
+                          ),
                         ),
-                      ),
-                    );
-                  },
-                ),
-              );
-            },
-          );
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+    );
   }
 }

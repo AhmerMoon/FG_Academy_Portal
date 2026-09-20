@@ -1,0 +1,54 @@
+Date: 18/9/2026
+Time: 11:20
+Phone Number: +923285077511
+Image: D:\FGEI_Backend\12th_Boys_Attendance.png
+Caption: Assalam o Alaikum,Attached is the automated attendance report for 12th Boys (Sep 2026).
+--------------------
+Date: 18/9/2026
+Time: 21:37
+Group ID: LX6ohSxk4PlDCvFmW1v65T
+Image: D:\FGEI_Backend\9th_Boys_Attendance.png
+Caption: Assalam o Alaikum,Attached is the automated attendance report for 9th Boys (Sep 2026).
+--------------------
+Date: 18/9/2026
+Time: 21:38
+Group ID: ERQZVJsApPq5dM01ofj8XK
+Image: D:\FGEI_Backend\9th_Girls_Attendance.png
+Caption: Assalam o Alaikum,Attached is the automated attendance report for 9th Girls (Sep 2026).
+--------------------
+Date: 18/9/2026
+Time: 21:38
+Group ID: CASWdozSKbrFomp8dbZOsI
+Image: D:\FGEI_Backend\12th_Boys_Attendance.png
+Caption: Assalam o Alaikum,Attached is the automated attendance report for 12th Boys (Sep 2026).
+--------------------
+Date: 18/9/2026
+Time: 21:39
+Group ID: GH9KNbO7Jdv77Go96dqoZH
+Image: D:\FGEI_Backend\12th_Girls_Attendance.png
+Caption: Assalam o Alaikum,Attached is the automated attendance report for 12th Girls (Sep 2026).
+--------------------
+Date: 18/9/2026
+Time: 21:40
+Group ID: DwQFacM7W8vCPoAko0gxTx
+Image: D:\FGEI_Backend\11th_Boys_Attendance.png
+Caption: Assalam o Alaikum,Attached is the automated attendance report for 11th Boys (Sep 2026).
+--------------------
+Date: 18/9/2026
+Time: 21:40
+Group ID: EZrpvV8dfZkHu4XJAbRSP9
+Image: D:\FGEI_Backend\11th_Girls_Attendance.png
+Caption: Assalam o Alaikum,Attached is the automated attendance report for 11th Girls (Sep 2026).
+--------------------
+Date: 18/9/2026
+Time: 21:41
+Group ID: DBfejJWKClF6o0ZJWCbO1v
+Image: D:\FGEI_Backend\10th_Boys_Attendance.png
+Caption: Assalam o Alaikum,Attached is the automated attendance report for 10th Boys (Sep 2026).
+--------------------
+Date: 18/9/2026
+Time: 21:42
+Group ID: ICyOSqP7coE0B04iWbhAQU
+Image: D:\FGEI_Backend\10th_Girls_Attendance.png
+Caption: Assalam o Alaikum,Attached is the automated attendance report for 10th Girls (Sep 2026).
+--------------------

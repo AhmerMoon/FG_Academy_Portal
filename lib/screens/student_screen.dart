@@ -196,6 +196,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         title: Text('${widget.batchName} Attendance'),
         actions: [
@@ -206,229 +207,235 @@ class _StudentsScreenState extends State<StudentsScreen> {
           ),
         ],
       ),
-      body: isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : students.isEmpty
-          ? const Center(child: Text('No students found for this batch.'))
-          : Column(
-              children: [
-                // Header Row for Mark All
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
-                  color: Colors.grey.shade100,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      ElevatedButton.icon(
-                        onPressed: () => markAll('present'),
-                        icon: const Icon(Icons.check, size: 18),
-                        label: const Text('All P'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          foregroundColor: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      ElevatedButton.icon(
-                        onPressed: () => markAll('absent'),
-                        icon: const Icon(Icons.close, size: 18),
-                        label: const Text('All A'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red,
-                          foregroundColor: Colors.white,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: students.length,
-                    itemBuilder: (context, index) {
-                      final student = students[index];
-                      final studentId = student['id'];
-                      final currentStatus = attendanceStatus[studentId];
-                      final isLocked = lockedStudents.contains(studentId);
-
-                      return Card(
-                        margin: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
-                        elevation: currentStatus == null ? 0 : 1,
-                        color: currentStatus == null
-                            ? Colors.white
-                            : Colors.grey.shade50,
-                        shape: RoundedRectangleBorder(
-                          side: BorderSide(
-                            color: Colors.grey.shade300,
-                            width: 1,
-                          ),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: ListTile(
-                          leading: isLocked
-                              ? const Icon(
-                                  Icons.lock,
-                                  color: Colors.grey,
-                                  size: 20,
-                                )
-                              : null,
-                          title: Text(
-                            student['name'],
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: currentStatus == null
-                                  ? Colors.black54
-                                  : (isLocked ? Colors.grey : Colors.black),
-                              decoration: isLocked
-                                  ? TextDecoration.lineThrough
-                                  : null, // Locked bacho pe line aa jayegi
-                            ),
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // Present Button
-                              InkWell(
-                                onTap: isLocked
-                                    ? null
-                                    : () {
-                                        setState(() {
-                                          attendanceStatus[studentId] =
-                                              'present';
-                                        });
-                                      },
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 8,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: currentStatus == 'present'
-                                        ? (isLocked
-                                              ? Colors.green.withOpacity(0.5)
-                                              : Colors.green)
-                                        : Colors.grey.shade200,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Text(
-                                    'P',
-                                    style: TextStyle(
-                                      color: currentStatus == 'present'
-                                          ? Colors.white
-                                          : Colors.black54,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              // Absent Button
-                              InkWell(
-                                onTap: isLocked
-                                    ? null
-                                    : () {
-                                        setState(() {
-                                          attendanceStatus[studentId] =
-                                              'absent';
-                                        });
-                                      },
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 8,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: currentStatus == 'absent'
-                                        ? (isLocked
-                                              ? Colors.red.withOpacity(0.5)
-                                              : Colors.red)
-                                        : Colors.grey.shade200,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Text(
-                                    'A',
-                                    style: TextStyle(
-                                      color: currentStatus == 'absent'
-                                          ? Colors.white
-                                          : Colors.black54,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                // Submit Button
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.all(16),
+      body: Container(
+        decoration: BoxDecoration(
+          image: DecorationImage(
+            image: const AssetImage('assets/images/school_bg.png'),
+            fit: BoxFit.cover,
+            opacity: 0.25,
+          ),
+        ),
+        child: isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : students.isEmpty
+            ? const Center(child: Text('No students found for this batch.'))
+            : Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
                     ),
-                    onPressed: () async {
-                      final shouldSubmit = await _confirmSubmitAttendance();
-                      if (!shouldSubmit || !mounted) return;
+                    color: Colors.grey.shade100,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed: () => markAll('present'),
+                          icon: const Icon(Icons.check, size: 18),
+                          label: const Text('All P'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton.icon(
+                          onPressed: () => markAll('absent'),
+                          icon: const Icon(Icons.close, size: 18),
+                          label: const Text('All A'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: students.length,
+                      itemBuilder: (context, index) {
+                        final student = students[index];
+                        final studentId = student['id'];
+                        final currentStatus = attendanceStatus[studentId];
+                        final isLocked = lockedStudents.contains(studentId);
 
-                      // Filter out students that are either locked or not marked yet
-                      List<Map<String, dynamic>> newAttendanceData = [];
-
-                      attendanceStatus.forEach((studentId, status) {
-                        if (status != null &&
-                            !lockedStudents.contains(studentId)) {
-                          newAttendanceData.add({
-                            'student_id': studentId,
-                            'batch_id': widget.batchId,
-                            'date': todayDate,
-                            'status': status,
-                          });
-                        }
-                      });
-
-                      if (newAttendanceData.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Koi nayi attendance mark nahi ki gayi.',
+                        return Card(
+                          margin: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          elevation: currentStatus == null ? 0 : 1,
+                          color: currentStatus == null
+                              ? Colors.white
+                              : Colors.grey.shade50,
+                          shape: RoundedRectangleBorder(
+                            side: BorderSide(
+                              color: Colors.grey.shade300,
+                              width: 1,
                             ),
-                            backgroundColor: Colors.orange,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: ListTile(
+                            leading: isLocked
+                                ? const Icon(
+                                    Icons.lock,
+                                    color: Colors.grey,
+                                    size: 20,
+                                  )
+                                : null,
+                            title: Text(
+                              student['name'],
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: currentStatus == null
+                                    ? Colors.black54
+                                    : (isLocked ? Colors.grey : Colors.black),
+                                decoration: isLocked
+                                    ? TextDecoration.lineThrough
+                                    : null,
+                              ),
+                            ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                InkWell(
+                                  onTap: isLocked
+                                      ? null
+                                      : () {
+                                          setState(() {
+                                            attendanceStatus[studentId] =
+                                                'present';
+                                          });
+                                        },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 8,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: currentStatus == 'present'
+                                          ? (isLocked
+                                                ? Colors.green.withValues(
+                                                    alpha: 0.5,
+                                                  )
+                                                : Colors.green)
+                                          : Colors.grey.shade200,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      'P',
+                                      style: TextStyle(
+                                        color: currentStatus == 'present'
+                                            ? Colors.white
+                                            : Colors.black54,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                InkWell(
+                                  onTap: isLocked
+                                      ? null
+                                      : () {
+                                          setState(() {
+                                            attendanceStatus[studentId] =
+                                                'absent';
+                                          });
+                                        },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 8,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: currentStatus == 'absent'
+                                          ? (isLocked
+                                                ? Colors.red.withValues(
+                                                    alpha: 0.5,
+                                                  )
+                                                : Colors.red)
+                                          : Colors.grey.shade200,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      'A',
+                                      style: TextStyle(
+                                        color: currentStatus == 'absent'
+                                            ? Colors.white
+                                            : Colors.black54,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         );
-                        return;
-                      }
+                      },
+                    ),
+                  ),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.all(16),
+                      ),
+                      onPressed: () async {
+                        final shouldSubmit = await _confirmSubmitAttendance();
+                        if (!shouldSubmit || !mounted) return;
 
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Saving attendance...')),
-                      );
+                        final List<Map<String, dynamic>> newAttendanceData = [];
 
-                      final offlineBox = Hive.box('offline_attendance');
-                      final String localKey = '${widget.batchId}_$todayDate';
+                        attendanceStatus.forEach((studentId, status) {
+                          if (status != null &&
+                              !lockedStudents.contains(studentId)) {
+                            newAttendanceData.add({
+                              'student_id': studentId,
+                              'batch_id': widget.batchId,
+                              'date': todayDate,
+                              'status': status,
+                            });
+                          }
+                        });
 
-                      // Hive mein save (is code ko aage auto-sync ke sath refine karenge)
-                      await offlineBox.put(localKey, newAttendanceData);
+                        if (newAttendanceData.isEmpty) {
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Koi nayi attendance mark nahi ki gayi.',
+                              ),
+                              backgroundColor: Colors.orange,
+                            ),
+                          );
+                          return;
+                        }
 
-                      try {
-                        await supabase
-                            .from('attendance')
-                            .upsert(
-                              newAttendanceData,
-                              onConflict: 'student_id, date',
-                            );
-                        await offlineBox.delete(
-                          localKey,
-                        ); // Cloud pe push ho gaya tou local se uda do
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Saving attendance...')),
+                        );
 
-                        if (context.mounted) {
+                        final offlineBox = Hive.box('offline_attendance');
+                        final String localKey = '${widget.batchId}_$todayDate';
+
+                        await offlineBox.put(localKey, newAttendanceData);
+
+                        try {
+                          await supabase
+                              .from('attendance')
+                              .upsert(
+                                newAttendanceData,
+                                onConflict: 'student_id, date',
+                              );
+                          await offlineBox.delete(localKey);
+
+                          if (!mounted) return;
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text('Attendance synced! ✅'),
@@ -436,10 +443,9 @@ class _StudentsScreenState extends State<StudentsScreen> {
                             ),
                           );
                           Navigator.pop(context);
-                        }
-                      } catch (e) {
-                        debugPrint('Supabase push failed: $e');
-                        if (context.mounted) {
+                        } catch (e) {
+                          debugPrint('Supabase push failed: $e');
+                          if (!mounted) return;
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text('Saved offline. 💾'),
@@ -448,19 +454,19 @@ class _StudentsScreenState extends State<StudentsScreen> {
                           );
                           Navigator.pop(context);
                         }
-                      }
-                    },
-                    child: const Text(
-                      'Submit Attendance',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+                      },
+                      child: const Text(
+                        'Submit Attendance',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
+      ),
     );
   }
 }

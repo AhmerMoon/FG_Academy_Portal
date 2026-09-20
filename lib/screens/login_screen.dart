@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dashboard_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -10,40 +11,72 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final emailController = TextEditingController();
+  final usernameController = TextEditingController();
   final passwordController = TextEditingController();
+  bool isLoading = false;
 
-  void signIn() {
-    final email = emailController.text.trim().toLowerCase();
+  Future<void> signIn() async {
+    final username = usernameController.text.trim().toLowerCase();
     final password = passwordController.text;
 
-    String role = '';
-
-    // Hardcoded Checks
-    if (email == 'admin' && password == 'fgei2026') {
-      role = 'admin';
-    } else if (email == 'teacher' && password == '1234') {
-      role = 'teacher';
-    } else {
+    if (username.isEmpty || password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Invalid Credentials'),
+          content: Text('Please enter both username and password'),
           backgroundColor: Colors.red,
         ),
       );
       return;
     }
 
-    // Hive mein hamesha ke liye save kar lo
-    final settingsBox = Hive.box('settings');
-    settingsBox.put('isLoggedIn', true);
-    settingsBox.put('role', role);
+    setState(() => isLoading = true);
 
-    // Navigate to Dashboard
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => DashboardScreen(userRole: role)),
-    );
+    try {
+      // Supabase se user verify kar rahe hain
+      final response = await Supabase.instance.client
+          .from('app_users')
+          .select('role')
+          .eq('username', username)
+          .eq('password', password)
+          .maybeSingle();
+
+      if (response != null) {
+        final role = response['role'] as String;
+
+        // Hive mein hamesha ke liye save kar lo
+        final settingsBox = Hive.box('settings');
+        await settingsBox.put('isLoggedIn', true);
+        await settingsBox.put('role', role);
+
+        if (!mounted) return;
+        // Navigate to Dashboard
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => DashboardScreen(userRole: role),
+          ),
+        );
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Invalid Username or Password'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Login error: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Connection error. Please try again.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
   }
 
   @override
@@ -52,7 +85,6 @@ class _LoginScreenState extends State<LoginScreen> {
       backgroundColor: Colors.transparent,
       body: Container(
         decoration: BoxDecoration(
-          color: Colors.grey.shade100,
           image: DecorationImage(
             image: const AssetImage('assets/images/school_bg.png'),
             fit: BoxFit.cover,
@@ -89,7 +121,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       const SizedBox(height: 32),
                       TextField(
-                        controller: emailController,
+                        controller: usernameController,
                         decoration: const InputDecoration(
                           labelText: 'Username (admin/teacher)',
                           border: OutlineInputBorder(),
@@ -111,11 +143,20 @@ class _LoginScreenState extends State<LoginScreen> {
                         width: double.infinity,
                         height: 50,
                         child: ElevatedButton(
-                          onPressed: signIn,
-                          child: const Text(
-                            'Login',
-                            style: TextStyle(fontSize: 18),
-                          ),
+                          onPressed: isLoading ? null : signIn,
+                          child: isLoading
+                              ? const SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Text(
+                                  'Login',
+                                  style: TextStyle(fontSize: 18),
+                                ),
                         ),
                       ),
                     ],
