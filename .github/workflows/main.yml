@@ -29,16 +29,6 @@ jobs:
           name: Android-APK
           path: build/app/outputs/flutter-apk/app-release.apk
 
-      - name: Create Release and Upload APK
-        uses: ncipollo/release-action@v1
-        with:
-          artifacts: "build/app/outputs/flutter-apk/app-release.apk"
-          tag: "latest"
-          name: "Latest Update"
-          allowUpdates: true
-          makeLatest: true
-          token: ${{ secrets.GITHUB_TOKEN }}
-
   build-windows:
     runs-on: windows-latest
     steps:
@@ -65,3 +55,29 @@ jobs:
         with:
           name: Windows-EXE
           path: build\windows\x64\runner\Release\
+
+  create-release:
+    needs: [build-android, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download APK Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Android-APK
+          path: release-assets/android
+
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Windows-EXE
+          path: release-assets/windows
+
+      - name: Create Release and Upload Artifacts
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "release-assets/android/app-release.apk,release-assets/windows/*.exe"
+          tag: "latest"
+          name: "Latest Update"
+          allowUpdates: true
+          makeLatest: true
+          token: ${{ secrets.GITHUB_TOKEN }}
