@@ -24,7 +24,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
 
   Map<String, String?> attendanceStatus =
       {}; // student_id -> 'present' / 'absent' / null
-  Set<String> lockedStudents = {}; // Jin ki attendance already lag chuki hai
 
   final String todayDate = DateTime.now().toIso8601String().split('T')[0];
 
@@ -58,11 +57,10 @@ class _StudentsScreenState extends State<StudentsScreen> {
           attendanceStatus[student['id']] = null;
         }
 
-        // Jin ki attendance mil gai, unhe lock karo aur unka status update karo
+        // Existing attendance is loaded so it can be edited and resubmitted.
         for (var record in attendanceResponse) {
           final sId = record['student_id'];
           attendanceStatus[sId] = record['status'];
-          lockedStudents.add(sId);
         }
 
         isLoading = false;
@@ -76,10 +74,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
   void markAll(String status) {
     setState(() {
       for (var student in students) {
-        // Sirf unhein mark karo jo locked nahi hain
-        if (!lockedStudents.contains(student['id'])) {
-          attendanceStatus[student['id']] = status;
-        }
+        attendanceStatus[student['id']] = status;
       }
     });
   }
@@ -129,7 +124,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
                     students.add(newStudent);
                     students = sortStudents(students);
                     attendanceStatus[newStudent['id']] = 'present';
-                    lockedStudents.add(newStudent['id']);
                     isLoading = false;
                   });
 
@@ -288,7 +282,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
                           final student = students[index];
                           final studentId = student['id'];
                           final currentStatus = attendanceStatus[studentId];
-                          final isLocked = lockedStudents.contains(studentId);
 
                           return Card(
                             margin: const EdgeInsets.only(bottom: 10),
@@ -303,24 +296,15 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                 vertical: 8,
                               ),
                               leading: Icon(
-                                isLocked ? Icons.lock : Icons.person,
-                                color: isLocked
-                                    ? Colors.grey
-                                    : const Color(0xFF0B2B5E),
+                                Icons.person,
+                                color: const Color(0xFF0B2B5E),
                               ),
                               title: Text(
                                 student['name'],
                                 style: TextStyle(
                                   fontSize: isDesktop ? 18 : 16,
                                   fontWeight: FontWeight.bold,
-                                  color: currentStatus == null
-                                      ? Colors.black87
-                                      : (isLocked
-                                            ? Colors.grey
-                                            : Colors.black87),
-                                  decoration: isLocked
-                                      ? TextDecoration.lineThrough
-                                      : null,
+                                  color: Colors.black87,
                                 ),
                               ),
                               trailing: SizedBox(
@@ -331,25 +315,19 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                     Expanded(
                                       child: InkWell(
                                         borderRadius: BorderRadius.circular(10),
-                                        onTap: isLocked
-                                            ? null
-                                            : () {
-                                                setState(() {
-                                                  attendanceStatus[studentId] =
-                                                      'present';
-                                                });
-                                              },
+                                        onTap: () {
+                                          setState(() {
+                                            attendanceStatus[studentId] =
+                                                'present';
+                                          });
+                                        },
                                         child: Container(
                                           padding: const EdgeInsets.symmetric(
                                             vertical: 10,
                                           ),
                                           decoration: BoxDecoration(
                                             color: currentStatus == 'present'
-                                                ? (isLocked
-                                                      ? Colors.green.withValues(
-                                                          alpha: 0.5,
-                                                        )
-                                                      : Colors.green)
+                                                ? Colors.green
                                                 : Colors.grey.shade200,
                                             borderRadius: BorderRadius.circular(
                                               10,
@@ -373,25 +351,19 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                     Expanded(
                                       child: InkWell(
                                         borderRadius: BorderRadius.circular(10),
-                                        onTap: isLocked
-                                            ? null
-                                            : () {
-                                                setState(() {
-                                                  attendanceStatus[studentId] =
-                                                      'absent';
-                                                });
-                                              },
+                                        onTap: () {
+                                          setState(() {
+                                            attendanceStatus[studentId] =
+                                                'absent';
+                                          });
+                                        },
                                         child: Container(
                                           padding: const EdgeInsets.symmetric(
                                             vertical: 10,
                                           ),
                                           decoration: BoxDecoration(
                                             color: currentStatus == 'absent'
-                                                ? (isLocked
-                                                      ? Colors.red.withValues(
-                                                          alpha: 0.5,
-                                                        )
-                                                      : Colors.red)
+                                                ? Colors.red
                                                 : Colors.grey.shade200,
                                             borderRadius: BorderRadius.circular(
                                               10,
@@ -435,8 +407,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
                               [];
 
                           attendanceStatus.forEach((studentId, status) {
-                            if (status != null &&
-                                !lockedStudents.contains(studentId)) {
+                            if (status != null) {
                               newAttendanceData.add({
                                 'student_id': studentId,
                                 'batch_id': widget.batchId,
