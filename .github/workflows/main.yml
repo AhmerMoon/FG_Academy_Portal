@@ -56,6 +56,15 @@ jobs:
           name: Windows-EXE
           path: build\windows\x64\runner\Release\
 
+      - name: Zip Windows Release
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath Academy_Portal_Windows.zip
+
+      - name: Upload Windows ZIP Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-ZIP
+          path: Academy_Portal_Windows.zip
+
   create-release:
     needs: [build-android, build-windows]
     runs-on: ubuntu-latest
@@ -72,10 +81,16 @@ jobs:
           name: Windows-EXE
           path: release-assets/windows
 
+      - name: Download Windows ZIP Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Windows-ZIP
+          path: release-assets/windows-zip
+
       - name: Create Release and Upload Artifacts
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "release-assets/android/app-release.apk,release-assets/windows/*.exe"
+          artifacts: "release-assets/android/app-release.apk,release-assets/windows/*.exe,release-assets/windows-zip/Academy_Portal_Windows.zip"
           tag: "latest"
           name: "Latest Update"
           allowUpdates: true
