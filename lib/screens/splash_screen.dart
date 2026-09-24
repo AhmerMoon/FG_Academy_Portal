@@ -71,14 +71,27 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   bool _isUpdateRequired(String current, String required) {
-    List<int> curr = current.split('.').map(int.parse).toList();
-    List<int> req = required.split('.').map(int.parse).toList();
+    final curr = _parseVersion(current);
+    final req = _parseVersion(required);
+    if (curr == null || req == null) return false;
 
     for (int i = 0; i < 3; i++) {
       if (req[i] > curr[i]) return true;
       if (req[i] < curr[i]) return false;
     }
     return false;
+  }
+
+  List<int>? _parseVersion(String version) {
+    final parts = version.split('.');
+    if (parts.length < 3) return null;
+    final parsed = <int>[];
+    for (final part in parts.take(3)) {
+      final value = int.tryParse(part);
+      if (value == null) return null;
+      parsed.add(value);
+    }
+    return parsed;
   }
 
   void _showUpdateDialog(String url) {
@@ -96,9 +109,23 @@ class _SplashScreenState extends State<SplashScreen> {
           actions: [
             ElevatedButton(
               onPressed: () async {
-                final uri = Uri.parse(url);
-                if (await canLaunchUrl(uri)) {
+                try {
+                  final uri = Uri.tryParse(url);
+                  if (uri == null || !await canLaunchUrl(uri)) {
+                    throw Exception('Update URL cannot be opened');
+                  }
                   await launchUrl(uri, mode: LaunchMode.externalApplication);
+                } catch (e) {
+                  debugPrint('Update launch failed: $e');
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Unable to open the update link. Please try again later.',
+                      ),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
                 }
               },
               child: const Text('Download Update'),
@@ -126,7 +153,7 @@ class _SplashScreenState extends State<SplashScreen> {
             Padding(
               padding: const EdgeInsets.only(top: 60),
               child: Center(
-                child: Image.asset('assets/images/app_logo.png', width: 200)
+                child: Image.asset('assets/images/app_logo_bg.png', width: 200)
                     .animate()
                     .fadeIn(duration: 900.ms)
                     .scale(

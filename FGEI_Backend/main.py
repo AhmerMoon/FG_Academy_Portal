@@ -11,6 +11,8 @@ import time
 
 warnings.filterwarnings('ignore')
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 load_dotenv()
 url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY")
@@ -102,7 +104,7 @@ def process_all_batches():
         styled_df = df_final.style.set_table_styles(styles).set_caption(caption_html).hide(axis="index")
 
         filename = f"{batch_name.replace(' ', '_')}_Attendance.png"
-        image_path = os.path.abspath(filename)
+        image_path = os.path.join(BASE_DIR, filename)
         dfi.export(styled_df, image_path, max_cols=-1, max_rows=-1)
         print("✅ Image Rendered.")
 

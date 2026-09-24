@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../utils/list_sorting.dart';
+import '../../utils/automation_launcher.dart';
+import '../../utils/error_state_view.dart';
+import '../../utils/dashboard_section_header.dart';
 
 class AdminAttendanceTab extends StatefulWidget {
   final Function(Widget screen)? onNavigate;
+  final VoidCallback? onBack;
 
-  const AdminAttendanceTab({super.key, this.onNavigate});
+  const AdminAttendanceTab({super.key, this.onNavigate, this.onBack});
 
   @override
   State<AdminAttendanceTab> createState() => _AdminAttendanceTabState();
@@ -15,6 +20,7 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
   final supabase = Supabase.instance.client;
   List<dynamic> batches = [];
   bool isLoading = true;
+  String? errorMessage;
 
   @override
   void initState() {
@@ -25,13 +31,54 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
   Future<void> fetchBatches() async {
     try {
       final response = await supabase.from('batches').select().order('name');
+      final studentsResponse = await supabase
+          .from('students')
+          .select('batch_id');
+      final today = DateTime.now().toIso8601String().split('T')[0];
+      final attendanceResponse = await supabase
+          .from('attendance')
+          .select('batch_id, status')
+          .eq('date', today);
+      final strengthByBatch = <String, int>{};
+      for (final student in studentsResponse) {
+        final batchId = student['batch_id']?.toString();
+        if (batchId != null) {
+          strengthByBatch[batchId] = (strengthByBatch[batchId] ?? 0) + 1;
+        }
+      }
+      final presentByBatch = <String, int>{};
+      final absentByBatch = <String, int>{};
+      for (final record in attendanceResponse) {
+        final batchId = record['batch_id']?.toString();
+        if (batchId == null) continue;
+        if (record['status'] == 'present') {
+          presentByBatch[batchId] = (presentByBatch[batchId] ?? 0) + 1;
+        } else if (record['status'] == 'absent') {
+          absentByBatch[batchId] = (absentByBatch[batchId] ?? 0) + 1;
+        }
+      }
+      final batchesWithStats = response.map((batch) {
+        final batchId = batch['id'].toString();
+        final batchCopy = Map<String, dynamic>.from(batch);
+        batchCopy['student_count'] = strengthByBatch[batchId] ?? 0;
+        batchCopy['present_count'] = presentByBatch[batchId] ?? 0;
+        batchCopy['absent_count'] = absentByBatch[batchId] ?? 0;
+        return batchCopy;
+      }).toList();
+      if (!mounted) return;
       setState(() {
-        batches = sortBatches(response);
+        batches = sortBatches(batchesWithStats);
         isLoading = false;
+        errorMessage = null;
       });
     } catch (e) {
       debugPrint('Error: $e');
-      setState(() => isLoading = false);
+      if (!mounted) return;
+      setState(() {
+        isLoading = false;
+        errorMessage =
+            'Unable to load attendance batches. Check your connection and try again.';
+      });
     }
   }
 
@@ -43,18 +90,48 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
       initialDate: today,
     );
 
-    if (widget.onNavigate != null) {
-      widget.onNavigate!(screen);
+    if (widget.onNavigate != null && widget.onBack != null) {
+      widget.onNavigate!(
+        EditAttendanceScreen(
+          batchId: batchId,
+          batchName: batchName,
+          initialDate: today,
+          onBack: widget.onBack,
+        ),
+      );
       return;
     }
 
-    Navigator.push(context, MaterialPageRoute(builder: (context) => screen));
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => screen),
+    ).then((_) {
+      if (mounted) fetchBatches();
+    });
+  }
+
+  Future<void> _startAutomation() async {
+    final started = await launchAutomation();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          started
+              ? 'Automation Started'
+              : 'Automation could not start. Check the backend file and Windows setup.',
+        ),
+        backgroundColor: started ? Colors.green : Colors.red,
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     if (isLoading) return const Center(child: CircularProgressIndicator());
-    if (batches.isEmpty) return const Center(child: Text('No batches found.'));
+    if (errorMessage != null) {
+      return ErrorStateView(message: errorMessage!, onRetry: fetchBatches);
+    }
+    final isExpanded = MediaQuery.sizeOf(context).width >= 800;
 
     return Container(
       decoration: BoxDecoration(
@@ -64,40 +141,160 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
           opacity: 0.2,
         ),
       ),
-      child: ListView.builder(
-        padding: const EdgeInsets.all(12),
-        itemCount: batches.length,
-        itemBuilder: (context, index) {
-          final batch = batches[index];
-          final batchName = batch['name']?.toString() ?? 'Batch';
+      child: Column(
+        children: [
+          DashboardSectionHeader(
+            title: 'Attendance',
+            subtitle: 'Today\'s strength and attendance by batch',
+            trailing: isExpanded
+                ? Tooltip(
+                    message: 'Send WhatsApp Reports',
+                    child: Material(
+                      color: const Color(0xFF25D366),
+                      borderRadius: BorderRadius.circular(10),
+                      child: InkWell(
+                        onTap: _startAutomation,
+                        borderRadius: BorderRadius.circular(10),
+                        child: const SizedBox(
+                          width: 56,
+                          height: 56,
+                          child: Center(
+                            child: FaIcon(
+                              FontAwesomeIcons.whatsapp,
+                              color: Colors.white,
+                              size: 30,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                : null,
+          ),
+          Expanded(
+            child: batches.isEmpty
+                ? const Center(child: Text('No batches found.'))
+                : ListView.builder(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: batches.length,
+                    itemBuilder: (context, index) {
+                      final batch = batches[index];
+                      final batchName = batch['name']?.toString() ?? 'Batch';
 
-          return Card(
-            elevation: 3,
-            color: Colors.white.withValues(alpha: 0.96),
-            margin: const EdgeInsets.only(bottom: 12),
-            child: ListTile(
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 18,
-                vertical: 8,
-              ),
-              leading: const Icon(
-                Icons.fact_check,
-                color: Color(0xFF0B2B5E),
-                size: 26,
-              ),
-              title: Text(
-                batchName,
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 17,
-                ),
-              ),
-              subtitle: const Text('Tap to view and edit attendance'),
-              trailing: const Icon(Icons.chevron_right, color: Colors.black54),
-              onTap: () => _openAttendance(context, batch['id'], batchName),
+                      return Card(
+                        elevation: 3,
+                        color: Colors.white.withValues(alpha: 0.96),
+                        margin: const EdgeInsets.only(bottom: 12),
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 18,
+                            vertical: 8,
+                          ),
+                          leading: const Icon(
+                            Icons.fact_check,
+                            color: Color(0xFF0B2B5E),
+                            size: 26,
+                          ),
+                          title: Text(
+                            batchName,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 17,
+                            ),
+                          ),
+                          subtitle: isExpanded
+                              ? const Text('Tap to view and edit attendance')
+                              : Padding(
+                                  padding: const EdgeInsets.only(top: 8),
+                                  child: Row(
+                                    children: [
+                                      _AttendanceCount(
+                                        label: 'Total',
+                                        value: batch['student_count'] ?? 0,
+                                        color: Colors.blueGrey,
+                                      ),
+                                      _AttendanceCount(
+                                        label: 'Present',
+                                        value: batch['present_count'] ?? 0,
+                                        color: Colors.green,
+                                      ),
+                                      _AttendanceCount(
+                                        label: 'Absent',
+                                        value: batch['absent_count'] ?? 0,
+                                        color: Colors.red,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                          trailing: isExpanded
+                              ? SizedBox(
+                                  width: 210,
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    children: [
+                                      _AttendanceCount(
+                                        label: 'Total',
+                                        value: batch['student_count'] ?? 0,
+                                        color: Colors.blueGrey,
+                                      ),
+                                      _AttendanceCount(
+                                        label: 'Present',
+                                        value: batch['present_count'] ?? 0,
+                                        color: Colors.green,
+                                      ),
+                                      _AttendanceCount(
+                                        label: 'Absent',
+                                        value: batch['absent_count'] ?? 0,
+                                        color: Colors.red,
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              : null,
+                          onTap: () =>
+                              _openAttendance(context, batch['id'], batchName),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AttendanceCount extends StatelessWidget {
+  final String label;
+  final dynamic value;
+  final Color color;
+
+  const _AttendanceCount({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 10),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            '$value',
+            style: TextStyle(
+              color: color,
+              fontSize: 21,
+              fontWeight: FontWeight.bold,
             ),
-          );
-        },
+          ),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ],
       ),
     );
   }
@@ -109,12 +306,14 @@ class EditAttendanceScreen extends StatefulWidget {
   final String batchId;
   final String batchName;
   final String initialDate;
+  final VoidCallback? onBack;
 
   const EditAttendanceScreen({
     super.key,
     required this.batchId,
     required this.batchName,
     required this.initialDate,
+    this.onBack,
   });
 
   @override
@@ -128,6 +327,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
   Set<String> modifiedStudents =
       {}; // Track karega kis bache ka data change hua
   bool isLoading = true;
+  String? errorMessage;
   late DateTime currentDate;
 
   @override
@@ -159,13 +359,20 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
         attendanceData[record['student_id']] = record['status'];
       }
 
+      if (!mounted) return;
       setState(() {
         students = sortStudents(studentsRes);
         isLoading = false;
+        errorMessage = null;
       });
     } catch (e) {
       debugPrint('Error: $e');
-      setState(() => isLoading = false);
+      if (!mounted) return;
+      setState(() {
+        isLoading = false;
+        errorMessage =
+            'Unable to load attendance. Check your connection and try again.';
+      });
     }
   }
 
@@ -327,11 +534,21 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
       },
       child: Scaffold(
         appBar: AppBar(
+          automaticallyImplyLeading: widget.onBack == null,
+          leading: widget.onBack == null
+              ? null
+              : IconButton(
+                  tooltip: 'Back to Attendance',
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: modifiedStudents.isEmpty
+                      ? widget.onBack
+                      : () => _showUnsavedWarningDialog(widget.onBack!),
+                ),
           title: Text(widget.batchName),
           actions: [
             IconButton(
               icon: const Icon(Icons.calendar_month),
-              onPressed: _pickDate,
+              onPressed: isLoading ? null : _pickDate,
             ),
           ],
         ),
@@ -354,7 +571,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
                   children: [
                     IconButton(
                       icon: const Icon(Icons.chevron_left, size: 30),
-                      onPressed: () => _changeDate(-1),
+                      onPressed: isLoading ? null : () => _changeDate(-1),
                     ),
                     const SizedBox(width: 20),
                     Text(
@@ -368,15 +585,24 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
                     const SizedBox(width: 20),
                     IconButton(
                       icon: const Icon(Icons.chevron_right, size: 30),
-                      onPressed: canGoForward ? () => _changeDate(1) : null,
-                      color: canGoForward ? Colors.black : Colors.grey,
+                      onPressed: isLoading || !canGoForward
+                          ? null
+                          : () => _changeDate(1),
+                      color: canGoForward && !isLoading
+                          ? Colors.black
+                          : Colors.grey,
                     ),
                   ],
                 ),
               ),
               // Students List
               Expanded(
-                child: isLoading
+                child: errorMessage != null
+                    ? ErrorStateView(
+                        message: errorMessage!,
+                        onRetry: fetchStudentsAndAttendance,
+                      )
+                    : isLoading
                     ? const Center(child: CircularProgressIndicator())
                     : ListView.builder(
                         padding: const EdgeInsets.all(12),
@@ -392,40 +618,95 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
                             elevation: 2,
                             child: ListTile(
                               title: Text(student['name']),
-                              trailing: SegmentedButton<String>(
-                                segments: const [
-                                  ButtonSegment(
-                                    value: 'present',
-                                    label: Text('P'),
-                                  ),
-                                  ButtonSegment(
-                                    value: 'absent',
-                                    label: Text('A'),
-                                  ),
-                                ],
-                                selected: {
-                                  status == 'unmarked' ? 'absent' : status,
-                                },
-                                onSelectionChanged: (Set<String> newSelection) {
-                                  _updateLocalStatus(sId, newSelection.first);
-                                },
+                              trailing: SizedBox(
+                                width: 150,
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(10),
+                                        onTap: () =>
+                                            _updateLocalStatus(sId, 'present'),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 10,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: status == 'present'
+                                                ? Colors.green
+                                                : Colors.grey.shade200,
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
+                                          ),
+                                          alignment: Alignment.center,
+                                          child: Text(
+                                            'P',
+                                            style: TextStyle(
+                                              color: status == 'present'
+                                                  ? Colors.white
+                                                  : Colors.black54,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(10),
+                                        onTap: () =>
+                                            _updateLocalStatus(sId, 'absent'),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 10,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: status == 'absent'
+                                                ? Colors.red
+                                                : Colors.grey.shade200,
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
+                                          ),
+                                          alignment: Alignment.center,
+                                          child: Text(
+                                            'A',
+                                            style: TextStyle(
+                                              color: status == 'absent'
+                                                  ? Colors.white
+                                                  : Colors.black54,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           );
                         },
                       ),
               ),
+              if (modifiedStudents.isNotEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: ElevatedButton.icon(
+                    onPressed: isLoading ? null : _saveChangesToSupabase,
+                    icon: const Icon(Icons.save),
+                    label: const Text('Save Changes'),
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(52),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
-        // Save Button (Sirf tab show hoga jab koi change aya ho)
-        floatingActionButton: modifiedStudents.isNotEmpty
-            ? FloatingActionButton.extended(
-                onPressed: _saveChangesToSupabase,
-                icon: const Icon(Icons.save),
-                label: const Text('Save Changes'),
-              )
-            : null,
       ),
     );
   }

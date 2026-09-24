@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../app_theme.dart';
@@ -7,6 +8,9 @@ import 'teacher_batches_screen.dart';
 import 'admin/students_tab.dart';
 import 'admin/batches_tab.dart';
 import 'admin/admin_attendance_tab.dart';
+import '../utils/automation_launcher.dart';
+import '../utils/error_state_view.dart';
+import '../utils/dashboard_section_header.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String userRole;
@@ -22,9 +26,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   int _totalStudents = 0;
   int _totalBatches = 0;
-  int _todayPresent = 0;
-  int _todayAbsent = 0;
+  List<Map<String, dynamic>> _batchStrengths = [];
   bool _isLoadingStats = true;
+  String? _statsError;
 
   @override
   void initState() {
@@ -40,6 +44,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
+  void _closeSubScreen() {
+    setState(() => activeSubScreen = null);
+  }
+
   void _selectSidebarItem(int index) {
     setState(() {
       _selectedIndex = index;
@@ -49,45 +57,95 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _fetchDashboardStats() async {
     final supabase = Supabase.instance.client;
-    final String today = DateTime.now().toIso8601String().split('T')[0];
 
     try {
       final students = await supabase.from('students').select('id');
-      final batches = await supabase.from('batches').select('id');
+      final batches = await supabase.from('batches').select('id, name');
+      final studentsWithBatches = await supabase
+          .from('students')
+          .select('batch_id');
 
-      final todayAttendance = await supabase
-          .from('attendance')
-          .select('status')
-          .eq('date', today);
-
-      int presentCount = 0;
-      int absentCount = 0;
-      for (var record in todayAttendance) {
-        if (record['status'] == 'present') presentCount++;
-        if (record['status'] == 'absent') absentCount++;
+      final strengthByBatch = <String, int>{};
+      for (final student in studentsWithBatches) {
+        final batchId = student['batch_id']?.toString();
+        if (batchId != null) {
+          strengthByBatch[batchId] = (strengthByBatch[batchId] ?? 0) + 1;
+        }
       }
+
+      final batchStrengths = batches.map<Map<String, dynamic>>((batch) {
+        final batchId = batch['id'].toString();
+        return {
+          'name': batch['name']?.toString() ?? 'Batch',
+          'strength': strengthByBatch[batchId] ?? 0,
+        };
+      }).toList();
+      batchStrengths.sort(
+        (first, second) =>
+            first['name'].toString().compareTo(second['name'].toString()),
+      );
 
       if (mounted) {
         setState(() {
           _totalStudents = students.length;
           _totalBatches = batches.length;
-          _todayPresent = presentCount;
-          _todayAbsent = absentCount;
+          _batchStrengths = batchStrengths;
           _isLoadingStats = false;
+          _statsError = null;
         });
       }
     } catch (e) {
       debugPrint('Error fetching stats: $e');
-      if (mounted) setState(() => _isLoadingStats = false);
+      if (mounted) {
+        setState(() {
+          _isLoadingStats = false;
+          _statsError =
+              'Unable to load dashboard statistics. Check your connection and try again.';
+        });
+      }
     }
   }
 
-  void _logout(BuildContext context) {
-    Hive.box('settings').put('isLoggedIn', false);
-    Hive.box('settings').put('role', '');
+  Future<void> _logout(BuildContext context) async {
+    try {
+      await Hive.box('settings').put('isLoggedIn', false);
+      await Hive.box('settings').put('role', '');
+    } catch (e) {
+      debugPrint('Logout storage error: $e');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not log out safely. Please try again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(builder: (context) => const LoginScreen()),
+    );
+  }
+
+  Future<void> _startAutomation() async {
+    final started = await launchAutomation();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          started
+              ? 'Automation Started'
+              : 'Automation could not start. Check the backend file and Windows setup.',
+        ),
+        backgroundColor: started ? Colors.green : Colors.red,
+      ),
+    );
+  }
+
+  void _showChangePasswordMessage() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Change password will be available soon.')),
     );
   }
 
@@ -96,13 +154,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
       case 0:
         return _buildAdminView(context, isDesktop);
       case 1:
-        return StudentsTab(onNavigate: onNavigate);
+        return StudentsTab(onNavigate: onNavigate, onBack: _closeSubScreen);
       case 2:
         return const BatchesTab();
       case 3:
-        return AdminAttendanceTab(onNavigate: onNavigate);
+        return AdminAttendanceTab(
+          onNavigate: onNavigate,
+          onBack: _closeSubScreen,
+        );
       default:
         return _buildAdminView(context, isDesktop);
+    }
+  }
+
+  String get _currentSectionTitle {
+    if (widget.userRole != 'admin') return 'My Batches';
+    switch (_selectedIndex) {
+      case 1:
+        return 'Students';
+      case 2:
+        return 'Batches';
+      case 3:
+        return 'Attendance';
+      default:
+        return 'Dashboard';
     }
   }
 
@@ -117,7 +192,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           appBar: isDesktop
               ? null
               : AppBar(
-                  title: const Text('FG Academy Portal'),
+                  title: Text(_currentSectionTitle),
                   actions: [
                     if (widget.userRole == 'admin' && _selectedIndex == 0)
                       IconButton(
@@ -127,31 +202,96 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           _fetchDashboardStats();
                         },
                       ),
-                    IconButton(
-                      icon: const Icon(Icons.logout),
-                      onPressed: () => _logout(context),
-                    ),
                   ],
                 ),
-          drawer: (!isDesktop && widget.userRole == 'admin')
+          drawer: !isDesktop
               ? Drawer(
-                  child: ListView(
-                    padding: EdgeInsets.zero,
-                    children: [
-                      DrawerHeader(
-                        decoration: const BoxDecoration(
-                          color: AppTheme.fgNavyBlue,
+                  child: SafeArea(
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: ListView(
+                            padding: EdgeInsets.zero,
+                            children: [
+                              DrawerHeader(
+                                decoration: const BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      AppTheme.fgNavyBlue,
+                                      Color(0xFF174A86),
+                                    ],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Image.asset(
+                                      'assets/images/app_logo_bg.png',
+                                      width: 58,
+                                      height: 58,
+                                    ),
+                                    const SizedBox(height: 8),
+                                    const Text(
+                                      'FG Academy Portal',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (widget.userRole == 'admin') ...[
+                                _buildDrawerItem(
+                                  Icons.dashboard,
+                                  'Dashboard',
+                                  0,
+                                ),
+                                _buildDrawerItem(Icons.people, 'Students', 1),
+                                _buildDrawerItem(Icons.class_, 'Batches', 2),
+                                _buildDrawerItem(
+                                  Icons.fact_check,
+                                  'Attendance',
+                                  3,
+                                ),
+                              ] else
+                                _buildDrawerItem(
+                                  Icons.folder_open,
+                                  'My Batches',
+                                  0,
+                                ),
+                            ],
+                          ),
                         ),
-                        child: const Text(
-                          'Admin Menu',
-                          style: TextStyle(color: Colors.white, fontSize: 24),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                          child: Column(
+                            children: [
+                              OutlinedButton.icon(
+                                onPressed: _showChangePasswordMessage,
+                                icon: const Icon(Icons.lock_reset),
+                                label: const Text('Change Password'),
+                                style: OutlinedButton.styleFrom(
+                                  minimumSize: const Size.fromHeight(46),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              ElevatedButton.icon(
+                                onPressed: () => _logout(context),
+                                icon: const Icon(Icons.logout),
+                                label: const Text('Logout'),
+                                style: ElevatedButton.styleFrom(
+                                  minimumSize: const Size.fromHeight(46),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      _buildDrawerItem(Icons.dashboard, 'Dashboard', 0),
-                      _buildDrawerItem(Icons.people, 'Students', 1),
-                      _buildDrawerItem(Icons.class_, 'Batches', 2),
-                      _buildDrawerItem(Icons.fact_check, 'Attendance', 3),
-                    ],
+                      ],
+                    ),
                   ),
                 )
               : null,
@@ -192,19 +332,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 opacity: 0.18,
               ),
             ),
-            child: isDesktop && widget.userRole == 'admin'
+            child: isDesktop
                 ? Row(
                     children: [
-                      _buildSidebar(context),
+                      _buildSidebar(
+                        context,
+                        teacherOnly: widget.userRole != 'admin',
+                      ),
                       Expanded(
                         child: Padding(
                           padding: const EdgeInsets.all(20.0),
-                          child:
-                              activeSubScreen ??
-                              _getAdminScreen(
-                                true,
-                                onNavigate: _navigateToSubScreen,
-                              ),
+                          child: widget.userRole == 'admin'
+                              ? activeSubScreen ??
+                                    _getAdminScreen(
+                                      true,
+                                      onNavigate: _navigateToSubScreen,
+                                    )
+                              : const TeacherBatchesScreen(),
                         ),
                       ),
                     ],
@@ -221,13 +365,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildSidebar(BuildContext context) {
-    final entries = [
-      {'title': 'Dashboard', 'icon': Icons.dashboard, 'index': 0},
-      {'title': 'Students', 'icon': Icons.people, 'index': 1},
-      {'title': 'Batches', 'icon': Icons.class_, 'index': 2},
-      {'title': 'Attendance', 'icon': Icons.fact_check, 'index': 3},
-    ];
+  Widget _buildSidebar(BuildContext context, {bool teacherOnly = false}) {
+    final entries = teacherOnly
+        ? [
+            {'title': 'My Batches', 'icon': Icons.folder_open, 'index': 0},
+          ]
+        : [
+            {'title': 'Dashboard', 'icon': Icons.dashboard, 'index': 0},
+            {'title': 'Students', 'icon': Icons.people, 'index': 1},
+            {'title': 'Batches', 'icon': Icons.class_, 'index': 2},
+            {'title': 'Attendance', 'icon': Icons.fact_check, 'index': 3},
+          ];
 
     return Container(
       width: 250,
@@ -246,21 +394,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 12),
+          Center(
+            child: Image.asset(
+              'assets/images/app_logo_bg.png',
+              width: 88,
+              height: 88,
+              fit: BoxFit.contain,
+            ),
+          ),
+          const SizedBox(height: 12),
           const Text(
-            'FG Academy',
+            'FG Academy Portal',
             style: TextStyle(
               fontSize: 28,
               fontWeight: FontWeight.bold,
               color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Portal',
-            style: TextStyle(
-              fontSize: 18,
-              color: Colors.white70,
-              fontWeight: FontWeight.w600,
             ),
           ),
           const SizedBox(height: 28),
@@ -292,6 +440,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
             );
           }),
           const Spacer(),
+          OutlinedButton.icon(
+            onPressed: _showChangePasswordMessage,
+            icon: const Icon(Icons.lock_reset, color: Colors.white),
+            label: const Text('Change Password'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white,
+              side: const BorderSide(color: Colors.white70),
+              minimumSize: const Size.fromHeight(46),
+            ),
+          ),
+          const SizedBox(height: 8),
           ElevatedButton.icon(
             onPressed: () => _logout(context),
             icon: const Icon(Icons.logout, color: AppTheme.fgNavyBlue),
@@ -326,22 +485,84 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (_isLoadingStats) {
       return const Center(child: CircularProgressIndicator());
     }
+    if (_statsError != null) {
+      return ErrorStateView(
+        message: _statsError!,
+        onRetry: () {
+          setState(() => _isLoadingStats = true);
+          _fetchDashboardStats();
+        },
+      );
+    }
 
     final cardTextSize = isDesktop ? 18.0 : 16.0;
     final cardValueSize = isDesktop ? 38.0 : 32.0;
+    final batchCards = _batchStrengths.asMap().entries.map((entry) {
+      final colors = [
+        const [Color(0xFFE0F2FE), Color(0xFF0284C7)],
+        const [Color(0xFFFEF3C7), Color(0xFFD97706)],
+        const [Color(0xFFDCFCE7), Color(0xFF16A34A)],
+        const [Color(0xFFFCE7F3), Color(0xFFDB2777)],
+      ][entry.key % 4];
+      final batch = entry.value;
+      return _buildStatCard(
+        '${batch['name']} Students',
+        batch['strength'].toString(),
+        colors,
+        1,
+        cardTextSize,
+        cardValueSize,
+      );
+    }).toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Admin Overview',
-          style: TextStyle(
-            fontSize: isDesktop ? 30 : 24,
-            fontWeight: FontWeight.bold,
-            color: AppTheme.fgNavyBlue,
+        DashboardSectionHeader(
+          title: 'Dashboard',
+          subtitle: 'Academy overview and today\'s attendance',
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isDesktop)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Tooltip(
+                    message: 'Send WhatsApp Reports',
+                    child: Material(
+                      color: const Color(0xFF25D366),
+                      borderRadius: BorderRadius.circular(10),
+                      child: InkWell(
+                        onTap: _startAutomation,
+                        borderRadius: BorderRadius.circular(10),
+                        child: const SizedBox(
+                          width: 56,
+                          height: 56,
+                          child: Center(
+                            child: FaIcon(
+                              FontAwesomeIcons.whatsapp,
+                              color: Colors.white,
+                              size: 30,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              IconButton(
+                tooltip: 'Refresh dashboard statistics',
+                color: Colors.white,
+                icon: const Icon(Icons.refresh),
+                onPressed: () {
+                  setState(() => _isLoadingStats = true);
+                  _fetchDashboardStats();
+                },
+              ),
+            ],
           ),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 8),
         Expanded(
           child: GridView.count(
             crossAxisCount: isDesktop ? 4 : 2,
@@ -366,22 +587,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 cardTextSize,
                 cardValueSize,
               ),
-              _buildStatCard(
-                'Today Present',
-                _todayPresent.toString(),
-                const [Color(0xFFDCFCE7), Color(0xFF22C55E)],
-                3,
-                cardTextSize,
-                cardValueSize,
-              ),
-              _buildStatCard(
-                'Absents',
-                _todayAbsent.toString(),
-                const [Color(0xFFFEE2E2), Color(0xFFEF4444)],
-                3,
-                cardTextSize,
-                cardValueSize,
-              ),
+              ...batchCards,
             ],
           ),
         ),

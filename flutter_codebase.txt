@@ -1,7 +1,7 @@
 ================================================================================
 FLUTTER PROJECT CODEBASE
 Project Root: D:\academy_portal
-Total Dart Files: 12
+Total Dart Files: 17
 ================================================================================
 
 lib/main.dart:
@@ -15,17 +15,25 @@ import 'screens/splash_screen.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await Hive.initFlutter();
-  await Hive.openBox('offline_attendance');
-  await Hive.openBox('settings'); // Auth session save rakhne ke liye
+  String? startupError;
+  try {
+    await Hive.initFlutter();
+    await Hive.openBox('offline_attendance');
+    await Hive.openBox('settings'); // Auth session save rakhne ke liye
 
-  await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
+    await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
+  } catch (e) {
+    startupError = 'App setup failed. Please check your connection and retry.';
+    debugPrint('Startup error: $e');
+  }
 
-  runApp(const AcademyAttendanceApp());
+  runApp(AcademyAttendanceApp(startupError: startupError));
 }
 
 class AcademyAttendanceApp extends StatelessWidget {
-  const AcademyAttendanceApp({super.key});
+  final String? startupError;
+
+  const AcademyAttendanceApp({super.key, this.startupError});
 
   @override
   Widget build(BuildContext context) {
@@ -33,7 +41,40 @@ class AcademyAttendanceApp extends StatelessWidget {
       title: 'FG Academy Portal',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.officialTheme,
-      home: const SplashScreen(),
+      home: startupError == null
+          ? const SplashScreen()
+          : StartupErrorScreen(message: startupError!),
+    );
+  }
+}
+
+class StartupErrorScreen extends StatelessWidget {
+  final String message;
+
+  const StartupErrorScreen({super.key, required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, size: 56, color: Colors.red),
+              const SizedBox(height: 16),
+              Text(message, textAlign: TextAlign.center),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: () => main(),
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -120,13 +161,18 @@ const String supabaseAnonKey = 'sb_publishable_xSUf6MaL26tLNLo3cGHriA_bWfHhXhb';
 
 lib/screens/admin/admin_attendance_tab.dart:
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../utils/list_sorting.dart';
+import '../../utils/automation_launcher.dart';
+import '../../utils/error_state_view.dart';
+import '../../utils/dashboard_section_header.dart';
 
 class AdminAttendanceTab extends StatefulWidget {
   final Function(Widget screen)? onNavigate;
+  final VoidCallback? onBack;
 
-  const AdminAttendanceTab({super.key, this.onNavigate});
+  const AdminAttendanceTab({super.key, this.onNavigate, this.onBack});
 
   @override
   State<AdminAttendanceTab> createState() => _AdminAttendanceTabState();
@@ -136,6 +182,7 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
   final supabase = Supabase.instance.client;
   List<dynamic> batches = [];
   bool isLoading = true;
+  String? errorMessage;
 
   @override
   void initState() {
@@ -146,13 +193,54 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
   Future<void> fetchBatches() async {
     try {
       final response = await supabase.from('batches').select().order('name');
+      final studentsResponse = await supabase
+          .from('students')
+          .select('batch_id');
+      final today = DateTime.now().toIso8601String().split('T')[0];
+      final attendanceResponse = await supabase
+          .from('attendance')
+          .select('batch_id, status')
+          .eq('date', today);
+      final strengthByBatch = <String, int>{};
+      for (final student in studentsResponse) {
+        final batchId = student['batch_id']?.toString();
+        if (batchId != null) {
+          strengthByBatch[batchId] = (strengthByBatch[batchId] ?? 0) + 1;
+        }
+      }
+      final presentByBatch = <String, int>{};
+      final absentByBatch = <String, int>{};
+      for (final record in attendanceResponse) {
+        final batchId = record['batch_id']?.toString();
+        if (batchId == null) continue;
+        if (record['status'] == 'present') {
+          presentByBatch[batchId] = (presentByBatch[batchId] ?? 0) + 1;
+        } else if (record['status'] == 'absent') {
+          absentByBatch[batchId] = (absentByBatch[batchId] ?? 0) + 1;
+        }
+      }
+      final batchesWithStats = response.map((batch) {
+        final batchId = batch['id'].toString();
+        final batchCopy = Map<String, dynamic>.from(batch);
+        batchCopy['student_count'] = strengthByBatch[batchId] ?? 0;
+        batchCopy['present_count'] = presentByBatch[batchId] ?? 0;
+        batchCopy['absent_count'] = absentByBatch[batchId] ?? 0;
+        return batchCopy;
+      }).toList();
+      if (!mounted) return;
       setState(() {
-        batches = sortBatches(response);
+        batches = sortBatches(batchesWithStats);
         isLoading = false;
+        errorMessage = null;
       });
     } catch (e) {
       debugPrint('Error: $e');
-      setState(() => isLoading = false);
+      if (!mounted) return;
+      setState(() {
+        isLoading = false;
+        errorMessage =
+            'Unable to load attendance batches. Check your connection and try again.';
+      });
     }
   }
 
@@ -164,18 +252,48 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
       initialDate: today,
     );
 
-    if (widget.onNavigate != null) {
-      widget.onNavigate!(screen);
+    if (widget.onNavigate != null && widget.onBack != null) {
+      widget.onNavigate!(
+        EditAttendanceScreen(
+          batchId: batchId,
+          batchName: batchName,
+          initialDate: today,
+          onBack: widget.onBack,
+        ),
+      );
       return;
     }
 
-    Navigator.push(context, MaterialPageRoute(builder: (context) => screen));
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => screen),
+    ).then((_) {
+      if (mounted) fetchBatches();
+    });
+  }
+
+  Future<void> _startAutomation() async {
+    final started = await launchAutomation();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          started
+              ? 'Automation Started'
+              : 'Automation could not start. Check the backend file and Windows setup.',
+        ),
+        backgroundColor: started ? Colors.green : Colors.red,
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     if (isLoading) return const Center(child: CircularProgressIndicator());
-    if (batches.isEmpty) return const Center(child: Text('No batches found.'));
+    if (errorMessage != null) {
+      return ErrorStateView(message: errorMessage!, onRetry: fetchBatches);
+    }
+    final isExpanded = MediaQuery.sizeOf(context).width >= 800;
 
     return Container(
       decoration: BoxDecoration(
@@ -185,40 +303,160 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
           opacity: 0.2,
         ),
       ),
-      child: ListView.builder(
-        padding: const EdgeInsets.all(12),
-        itemCount: batches.length,
-        itemBuilder: (context, index) {
-          final batch = batches[index];
-          final batchName = batch['name']?.toString() ?? 'Batch';
+      child: Column(
+        children: [
+          DashboardSectionHeader(
+            title: 'Attendance',
+            subtitle: 'Today\'s strength and attendance by batch',
+            trailing: isExpanded
+                ? Tooltip(
+                    message: 'Send WhatsApp Reports',
+                    child: Material(
+                      color: const Color(0xFF25D366),
+                      borderRadius: BorderRadius.circular(10),
+                      child: InkWell(
+                        onTap: _startAutomation,
+                        borderRadius: BorderRadius.circular(10),
+                        child: const SizedBox(
+                          width: 56,
+                          height: 56,
+                          child: Center(
+                            child: FaIcon(
+                              FontAwesomeIcons.whatsapp,
+                              color: Colors.white,
+                              size: 30,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                : null,
+          ),
+          Expanded(
+            child: batches.isEmpty
+                ? const Center(child: Text('No batches found.'))
+                : ListView.builder(
+                    padding: const EdgeInsets.all(12),
+                    itemCount: batches.length,
+                    itemBuilder: (context, index) {
+                      final batch = batches[index];
+                      final batchName = batch['name']?.toString() ?? 'Batch';
 
-          return Card(
-            elevation: 3,
-            color: Colors.white.withValues(alpha: 0.96),
-            margin: const EdgeInsets.only(bottom: 12),
-            child: ListTile(
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 18,
-                vertical: 8,
-              ),
-              leading: const Icon(
-                Icons.fact_check,
-                color: Color(0xFF0B2B5E),
-                size: 26,
-              ),
-              title: Text(
-                batchName,
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 17,
-                ),
-              ),
-              subtitle: const Text('Tap to view and edit attendance'),
-              trailing: const Icon(Icons.chevron_right, color: Colors.black54),
-              onTap: () => _openAttendance(context, batch['id'], batchName),
+                      return Card(
+                        elevation: 3,
+                        color: Colors.white.withValues(alpha: 0.96),
+                        margin: const EdgeInsets.only(bottom: 12),
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 18,
+                            vertical: 8,
+                          ),
+                          leading: const Icon(
+                            Icons.fact_check,
+                            color: Color(0xFF0B2B5E),
+                            size: 26,
+                          ),
+                          title: Text(
+                            batchName,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 17,
+                            ),
+                          ),
+                          subtitle: isExpanded
+                              ? const Text('Tap to view and edit attendance')
+                              : Padding(
+                                  padding: const EdgeInsets.only(top: 8),
+                                  child: Row(
+                                    children: [
+                                      _AttendanceCount(
+                                        label: 'Total',
+                                        value: batch['student_count'] ?? 0,
+                                        color: Colors.blueGrey,
+                                      ),
+                                      _AttendanceCount(
+                                        label: 'Present',
+                                        value: batch['present_count'] ?? 0,
+                                        color: Colors.green,
+                                      ),
+                                      _AttendanceCount(
+                                        label: 'Absent',
+                                        value: batch['absent_count'] ?? 0,
+                                        color: Colors.red,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                          trailing: isExpanded
+                              ? SizedBox(
+                                  width: 210,
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    children: [
+                                      _AttendanceCount(
+                                        label: 'Total',
+                                        value: batch['student_count'] ?? 0,
+                                        color: Colors.blueGrey,
+                                      ),
+                                      _AttendanceCount(
+                                        label: 'Present',
+                                        value: batch['present_count'] ?? 0,
+                                        color: Colors.green,
+                                      ),
+                                      _AttendanceCount(
+                                        label: 'Absent',
+                                        value: batch['absent_count'] ?? 0,
+                                        color: Colors.red,
+                                      ),
+                                    ],
+                                  ),
+                                )
+                              : null,
+                          onTap: () =>
+                              _openAttendance(context, batch['id'], batchName),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AttendanceCount extends StatelessWidget {
+  final String label;
+  final dynamic value;
+  final Color color;
+
+  const _AttendanceCount({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 10),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            '$value',
+            style: TextStyle(
+              color: color,
+              fontSize: 21,
+              fontWeight: FontWeight.bold,
             ),
-          );
-        },
+          ),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ],
       ),
     );
   }
@@ -230,12 +468,14 @@ class EditAttendanceScreen extends StatefulWidget {
   final String batchId;
   final String batchName;
   final String initialDate;
+  final VoidCallback? onBack;
 
   const EditAttendanceScreen({
     super.key,
     required this.batchId,
     required this.batchName,
     required this.initialDate,
+    this.onBack,
   });
 
   @override
@@ -249,6 +489,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
   Set<String> modifiedStudents =
       {}; // Track karega kis bache ka data change hua
   bool isLoading = true;
+  String? errorMessage;
   late DateTime currentDate;
 
   @override
@@ -280,13 +521,20 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
         attendanceData[record['student_id']] = record['status'];
       }
 
+      if (!mounted) return;
       setState(() {
         students = sortStudents(studentsRes);
         isLoading = false;
+        errorMessage = null;
       });
     } catch (e) {
       debugPrint('Error: $e');
-      setState(() => isLoading = false);
+      if (!mounted) return;
+      setState(() {
+        isLoading = false;
+        errorMessage =
+            'Unable to load attendance. Check your connection and try again.';
+      });
     }
   }
 
@@ -448,11 +696,21 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
       },
       child: Scaffold(
         appBar: AppBar(
+          automaticallyImplyLeading: widget.onBack == null,
+          leading: widget.onBack == null
+              ? null
+              : IconButton(
+                  tooltip: 'Back to Attendance',
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: modifiedStudents.isEmpty
+                      ? widget.onBack
+                      : () => _showUnsavedWarningDialog(widget.onBack!),
+                ),
           title: Text(widget.batchName),
           actions: [
             IconButton(
               icon: const Icon(Icons.calendar_month),
-              onPressed: _pickDate,
+              onPressed: isLoading ? null : _pickDate,
             ),
           ],
         ),
@@ -475,7 +733,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
                   children: [
                     IconButton(
                       icon: const Icon(Icons.chevron_left, size: 30),
-                      onPressed: () => _changeDate(-1),
+                      onPressed: isLoading ? null : () => _changeDate(-1),
                     ),
                     const SizedBox(width: 20),
                     Text(
@@ -489,15 +747,24 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
                     const SizedBox(width: 20),
                     IconButton(
                       icon: const Icon(Icons.chevron_right, size: 30),
-                      onPressed: canGoForward ? () => _changeDate(1) : null,
-                      color: canGoForward ? Colors.black : Colors.grey,
+                      onPressed: isLoading || !canGoForward
+                          ? null
+                          : () => _changeDate(1),
+                      color: canGoForward && !isLoading
+                          ? Colors.black
+                          : Colors.grey,
                     ),
                   ],
                 ),
               ),
               // Students List
               Expanded(
-                child: isLoading
+                child: errorMessage != null
+                    ? ErrorStateView(
+                        message: errorMessage!,
+                        onRetry: fetchStudentsAndAttendance,
+                      )
+                    : isLoading
                     ? const Center(child: CircularProgressIndicator())
                     : ListView.builder(
                         padding: const EdgeInsets.all(12),
@@ -513,40 +780,95 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
                             elevation: 2,
                             child: ListTile(
                               title: Text(student['name']),
-                              trailing: SegmentedButton<String>(
-                                segments: const [
-                                  ButtonSegment(
-                                    value: 'present',
-                                    label: Text('P'),
-                                  ),
-                                  ButtonSegment(
-                                    value: 'absent',
-                                    label: Text('A'),
-                                  ),
-                                ],
-                                selected: {
-                                  status == 'unmarked' ? 'absent' : status,
-                                },
-                                onSelectionChanged: (Set<String> newSelection) {
-                                  _updateLocalStatus(sId, newSelection.first);
-                                },
+                              trailing: SizedBox(
+                                width: 150,
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(10),
+                                        onTap: () =>
+                                            _updateLocalStatus(sId, 'present'),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 10,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: status == 'present'
+                                                ? Colors.green
+                                                : Colors.grey.shade200,
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
+                                          ),
+                                          alignment: Alignment.center,
+                                          child: Text(
+                                            'P',
+                                            style: TextStyle(
+                                              color: status == 'present'
+                                                  ? Colors.white
+                                                  : Colors.black54,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(10),
+                                        onTap: () =>
+                                            _updateLocalStatus(sId, 'absent'),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 10,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: status == 'absent'
+                                                ? Colors.red
+                                                : Colors.grey.shade200,
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
+                                          ),
+                                          alignment: Alignment.center,
+                                          child: Text(
+                                            'A',
+                                            style: TextStyle(
+                                              color: status == 'absent'
+                                                  ? Colors.white
+                                                  : Colors.black54,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           );
                         },
                       ),
               ),
+              if (modifiedStudents.isNotEmpty)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: ElevatedButton.icon(
+                    onPressed: isLoading ? null : _saveChangesToSupabase,
+                    icon: const Icon(Icons.save),
+                    label: const Text('Save Changes'),
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(52),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
-        // Save Button (Sirf tab show hoga jab koi change aya ho)
-        floatingActionButton: modifiedStudents.isNotEmpty
-            ? FloatingActionButton.extended(
-                onPressed: _saveChangesToSupabase,
-                icon: const Icon(Icons.save),
-                label: const Text('Save Changes'),
-              )
-            : null,
       ),
     );
   }
@@ -557,6 +879,8 @@ lib/screens/admin/batches_tab.dart:
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../utils/list_sorting.dart';
+import '../../utils/dashboard_section_header.dart';
+import '../../utils/error_state_view.dart';
 
 class BatchesTab extends StatefulWidget {
   const BatchesTab({super.key});
@@ -569,6 +893,7 @@ class _BatchesTabState extends State<BatchesTab> {
   final supabase = Supabase.instance.client;
   List<dynamic> batches = [];
   bool isLoading = true;
+  String? errorMessage;
 
   @override
   void initState() {
@@ -579,13 +904,20 @@ class _BatchesTabState extends State<BatchesTab> {
   Future<void> fetchBatches() async {
     try {
       final response = await supabase.from('batches').select().order('name');
+      if (!mounted) return;
       setState(() {
         batches = sortBatches(response);
         isLoading = false;
+        errorMessage = null;
       });
     } catch (e) {
       debugPrint('Error fetching batches: $e');
-      setState(() => isLoading = false);
+      if (!mounted) return;
+      setState(() {
+        isLoading = false;
+        errorMessage =
+            'Unable to load batches. Check your connection and try again.';
+      });
     }
   }
 
@@ -648,10 +980,24 @@ class _BatchesTabState extends State<BatchesTab> {
                       'whatsapp_group_id': wId.isEmpty ? null : wId,
                     });
                   }
-                  fetchBatches();
+                  await fetchBatches();
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Batch saved successfully.'),
+                      ),
+                    );
+                  }
                 } catch (e) {
                   debugPrint('Error saving batch: $e');
+                  if (!mounted) return;
                   setState(() => isLoading = false);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Could not save batch. Please try again.'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
                 }
               },
               child: const Text('Save'),
@@ -662,54 +1008,12 @@ class _BatchesTabState extends State<BatchesTab> {
     );
   }
 
-  void _deleteBatch(String id, String name) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Batch?'),
-        content: Text(
-          'Kiya tum waqai "$name" ko delete karna chahte ho? Is se jure tamam students error generate kar sakte hain.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () async {
-              Navigator.pop(context);
-              setState(() => isLoading = true);
-              try {
-                await supabase.from('batches').delete().eq('id', id);
-                fetchBatches();
-              } catch (e) {
-                debugPrint('Delete error: $e');
-                setState(() => isLoading = false);
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Error: Pehle is batch k students ko remove karo!',
-                      ),
-                    ),
-                  );
-                }
-              }
-            },
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     if (isLoading) return const Center(child: CircularProgressIndicator());
+    if (errorMessage != null) {
+      return ErrorStateView(message: errorMessage!, onRetry: fetchBatches);
+    }
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -726,55 +1030,61 @@ class _BatchesTabState extends State<BatchesTab> {
           ),
         ),
         child: batches.isEmpty
-            ? const Center(child: Text('No batches found in Supabase.'))
-            : ListView.builder(
-                padding: const EdgeInsets.all(12),
-                itemCount: batches.length,
-                itemBuilder: (context, index) {
-                  final batch = batches[index];
-                  final batchName = batch['name']?.toString() ?? 'Batch';
-                  final whatsappId =
-                      batch['whatsapp_group_id']?.toString() ?? 'Not Set';
+            ? Column(
+                children: const [
+                  DashboardSectionHeader(
+                    title: 'Batches',
+                    subtitle: 'Create and manage academy batches',
+                  ),
+                  Expanded(
+                    child: Center(child: Text('No batches found in Supabase.')),
+                  ),
+                ],
+              )
+            : Column(
+                children: [
+                  const DashboardSectionHeader(
+                    title: 'Batches',
+                    subtitle: 'Create and manage academy batches',
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: batches.length,
+                      itemBuilder: (context, index) {
+                        final batch = batches[index];
+                        final batchName = batch['name']?.toString() ?? 'Batch';
+                        final whatsappId =
+                            batch['whatsapp_group_id']?.toString() ?? 'Not Set';
 
-                  return Card(
-                    elevation: 3,
-                    color: Colors.white.withValues(alpha: 0.96),
-                    margin: const EdgeInsets.only(bottom: 12),
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 8,
-                      ),
-                      leading: const Icon(
-                        Icons.class_,
-                        color: Color(0xFF0B2B5E),
-                        size: 26,
-                      ),
-                      title: Text(
-                        batchName,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 17,
-                        ),
-                      ),
-                      subtitle: Text(whatsappId),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.edit, color: Colors.blue),
-                            onPressed: () => _showBatchFormDialog(batch: batch),
+                        return Card(
+                          elevation: 3,
+                          color: Colors.white.withValues(alpha: 0.96),
+                          margin: const EdgeInsets.only(bottom: 12),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 8,
+                            ),
+                            leading: const Icon(
+                              Icons.class_,
+                              color: Color(0xFF0B2B5E),
+                              size: 26,
+                            ),
+                            title: Text(
+                              batchName,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 17,
+                              ),
+                            ),
+                            subtitle: Text(whatsappId),
                           ),
-                          IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.red),
-                            onPressed: () =>
-                                _deleteBatch(batch['id'], batch['name']),
-                          ),
-                        ],
-                      ),
+                        );
+                      },
                     ),
-                  );
-                },
+                  ),
+                ],
               ),
       ),
     );
@@ -786,11 +1096,14 @@ lib/screens/admin/students_tab.dart:
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../utils/list_sorting.dart';
+import '../../utils/error_state_view.dart';
+import '../../utils/dashboard_section_header.dart';
 
 class StudentsTab extends StatefulWidget {
   final Function(Widget screen)? onNavigate;
+  final VoidCallback? onBack;
 
-  const StudentsTab({super.key, this.onNavigate});
+  const StudentsTab({super.key, this.onNavigate, this.onBack});
 
   @override
   State<StudentsTab> createState() => _StudentsTabState();
@@ -800,6 +1113,7 @@ class _StudentsTabState extends State<StudentsTab> {
   final supabase = Supabase.instance.client;
   List<dynamic> batches = [];
   bool isLoading = true;
+  String? errorMessage;
 
   @override
   void initState() {
@@ -810,63 +1124,118 @@ class _StudentsTabState extends State<StudentsTab> {
   Future<void> fetchBatches() async {
     try {
       final response = await supabase.from('batches').select().order('name');
+      final studentsResponse = await supabase
+          .from('students')
+          .select('batch_id');
+      final strengthByBatch = <String, int>{};
+      for (final student in studentsResponse) {
+        final batchId = student['batch_id']?.toString();
+        if (batchId != null) {
+          strengthByBatch[batchId] = (strengthByBatch[batchId] ?? 0) + 1;
+        }
+      }
+      final batchesWithStrength = response.map((batch) {
+        final batchCopy = Map<String, dynamic>.from(batch);
+        batchCopy['student_count'] =
+            strengthByBatch[batch['id'].toString()] ?? 0;
+        return batchCopy;
+      }).toList();
+      if (!mounted) return;
       setState(() {
-        batches = sortBatches(response);
+        batches = sortBatches(batchesWithStrength);
         isLoading = false;
+        errorMessage = null;
       });
     } catch (e) {
       debugPrint('Error fetching batches: $e');
-      setState(() => isLoading = false);
+      if (!mounted) return;
+      setState(() {
+        isLoading = false;
+        errorMessage =
+            'Unable to load batches. Check your connection and try again.';
+      });
     }
   }
 
   void _openBatchStudents(String batchId, String batchName) {
     final screen = BatchStudentsScreen(batchId: batchId, batchName: batchName);
-
-    if (widget.onNavigate != null) {
-      widget.onNavigate!(screen);
+    if (widget.onNavigate != null && widget.onBack != null) {
+      widget.onNavigate!(
+        BatchStudentsScreen(
+          batchId: batchId,
+          batchName: batchName,
+          onBack: widget.onBack,
+        ),
+      );
       return;
     }
-
-    Navigator.push(context, MaterialPageRoute(builder: (context) => screen));
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => screen),
+    ).then((_) {
+      if (mounted) fetchBatches();
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     if (isLoading) return const Center(child: CircularProgressIndicator());
+    if (errorMessage != null) {
+      return ErrorStateView(message: errorMessage!, onRetry: fetchBatches);
+    }
     if (batches.isEmpty)
       return const Center(child: Text('No batches found in Supabase.'));
 
-    return ListView.builder(
-      padding: const EdgeInsets.all(12),
-      itemCount: batches.length,
-      itemBuilder: (context, index) {
-        final batch = batches[index];
-        final batchName = batch['name']?.toString() ?? 'Batch';
+    return Column(
+      children: [
+        const DashboardSectionHeader(
+          title: 'Students',
+          subtitle: 'Choose a batch to manage its students',
+        ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.all(12),
+            itemCount: batches.length,
+            itemBuilder: (context, index) {
+              final batch = batches[index];
+              final batchName = batch['name']?.toString() ?? 'Batch';
 
-        return Card(
-          elevation: 3,
-          color: Colors.white.withValues(alpha: 0.96),
-          margin: const EdgeInsets.only(bottom: 12),
-          child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 18,
-              vertical: 8,
-            ),
-            leading: const Icon(
-              Icons.groups,
-              color: Color(0xFF0B2B5E),
-              size: 26,
-            ),
-            title: Text(
-              batchName,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17),
-            ),
-            trailing: const Icon(Icons.chevron_right, color: Colors.black54),
-            onTap: () => _openBatchStudents(batch['id'], batchName),
+              return Card(
+                elevation: 3,
+                color: Colors.white.withValues(alpha: 0.96),
+                margin: const EdgeInsets.only(bottom: 12),
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 8,
+                  ),
+                  leading: const Icon(
+                    Icons.groups,
+                    color: Color(0xFF0B2B5E),
+                    size: 26,
+                  ),
+                  title: Text(
+                    batchName,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 17,
+                    ),
+                  ),
+                  subtitle: Text(
+                    '${batch['student_count'] ?? 0} students',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  trailing: const Icon(
+                    Icons.chevron_right,
+                    color: Colors.black54,
+                  ),
+                  onTap: () => _openBatchStudents(batch['id'], batchName),
+                ),
+              );
+            },
           ),
-        );
-      },
+        ),
+      ],
     );
   }
 }
@@ -875,11 +1244,13 @@ class _StudentsTabState extends State<StudentsTab> {
 class BatchStudentsScreen extends StatefulWidget {
   final String batchId;
   final String batchName;
+  final VoidCallback? onBack;
 
   const BatchStudentsScreen({
     super.key,
     required this.batchId,
     required this.batchName,
+    this.onBack,
   });
 
   @override
@@ -890,6 +1261,7 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
   final supabase = Supabase.instance.client;
   List<dynamic> students = [];
   bool isLoading = true;
+  String? errorMessage;
 
   @override
   void initState() {
@@ -904,13 +1276,20 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
           .select()
           .eq('batch_id', widget.batchId)
           .order('name');
+      if (!mounted) return;
       setState(() {
         students = sortStudents(response);
         isLoading = false;
+        errorMessage = null;
       });
     } catch (e) {
       debugPrint('Error fetching students: $e');
-      setState(() => isLoading = false);
+      if (!mounted) return;
+      setState(() {
+        isLoading = false;
+        errorMessage =
+            'Unable to load students. Check your connection and try again.';
+      });
     }
   }
 
@@ -962,10 +1341,26 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                       'batch_id': widget.batchId,
                     });
                   }
-                  fetchStudents(); // Naya data load karo
+                  await fetchStudents(); // Naya data load karo
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Student saved successfully.'),
+                      ),
+                    );
+                  }
                 } catch (e) {
                   debugPrint('Error saving student: $e');
+                  if (!mounted) return;
                   setState(() => isLoading = false);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Could not save student. Please try again.',
+                      ),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
                 }
               },
               child: const Text('Save'),
@@ -1007,10 +1402,19 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                       .eq('student_id', id);
                   // Phir student delete hoga
                   await supabase.from('students').delete().eq('id', id);
-                  fetchStudents();
+                  await fetchStudents();
                 } catch (e) {
                   debugPrint('Error deleting student: $e');
+                  if (!mounted) return;
                   setState(() => isLoading = false);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Could not delete student. Please try again.',
+                      ),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
                 }
               },
               child: const Text('Delete'),
@@ -1025,7 +1429,17 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
-      appBar: AppBar(title: Text('${widget.batchName} - Students')),
+      appBar: AppBar(
+        automaticallyImplyLeading: widget.onBack == null,
+        leading: widget.onBack == null
+            ? null
+            : IconButton(
+                tooltip: 'Back to Students',
+                icon: const Icon(Icons.arrow_back),
+                onPressed: widget.onBack,
+              ),
+        title: Text('${widget.batchName} - Students'),
+      ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showStudentFormDialog(),
         child: const Icon(Icons.add),
@@ -1040,6 +1454,8 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
         ),
         child: isLoading
             ? const Center(child: CircularProgressIndicator())
+            : errorMessage != null
+            ? ErrorStateView(message: errorMessage!, onRetry: fetchStudents)
             : students.isEmpty
             ? const Center(child: Text('Is batch mein koi student nahi hai.'))
             : ListView.builder(
@@ -1096,6 +1512,7 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
 
 lib/screens/dashboard_screen.dart:
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../app_theme.dart';
@@ -1104,6 +1521,9 @@ import 'teacher_batches_screen.dart';
 import 'admin/students_tab.dart';
 import 'admin/batches_tab.dart';
 import 'admin/admin_attendance_tab.dart';
+import '../utils/automation_launcher.dart';
+import '../utils/error_state_view.dart';
+import '../utils/dashboard_section_header.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String userRole;
@@ -1119,9 +1539,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   int _totalStudents = 0;
   int _totalBatches = 0;
-  int _todayPresent = 0;
-  int _todayAbsent = 0;
+  List<Map<String, dynamic>> _batchStrengths = [];
   bool _isLoadingStats = true;
+  String? _statsError;
 
   @override
   void initState() {
@@ -1137,6 +1557,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
+  void _closeSubScreen() {
+    setState(() => activeSubScreen = null);
+  }
+
   void _selectSidebarItem(int index) {
     setState(() {
       _selectedIndex = index;
@@ -1146,45 +1570,95 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _fetchDashboardStats() async {
     final supabase = Supabase.instance.client;
-    final String today = DateTime.now().toIso8601String().split('T')[0];
 
     try {
       final students = await supabase.from('students').select('id');
-      final batches = await supabase.from('batches').select('id');
+      final batches = await supabase.from('batches').select('id, name');
+      final studentsWithBatches = await supabase
+          .from('students')
+          .select('batch_id');
 
-      final todayAttendance = await supabase
-          .from('attendance')
-          .select('status')
-          .eq('date', today);
-
-      int presentCount = 0;
-      int absentCount = 0;
-      for (var record in todayAttendance) {
-        if (record['status'] == 'present') presentCount++;
-        if (record['status'] == 'absent') absentCount++;
+      final strengthByBatch = <String, int>{};
+      for (final student in studentsWithBatches) {
+        final batchId = student['batch_id']?.toString();
+        if (batchId != null) {
+          strengthByBatch[batchId] = (strengthByBatch[batchId] ?? 0) + 1;
+        }
       }
+
+      final batchStrengths = batches.map<Map<String, dynamic>>((batch) {
+        final batchId = batch['id'].toString();
+        return {
+          'name': batch['name']?.toString() ?? 'Batch',
+          'strength': strengthByBatch[batchId] ?? 0,
+        };
+      }).toList();
+      batchStrengths.sort(
+        (first, second) =>
+            first['name'].toString().compareTo(second['name'].toString()),
+      );
 
       if (mounted) {
         setState(() {
           _totalStudents = students.length;
           _totalBatches = batches.length;
-          _todayPresent = presentCount;
-          _todayAbsent = absentCount;
+          _batchStrengths = batchStrengths;
           _isLoadingStats = false;
+          _statsError = null;
         });
       }
     } catch (e) {
       debugPrint('Error fetching stats: $e');
-      if (mounted) setState(() => _isLoadingStats = false);
+      if (mounted) {
+        setState(() {
+          _isLoadingStats = false;
+          _statsError =
+              'Unable to load dashboard statistics. Check your connection and try again.';
+        });
+      }
     }
   }
 
-  void _logout(BuildContext context) {
-    Hive.box('settings').put('isLoggedIn', false);
-    Hive.box('settings').put('role', '');
+  Future<void> _logout(BuildContext context) async {
+    try {
+      await Hive.box('settings').put('isLoggedIn', false);
+      await Hive.box('settings').put('role', '');
+    } catch (e) {
+      debugPrint('Logout storage error: $e');
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not log out safely. Please try again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(builder: (context) => const LoginScreen()),
+    );
+  }
+
+  Future<void> _startAutomation() async {
+    final started = await launchAutomation();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          started
+              ? 'Automation Started'
+              : 'Automation could not start. Check the backend file and Windows setup.',
+        ),
+        backgroundColor: started ? Colors.green : Colors.red,
+      ),
+    );
+  }
+
+  void _showChangePasswordMessage() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Change password will be available soon.')),
     );
   }
 
@@ -1193,13 +1667,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
       case 0:
         return _buildAdminView(context, isDesktop);
       case 1:
-        return StudentsTab(onNavigate: onNavigate);
+        return StudentsTab(onNavigate: onNavigate, onBack: _closeSubScreen);
       case 2:
         return const BatchesTab();
       case 3:
-        return AdminAttendanceTab(onNavigate: onNavigate);
+        return AdminAttendanceTab(
+          onNavigate: onNavigate,
+          onBack: _closeSubScreen,
+        );
       default:
         return _buildAdminView(context, isDesktop);
+    }
+  }
+
+  String get _currentSectionTitle {
+    if (widget.userRole != 'admin') return 'My Batches';
+    switch (_selectedIndex) {
+      case 1:
+        return 'Students';
+      case 2:
+        return 'Batches';
+      case 3:
+        return 'Attendance';
+      default:
+        return 'Dashboard';
     }
   }
 
@@ -1214,7 +1705,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           appBar: isDesktop
               ? null
               : AppBar(
-                  title: const Text('FG Academy Portal'),
+                  title: Text(_currentSectionTitle),
                   actions: [
                     if (widget.userRole == 'admin' && _selectedIndex == 0)
                       IconButton(
@@ -1224,31 +1715,96 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           _fetchDashboardStats();
                         },
                       ),
-                    IconButton(
-                      icon: const Icon(Icons.logout),
-                      onPressed: () => _logout(context),
-                    ),
                   ],
                 ),
-          drawer: (!isDesktop && widget.userRole == 'admin')
+          drawer: !isDesktop
               ? Drawer(
-                  child: ListView(
-                    padding: EdgeInsets.zero,
-                    children: [
-                      DrawerHeader(
-                        decoration: const BoxDecoration(
-                          color: AppTheme.fgNavyBlue,
+                  child: SafeArea(
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: ListView(
+                            padding: EdgeInsets.zero,
+                            children: [
+                              DrawerHeader(
+                                decoration: const BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [
+                                      AppTheme.fgNavyBlue,
+                                      Color(0xFF174A86),
+                                    ],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Image.asset(
+                                      'assets/images/app_logo_bg.png',
+                                      width: 58,
+                                      height: 58,
+                                    ),
+                                    const SizedBox(height: 8),
+                                    const Text(
+                                      'FG Academy Portal',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if (widget.userRole == 'admin') ...[
+                                _buildDrawerItem(
+                                  Icons.dashboard,
+                                  'Dashboard',
+                                  0,
+                                ),
+                                _buildDrawerItem(Icons.people, 'Students', 1),
+                                _buildDrawerItem(Icons.class_, 'Batches', 2),
+                                _buildDrawerItem(
+                                  Icons.fact_check,
+                                  'Attendance',
+                                  3,
+                                ),
+                              ] else
+                                _buildDrawerItem(
+                                  Icons.folder_open,
+                                  'My Batches',
+                                  0,
+                                ),
+                            ],
+                          ),
                         ),
-                        child: const Text(
-                          'Admin Menu',
-                          style: TextStyle(color: Colors.white, fontSize: 24),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                          child: Column(
+                            children: [
+                              OutlinedButton.icon(
+                                onPressed: _showChangePasswordMessage,
+                                icon: const Icon(Icons.lock_reset),
+                                label: const Text('Change Password'),
+                                style: OutlinedButton.styleFrom(
+                                  minimumSize: const Size.fromHeight(46),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              ElevatedButton.icon(
+                                onPressed: () => _logout(context),
+                                icon: const Icon(Icons.logout),
+                                label: const Text('Logout'),
+                                style: ElevatedButton.styleFrom(
+                                  minimumSize: const Size.fromHeight(46),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      _buildDrawerItem(Icons.dashboard, 'Dashboard', 0),
-                      _buildDrawerItem(Icons.people, 'Students', 1),
-                      _buildDrawerItem(Icons.class_, 'Batches', 2),
-                      _buildDrawerItem(Icons.fact_check, 'Attendance', 3),
-                    ],
+                      ],
+                    ),
                   ),
                 )
               : null,
@@ -1289,19 +1845,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 opacity: 0.18,
               ),
             ),
-            child: isDesktop && widget.userRole == 'admin'
+            child: isDesktop
                 ? Row(
                     children: [
-                      _buildSidebar(context),
+                      _buildSidebar(
+                        context,
+                        teacherOnly: widget.userRole != 'admin',
+                      ),
                       Expanded(
                         child: Padding(
                           padding: const EdgeInsets.all(20.0),
-                          child:
-                              activeSubScreen ??
-                              _getAdminScreen(
-                                true,
-                                onNavigate: _navigateToSubScreen,
-                              ),
+                          child: widget.userRole == 'admin'
+                              ? activeSubScreen ??
+                                    _getAdminScreen(
+                                      true,
+                                      onNavigate: _navigateToSubScreen,
+                                    )
+                              : const TeacherBatchesScreen(),
                         ),
                       ),
                     ],
@@ -1318,13 +1878,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildSidebar(BuildContext context) {
-    final entries = [
-      {'title': 'Dashboard', 'icon': Icons.dashboard, 'index': 0},
-      {'title': 'Students', 'icon': Icons.people, 'index': 1},
-      {'title': 'Batches', 'icon': Icons.class_, 'index': 2},
-      {'title': 'Attendance', 'icon': Icons.fact_check, 'index': 3},
-    ];
+  Widget _buildSidebar(BuildContext context, {bool teacherOnly = false}) {
+    final entries = teacherOnly
+        ? [
+            {'title': 'My Batches', 'icon': Icons.folder_open, 'index': 0},
+          ]
+        : [
+            {'title': 'Dashboard', 'icon': Icons.dashboard, 'index': 0},
+            {'title': 'Students', 'icon': Icons.people, 'index': 1},
+            {'title': 'Batches', 'icon': Icons.class_, 'index': 2},
+            {'title': 'Attendance', 'icon': Icons.fact_check, 'index': 3},
+          ];
 
     return Container(
       width: 250,
@@ -1343,21 +1907,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 12),
+          Center(
+            child: Image.asset(
+              'assets/images/app_logo_bg.png',
+              width: 88,
+              height: 88,
+              fit: BoxFit.contain,
+            ),
+          ),
+          const SizedBox(height: 12),
           const Text(
-            'FG Academy',
+            'FG Academy Portal',
             style: TextStyle(
               fontSize: 28,
               fontWeight: FontWeight.bold,
               color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Portal',
-            style: TextStyle(
-              fontSize: 18,
-              color: Colors.white70,
-              fontWeight: FontWeight.w600,
             ),
           ),
           const SizedBox(height: 28),
@@ -1389,6 +1953,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
             );
           }),
           const Spacer(),
+          OutlinedButton.icon(
+            onPressed: _showChangePasswordMessage,
+            icon: const Icon(Icons.lock_reset, color: Colors.white),
+            label: const Text('Change Password'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white,
+              side: const BorderSide(color: Colors.white70),
+              minimumSize: const Size.fromHeight(46),
+            ),
+          ),
+          const SizedBox(height: 8),
           ElevatedButton.icon(
             onPressed: () => _logout(context),
             icon: const Icon(Icons.logout, color: AppTheme.fgNavyBlue),
@@ -1423,22 +1998,84 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (_isLoadingStats) {
       return const Center(child: CircularProgressIndicator());
     }
+    if (_statsError != null) {
+      return ErrorStateView(
+        message: _statsError!,
+        onRetry: () {
+          setState(() => _isLoadingStats = true);
+          _fetchDashboardStats();
+        },
+      );
+    }
 
     final cardTextSize = isDesktop ? 18.0 : 16.0;
     final cardValueSize = isDesktop ? 38.0 : 32.0;
+    final batchCards = _batchStrengths.asMap().entries.map((entry) {
+      final colors = [
+        const [Color(0xFFE0F2FE), Color(0xFF0284C7)],
+        const [Color(0xFFFEF3C7), Color(0xFFD97706)],
+        const [Color(0xFFDCFCE7), Color(0xFF16A34A)],
+        const [Color(0xFFFCE7F3), Color(0xFFDB2777)],
+      ][entry.key % 4];
+      final batch = entry.value;
+      return _buildStatCard(
+        '${batch['name']} Students',
+        batch['strength'].toString(),
+        colors,
+        1,
+        cardTextSize,
+        cardValueSize,
+      );
+    }).toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Admin Overview',
-          style: TextStyle(
-            fontSize: isDesktop ? 30 : 24,
-            fontWeight: FontWeight.bold,
-            color: AppTheme.fgNavyBlue,
+        DashboardSectionHeader(
+          title: 'Dashboard',
+          subtitle: 'Academy overview and today\'s attendance',
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isDesktop)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Tooltip(
+                    message: 'Send WhatsApp Reports',
+                    child: Material(
+                      color: const Color(0xFF25D366),
+                      borderRadius: BorderRadius.circular(10),
+                      child: InkWell(
+                        onTap: _startAutomation,
+                        borderRadius: BorderRadius.circular(10),
+                        child: const SizedBox(
+                          width: 56,
+                          height: 56,
+                          child: Center(
+                            child: FaIcon(
+                              FontAwesomeIcons.whatsapp,
+                              color: Colors.white,
+                              size: 30,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              IconButton(
+                tooltip: 'Refresh dashboard statistics',
+                color: Colors.white,
+                icon: const Icon(Icons.refresh),
+                onPressed: () {
+                  setState(() => _isLoadingStats = true);
+                  _fetchDashboardStats();
+                },
+              ),
+            ],
           ),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 8),
         Expanded(
           child: GridView.count(
             crossAxisCount: isDesktop ? 4 : 2,
@@ -1463,22 +2100,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 cardTextSize,
                 cardValueSize,
               ),
-              _buildStatCard(
-                'Today Present',
-                _todayPresent.toString(),
-                const [Color(0xFFDCFCE7), Color(0xFF22C55E)],
-                3,
-                cardTextSize,
-                cardValueSize,
-              ),
-              _buildStatCard(
-                'Absents',
-                _todayAbsent.toString(),
-                const [Color(0xFFFEE2E2), Color(0xFFEF4444)],
-                3,
-                cardTextSize,
-                cardValueSize,
-              ),
+              ...batchCards,
             ],
           ),
         ),
@@ -1566,6 +2188,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final usernameController = TextEditingController();
   final passwordController = TextEditingController();
   bool isLoading = false;
+  bool _obscurePassword = true;
 
   Future<void> signIn() async {
     final username = usernameController.text.trim().toLowerCase();
@@ -1683,12 +2306,24 @@ class _LoginScreenState extends State<LoginScreen> {
                       const SizedBox(height: 16),
                       TextField(
                         controller: passwordController,
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           labelText: 'Password',
                           border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.lock),
+                          prefixIcon: const Icon(Icons.lock),
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              _obscurePassword
+                                  ? Icons.visibility
+                                  : Icons.visibility_off,
+                            ),
+                            onPressed: () {
+                              setState(() {
+                                _obscurePassword = !_obscurePassword;
+                              });
+                            },
+                          ),
                         ),
-                        obscureText: true,
+                        obscureText: _obscurePassword,
                       ),
                       const SizedBox(height: 24),
                       SizedBox(
@@ -1798,14 +2433,27 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   bool _isUpdateRequired(String current, String required) {
-    List<int> curr = current.split('.').map(int.parse).toList();
-    List<int> req = required.split('.').map(int.parse).toList();
+    final curr = _parseVersion(current);
+    final req = _parseVersion(required);
+    if (curr == null || req == null) return false;
 
     for (int i = 0; i < 3; i++) {
       if (req[i] > curr[i]) return true;
       if (req[i] < curr[i]) return false;
     }
     return false;
+  }
+
+  List<int>? _parseVersion(String version) {
+    final parts = version.split('.');
+    if (parts.length < 3) return null;
+    final parsed = <int>[];
+    for (final part in parts.take(3)) {
+      final value = int.tryParse(part);
+      if (value == null) return null;
+      parsed.add(value);
+    }
+    return parsed;
   }
 
   void _showUpdateDialog(String url) {
@@ -1823,9 +2471,23 @@ class _SplashScreenState extends State<SplashScreen> {
           actions: [
             ElevatedButton(
               onPressed: () async {
-                final uri = Uri.parse(url);
-                if (await canLaunchUrl(uri)) {
+                try {
+                  final uri = Uri.tryParse(url);
+                  if (uri == null || !await canLaunchUrl(uri)) {
+                    throw Exception('Update URL cannot be opened');
+                  }
                   await launchUrl(uri, mode: LaunchMode.externalApplication);
+                } catch (e) {
+                  debugPrint('Update launch failed: $e');
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Unable to open the update link. Please try again later.',
+                      ),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
                 }
               },
               child: const Text('Download Update'),
@@ -1853,7 +2515,7 @@ class _SplashScreenState extends State<SplashScreen> {
             Padding(
               padding: const EdgeInsets.only(top: 60),
               child: Center(
-                child: Image.asset('assets/images/app_logo.png', width: 200)
+                child: Image.asset('assets/images/app_logo_bg.png', width: 200)
                     .animate()
                     .fadeIn(duration: 900.ms)
                     .scale(
@@ -1901,6 +2563,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../utils/list_sorting.dart';
+import '../utils/error_state_view.dart';
 
 class StudentsScreen extends StatefulWidget {
   final String batchId;
@@ -1920,10 +2583,11 @@ class _StudentsScreenState extends State<StudentsScreen> {
   final supabase = Supabase.instance.client;
   List<dynamic> students = [];
   bool isLoading = true;
+  String? errorMessage;
 
   Map<String, String?> attendanceStatus =
       {}; // student_id -> 'present' / 'absent' / null
-  Set<String> lockedStudents = {}; // Jin ki attendance already lag chuki hai
+  bool hasUnsavedChanges = false;
 
   final String todayDate = DateTime.now().toIso8601String().split('T')[0];
 
@@ -1949,6 +2613,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
           .eq('batch_id', widget.batchId)
           .eq('date', todayDate);
 
+      if (!mounted) return;
       setState(() {
         students = sortStudents(studentsResponse);
 
@@ -1957,30 +2622,58 @@ class _StudentsScreenState extends State<StudentsScreen> {
           attendanceStatus[student['id']] = null;
         }
 
-        // Jin ki attendance mil gai, unhe lock karo aur unka status update karo
+        // Existing attendance is loaded so it can be edited and resubmitted.
         for (var record in attendanceResponse) {
           final sId = record['student_id'];
           attendanceStatus[sId] = record['status'];
-          lockedStudents.add(sId);
         }
 
         isLoading = false;
+        errorMessage = null;
       });
     } catch (e) {
       debugPrint('Error fetching data: $e');
-      setState(() => isLoading = false);
+      if (!mounted) return;
+      setState(() {
+        isLoading = false;
+        errorMessage =
+            'Unable to load students and attendance. Check your connection and try again.';
+      });
     }
   }
 
   void markAll(String status) {
     setState(() {
       for (var student in students) {
-        // Sirf unhein mark karo jo locked nahi hain
-        if (!lockedStudents.contains(student['id'])) {
-          attendanceStatus[student['id']] = status;
-        }
+        attendanceStatus[student['id']] = status;
       }
+      hasUnsavedChanges = true;
     });
+  }
+
+  void _showUnsavedChangesDialog() {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Unsaved Attendance'),
+        content: const Text(
+          'Attendance changes have not been submitted yet. Leave this page and discard them?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Stay'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              Navigator.pop(context);
+            },
+            child: const Text('Discard & Leave'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showAddStudentDialog() {
@@ -2028,7 +2721,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
                     students.add(newStudent);
                     students = sortStudents(students);
                     attendanceStatus[newStudent['id']] = 'present';
-                    lockedStudents.add(newStudent['id']);
                     isLoading = false;
                   });
 
@@ -2098,319 +2790,322 @@ class _StudentsScreenState extends State<StudentsScreen> {
     final isDesktop = screenWidth >= 800;
     final buttonTextSize = isDesktop ? 16.0 : 14.0;
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: Text(
-          '${widget.batchName} Attendance',
-          style: TextStyle(fontSize: isDesktop ? 22 : 18),
-        ),
-        actions: [
-          IconButton(
-            onPressed: _showAddStudentDialog,
-            tooltip: 'Add student',
-            icon: const Icon(Icons.person_add),
+    return PopScope(
+      canPop: !hasUnsavedChanges,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && hasUnsavedChanges) {
+          _showUnsavedChangesDialog();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(
+          title: Text(
+            '${widget.batchName} Attendance',
+            style: TextStyle(fontSize: isDesktop ? 22 : 18),
           ),
-        ],
-      ),
-      body: Container(
-        decoration: BoxDecoration(
-          image: DecorationImage(
-            image: const AssetImage('assets/images/school_bg.png'),
-            fit: BoxFit.cover,
-            opacity: 0.18,
-          ),
+          actions: [
+            IconButton(
+              onPressed: _showAddStudentDialog,
+              tooltip: 'Add student',
+              icon: const Icon(Icons.person_add),
+            ),
+          ],
         ),
-        child: SafeArea(
-          child: isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : students.isEmpty
-              ? const Center(child: Text('No students found for this batch.'))
-              : Column(
-                  children: [
-                    Container(
-                      width: double.infinity,
-                      margin: const EdgeInsets.all(12),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.96),
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.08),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          ElevatedButton.icon(
-                            onPressed: () => markAll('present'),
-                            icon: const Icon(Icons.check, size: 18),
-                            label: Text(
-                              'All P',
-                              style: TextStyle(fontSize: buttonTextSize),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.green,
-                              foregroundColor: Colors.white,
-                              minimumSize: const Size(110, 42),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton.icon(
-                            onPressed: () => markAll('absent'),
-                            icon: const Icon(Icons.close, size: 18),
-                            label: Text(
-                              'All A',
-                              style: TextStyle(fontSize: buttonTextSize),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.red,
-                              foregroundColor: Colors.white,
-                              minimumSize: const Size(110, 42),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Expanded(
-                      child: ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                        itemCount: students.length,
-                        itemBuilder: (context, index) {
-                          final student = students[index];
-                          final studentId = student['id'];
-                          final currentStatus = attendanceStatus[studentId];
-                          final isLocked = lockedStudents.contains(studentId);
-
-                          return Card(
-                            margin: const EdgeInsets.only(bottom: 10),
-                            elevation: 3,
-                            color: Colors.white.withOpacity(0.96),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: ListTile(
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
-                              ),
-                              leading: Icon(
-                                isLocked ? Icons.lock : Icons.person,
-                                color: isLocked
-                                    ? Colors.grey
-                                    : const Color(0xFF0B2B5E),
-                              ),
-                              title: Text(
-                                student['name'],
-                                style: TextStyle(
-                                  fontSize: isDesktop ? 18 : 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: currentStatus == null
-                                      ? Colors.black87
-                                      : (isLocked
-                                            ? Colors.grey
-                                            : Colors.black87),
-                                  decoration: isLocked
-                                      ? TextDecoration.lineThrough
-                                      : null,
-                                ),
-                              ),
-                              trailing: SizedBox(
-                                width: 150,
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.end,
-                                  children: [
-                                    Expanded(
-                                      child: InkWell(
-                                        borderRadius: BorderRadius.circular(10),
-                                        onTap: isLocked
-                                            ? null
-                                            : () {
-                                                setState(() {
-                                                  attendanceStatus[studentId] =
-                                                      'present';
-                                                });
-                                              },
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 10,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: currentStatus == 'present'
-                                                ? (isLocked
-                                                      ? Colors.green.withValues(
-                                                          alpha: 0.5,
-                                                        )
-                                                      : Colors.green)
-                                                : Colors.grey.shade200,
-                                            borderRadius: BorderRadius.circular(
-                                              10,
-                                            ),
-                                          ),
-                                          alignment: Alignment.center,
-                                          child: Text(
-                                            'P',
-                                            style: TextStyle(
-                                              color: currentStatus == 'present'
-                                                  ? Colors.white
-                                                  : Colors.black54,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: isDesktop ? 18 : 16,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: InkWell(
-                                        borderRadius: BorderRadius.circular(10),
-                                        onTap: isLocked
-                                            ? null
-                                            : () {
-                                                setState(() {
-                                                  attendanceStatus[studentId] =
-                                                      'absent';
-                                                });
-                                              },
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 10,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: currentStatus == 'absent'
-                                                ? (isLocked
-                                                      ? Colors.red.withValues(
-                                                          alpha: 0.5,
-                                                        )
-                                                      : Colors.red)
-                                                : Colors.grey.shade200,
-                                            borderRadius: BorderRadius.circular(
-                                              10,
-                                            ),
-                                          ),
-                                          alignment: Alignment.center,
-                                          child: Text(
-                                            'A',
-                                            style: TextStyle(
-                                              color: currentStatus == 'absent'
-                                                  ? Colors.white
-                                                  : Colors.black54,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: isDesktop ? 18 : 16,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.all(16),
-                          minimumSize: const Size.fromHeight(52),
+        body: Container(
+          decoration: BoxDecoration(
+            image: DecorationImage(
+              image: const AssetImage('assets/images/school_bg.png'),
+              fit: BoxFit.cover,
+              opacity: 0.18,
+            ),
+          ),
+          child: SafeArea(
+            child: isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : errorMessage != null
+                ? ErrorStateView(
+                    message: errorMessage!,
+                    onRetry: fetchStudentsAndAttendance,
+                  )
+                : students.isEmpty
+                ? const Center(child: Text('No students found for this batch.'))
+                : Column(
+                    children: [
+                      Container(
+                        width: double.infinity,
+                        margin: const EdgeInsets.all(12),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
                         ),
-                        onPressed: () async {
-                          final shouldSubmit = await _confirmSubmitAttendance();
-                          if (!shouldSubmit || !mounted) return;
-
-                          final List<Map<String, dynamic>> newAttendanceData =
-                              [];
-
-                          attendanceStatus.forEach((studentId, status) {
-                            if (status != null &&
-                                !lockedStudents.contains(studentId)) {
-                              newAttendanceData.add({
-                                'student_id': studentId,
-                                'batch_id': widget.batchId,
-                                'date': todayDate,
-                                'status': status,
-                              });
-                            }
-                          });
-
-                          if (newAttendanceData.isEmpty) {
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Koi nayi attendance mark nahi ki gayi.',
-                                ),
-                                backgroundColor: Colors.orange,
-                              ),
-                            );
-                            return;
-                          }
-
-                          if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Saving attendance...'),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.96),
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.08),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
                             ),
-                          );
-
-                          final offlineBox = Hive.box('offline_attendance');
-                          final String localKey =
-                              '${widget.batchId}_$todayDate';
-
-                          await offlineBox.put(localKey, newAttendanceData);
-
-                          try {
-                            await supabase
-                                .from('attendance')
-                                .upsert(
-                                  newAttendanceData,
-                                  onConflict: 'student_id, date',
-                                );
-                            await offlineBox.delete(localKey);
-
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Attendance synced! ✅'),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            ElevatedButton.icon(
+                              onPressed: () => markAll('present'),
+                              icon: const Icon(Icons.check, size: 18),
+                              label: Text(
+                                'All P',
+                                style: TextStyle(fontSize: buttonTextSize),
+                              ),
+                              style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.green,
+                                foregroundColor: Colors.white,
+                                minimumSize: const Size(110, 42),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton.icon(
+                              onPressed: () => markAll('absent'),
+                              icon: const Icon(Icons.close, size: 18),
+                              label: Text(
+                                'All A',
+                                style: TextStyle(fontSize: buttonTextSize),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.red,
+                                foregroundColor: Colors.white,
+                                minimumSize: const Size(110, 42),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                          itemCount: students.length,
+                          itemBuilder: (context, index) {
+                            final student = students[index];
+                            final studentId = student['id'];
+                            final currentStatus = attendanceStatus[studentId];
+
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 10),
+                              elevation: 3,
+                              color: Colors.white.withOpacity(0.96),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: ListTile(
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 8,
+                                ),
+                                leading: Icon(
+                                  Icons.person,
+                                  color: const Color(0xFF0B2B5E),
+                                ),
+                                title: Text(
+                                  student['name'],
+                                  style: TextStyle(
+                                    fontSize: isDesktop ? 18 : 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                                trailing: SizedBox(
+                                  width: 150,
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    children: [
+                                      Expanded(
+                                        child: InkWell(
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          onTap: () {
+                                            setState(() {
+                                              attendanceStatus[studentId] =
+                                                  'present';
+                                              hasUnsavedChanges = true;
+                                            });
+                                          },
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 10,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: currentStatus == 'present'
+                                                  ? Colors.green
+                                                  : Colors.grey.shade200,
+                                              borderRadius:
+                                                  BorderRadius.circular(10),
+                                            ),
+                                            alignment: Alignment.center,
+                                            child: Text(
+                                              'P',
+                                              style: TextStyle(
+                                                color:
+                                                    currentStatus == 'present'
+                                                    ? Colors.white
+                                                    : Colors.black54,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: isDesktop ? 18 : 16,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: InkWell(
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          onTap: () {
+                                            setState(() {
+                                              attendanceStatus[studentId] =
+                                                  'absent';
+                                              hasUnsavedChanges = true;
+                                            });
+                                          },
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 10,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: currentStatus == 'absent'
+                                                  ? Colors.red
+                                                  : Colors.grey.shade200,
+                                              borderRadius:
+                                                  BorderRadius.circular(10),
+                                            ),
+                                            alignment: Alignment.center,
+                                            child: Text(
+                                              'A',
+                                              style: TextStyle(
+                                                color: currentStatus == 'absent'
+                                                    ? Colors.white
+                                                    : Colors.black54,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: isDesktop ? 18 : 16,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ),
                             );
-                            Navigator.pop(context);
-                          } catch (e) {
-                            debugPrint('Supabase push failed: $e');
+                          },
+                        ),
+                      ),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.all(16),
+                            minimumSize: const Size.fromHeight(52),
+                          ),
+                          onPressed: () async {
+                            final shouldSubmit =
+                                await _confirmSubmitAttendance();
+                            if (!shouldSubmit || !mounted) return;
+
+                            final List<Map<String, dynamic>> newAttendanceData =
+                                [];
+
+                            attendanceStatus.forEach((studentId, status) {
+                              if (status != null) {
+                                newAttendanceData.add({
+                                  'student_id': studentId,
+                                  'batch_id': widget.batchId,
+                                  'date': todayDate,
+                                  'status': status,
+                                });
+                              }
+                            });
+
+                            if (newAttendanceData.isEmpty) {
+                              if (!mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Koi nayi attendance mark nahi ki gayi.',
+                                  ),
+                                  backgroundColor: Colors.orange,
+                                ),
+                              );
+                              return;
+                            }
+
                             if (!mounted) return;
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
-                                content: Text('Saved offline. 💾'),
-                                backgroundColor: Colors.blueGrey,
+                                content: Text('Saving attendance...'),
                               ),
                             );
-                            Navigator.pop(context);
-                          }
-                        },
-                        child: const Text(
-                          'Submit Attendance',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
+
+                            final offlineBox = Hive.box('offline_attendance');
+                            final String localKey =
+                                '${widget.batchId}_$todayDate';
+                            var savedOffline = false;
+
+                            try {
+                              await offlineBox.put(localKey, newAttendanceData);
+                              savedOffline = true;
+                              await supabase
+                                  .from('attendance')
+                                  .upsert(
+                                    newAttendanceData,
+                                    onConflict: 'student_id, date',
+                                  );
+                              await offlineBox.delete(localKey);
+
+                              if (!mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Attendance synced! ✅'),
+                                  backgroundColor: Colors.green,
+                                ),
+                              );
+                              Navigator.pop(context);
+                            } catch (e) {
+                              debugPrint('Attendance save failed: $e');
+                              if (!mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    savedOffline
+                                        ? 'Saved offline. 💾'
+                                        : 'Could not save attendance. Please try again.',
+                                  ),
+                                  backgroundColor: savedOffline
+                                      ? Colors.blueGrey
+                                      : Colors.red,
+                                ),
+                              );
+                              if (savedOffline) Navigator.pop(context);
+                            }
+                          },
+                          child: const Text(
+                            'Submit Attendance',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
+          ),
         ),
       ),
     );
@@ -2425,6 +3120,8 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'student_screen.dart';
 import '../app_theme.dart';
 import '../utils/list_sorting.dart';
+import '../utils/error_state_view.dart';
+import '../utils/dashboard_section_header.dart';
 
 class TeacherBatchesScreen extends StatefulWidget {
   final Function(Widget screen)? onNavigate;
@@ -2439,6 +3136,7 @@ class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
   final supabase = Supabase.instance.client;
   List<dynamic> batches = [];
   bool isLoading = true;
+  String? errorMessage;
 
   @override
   void initState() {
@@ -2452,6 +3150,7 @@ class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
     if (offlineBox.isEmpty) return;
 
     bool syncedSomething = false;
+    bool failedSync = false;
 
     for (var key in offlineBox.keys.toList()) {
       try {
@@ -2468,6 +3167,7 @@ class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
         syncedSomething = true;
       } catch (e) {
         debugPrint('Background sync failed for key $key: $e');
+        failedSync = true;
       }
     }
 
@@ -2480,29 +3180,40 @@ class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
         ),
       );
     }
+    if (failedSync && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Some offline attendance is still pending. Please retry later.',
+          ),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    }
   }
 
   Future<void> fetchBatches() async {
     try {
       final response = await supabase.from('batches').select().order('name');
+      if (!mounted) return;
       setState(() {
         batches = sortBatches(response);
         isLoading = false;
+        errorMessage = null;
       });
     } catch (e) {
       debugPrint('Error fetching data: $e');
-      setState(() => isLoading = false);
+      if (!mounted) return;
+      setState(() {
+        isLoading = false;
+        errorMessage =
+            'Unable to load batches. Check your connection and try again.';
+      });
     }
   }
 
   void _openStudentsScreen(String batchId, String batchName) {
     final screen = StudentsScreen(batchId: batchId, batchName: batchName);
-
-    if (widget.onNavigate != null) {
-      widget.onNavigate!(screen);
-      return;
-    }
-
     Navigator.push(context, MaterialPageRoute(builder: (context) => screen));
   }
 
@@ -2519,46 +3230,208 @@ class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
       child: SafeArea(
         child: isLoading
             ? const Center(child: CircularProgressIndicator())
+            : errorMessage != null
+            ? ErrorStateView(message: errorMessage!, onRetry: fetchBatches)
             : batches.isEmpty
-            ? const Center(child: Text('No batches found. Check Supabase.'))
-            : ListView.builder(
-                padding: const EdgeInsets.all(12),
-                itemCount: batches.length,
-                itemBuilder: (context, index) {
-                  final batch = batches[index];
-                  final batchName = batch['name']?.toString() ?? 'Batch';
-
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    elevation: 3,
-                    color: Colors.white.withValues(alpha: 0.96),
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 8,
-                      ),
-                      leading: Icon(
-                        Icons.folder_open,
-                        color: AppTheme.fgNavyBlue,
-                        size: 28,
-                      ),
-                      title: Text(
-                        batchName,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 17,
-                        ),
-                      ),
-                      subtitle: const Text('Open batch details'),
-                      trailing: const Icon(
-                        Icons.chevron_right,
-                        color: Colors.black54,
-                      ),
-                      onTap: () => _openStudentsScreen(batch['id'], batchName),
+            ? Column(
+                children: const [
+                  DashboardSectionHeader(
+                    title: 'My Batches',
+                    subtitle: 'Choose a batch to take today\'s attendance',
+                  ),
+                  Expanded(
+                    child: Center(
+                      child: Text('No batches found. Check Supabase.'),
                     ),
-                  );
-                },
+                  ),
+                ],
+              )
+            : Column(
+                children: [
+                  const DashboardSectionHeader(
+                    title: 'My Batches',
+                    subtitle: 'Choose a batch to take today\'s attendance',
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: batches.length,
+                      itemBuilder: (context, index) {
+                        final batch = batches[index];
+                        final batchName = batch['name']?.toString() ?? 'Batch';
+
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          elevation: 3,
+                          color: Colors.white.withValues(alpha: 0.96),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 8,
+                            ),
+                            leading: Icon(
+                              Icons.folder_open,
+                              color: AppTheme.fgNavyBlue,
+                              size: 28,
+                            ),
+                            title: Text(
+                              batchName,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 17,
+                              ),
+                            ),
+                            subtitle: const Text('Open batch details'),
+                            trailing: const Icon(
+                              Icons.chevron_right,
+                              color: Colors.black54,
+                            ),
+                            onTap: () =>
+                                _openStudentsScreen(batch['id'], batchName),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ),
+      ),
+    );
+  }
+}
+
+
+lib/utils/automation_launcher.dart:
+export 'automation_launcher_stub.dart'
+    if (dart.library.io) 'automation_launcher_io.dart';
+
+
+lib/utils/automation_launcher_io.dart:
+import 'dart:io';
+
+bool get isWindowsPlatform => Platform.isWindows;
+
+Future<bool> launchAutomation() async {
+  if (!Platform.isWindows) return false;
+
+  final batchFile = File('${Directory.current.path}\\FGEI_Backend\\main.bat');
+  if (!batchFile.existsSync()) return false;
+
+  try {
+    final result = await Process.run('cmd', [
+      '/c',
+      'start',
+      '',
+      batchFile.path,
+    ]);
+    return result.exitCode == 0;
+  } catch (e) {
+    return false;
+  }
+}
+
+
+lib/utils/automation_launcher_stub.dart:
+bool get isWindowsPlatform => false;
+
+Future<bool> launchAutomation() async => false;
+
+
+lib/utils/dashboard_section_header.dart:
+import 'package:flutter/material.dart';
+import '../app_theme.dart';
+
+class DashboardSectionHeader extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final Widget? trailing;
+
+  const DashboardSectionHeader({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+      padding: const EdgeInsets.fromLTRB(18, 14, 12, 14),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [AppTheme.fgNavyBlue, Color(0xFF174A86)],
+        ),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: const [
+          BoxShadow(
+            color: Color.fromRGBO(11, 43, 94, 0.22),
+            blurRadius: 12,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 21,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          if (trailing != null) trailing!,
+        ],
+      ),
+    );
+  }
+}
+
+
+lib/utils/error_state_view.dart:
+import 'package:flutter/material.dart';
+
+class ErrorStateView extends StatelessWidget {
+  final String message;
+  final VoidCallback? onRetry;
+
+  const ErrorStateView({super.key, required this.message, this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cloud_off, size: 48, color: Colors.redAccent),
+            const SizedBox(height: 12),
+            Text(message, textAlign: TextAlign.center),
+            if (onRetry != null) ...[
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -2662,6 +3535,7 @@ dependencies:
   hive_flutter: ^1.1.0
   path_provider: ^2.1.6
   google_fonts: ^8.2.1
+  font_awesome_flutter: ^10.9.0
   flutter_animate: ^4.5.2
   package_info_plus: ^10.2.1
   url_launcher: ^6.3.2
@@ -2699,6 +3573,7 @@ flutter:
 
   assets:
     - assets/images/app_logo.png
+    - assets/images/app_logo_bg.png
     - assets/images/school_bg.png
 
   # To add assets to your application, add an assets section, like this:

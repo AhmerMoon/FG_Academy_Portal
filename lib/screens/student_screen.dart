@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../utils/list_sorting.dart';
+import '../utils/error_state_view.dart';
 
 class StudentsScreen extends StatefulWidget {
   final String batchId;
@@ -21,9 +22,11 @@ class _StudentsScreenState extends State<StudentsScreen> {
   final supabase = Supabase.instance.client;
   List<dynamic> students = [];
   bool isLoading = true;
+  String? errorMessage;
 
   Map<String, String?> attendanceStatus =
       {}; // student_id -> 'present' / 'absent' / null
+  bool hasUnsavedChanges = false;
 
   final String todayDate = DateTime.now().toIso8601String().split('T')[0];
 
@@ -49,6 +52,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
           .eq('batch_id', widget.batchId)
           .eq('date', todayDate);
 
+      if (!mounted) return;
       setState(() {
         students = sortStudents(studentsResponse);
 
@@ -64,10 +68,16 @@ class _StudentsScreenState extends State<StudentsScreen> {
         }
 
         isLoading = false;
+        errorMessage = null;
       });
     } catch (e) {
       debugPrint('Error fetching data: $e');
-      setState(() => isLoading = false);
+      if (!mounted) return;
+      setState(() {
+        isLoading = false;
+        errorMessage =
+            'Unable to load students and attendance. Check your connection and try again.';
+      });
     }
   }
 
@@ -76,7 +86,33 @@ class _StudentsScreenState extends State<StudentsScreen> {
       for (var student in students) {
         attendanceStatus[student['id']] = status;
       }
+      hasUnsavedChanges = true;
     });
+  }
+
+  void _showUnsavedChangesDialog() {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Unsaved Attendance'),
+        content: const Text(
+          'Attendance changes have not been submitted yet. Leave this page and discard them?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Stay'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              Navigator.pop(context);
+            },
+            child: const Text('Discard & Leave'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showAddStudentDialog() {
@@ -193,296 +229,322 @@ class _StudentsScreenState extends State<StudentsScreen> {
     final isDesktop = screenWidth >= 800;
     final buttonTextSize = isDesktop ? 16.0 : 14.0;
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: Text(
-          '${widget.batchName} Attendance',
-          style: TextStyle(fontSize: isDesktop ? 22 : 18),
-        ),
-        actions: [
-          IconButton(
-            onPressed: _showAddStudentDialog,
-            tooltip: 'Add student',
-            icon: const Icon(Icons.person_add),
+    return PopScope(
+      canPop: !hasUnsavedChanges,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && hasUnsavedChanges) {
+          _showUnsavedChangesDialog();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(
+          title: Text(
+            '${widget.batchName} Attendance',
+            style: TextStyle(fontSize: isDesktop ? 22 : 18),
           ),
-        ],
-      ),
-      body: Container(
-        decoration: BoxDecoration(
-          image: DecorationImage(
-            image: const AssetImage('assets/images/school_bg.png'),
-            fit: BoxFit.cover,
-            opacity: 0.18,
-          ),
+          actions: [
+            IconButton(
+              onPressed: _showAddStudentDialog,
+              tooltip: 'Add student',
+              icon: const Icon(Icons.person_add),
+            ),
+          ],
         ),
-        child: SafeArea(
-          child: isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : students.isEmpty
-              ? const Center(child: Text('No students found for this batch.'))
-              : Column(
-                  children: [
-                    Container(
-                      width: double.infinity,
-                      margin: const EdgeInsets.all(12),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.96),
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.08),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          ElevatedButton.icon(
-                            onPressed: () => markAll('present'),
-                            icon: const Icon(Icons.check, size: 18),
-                            label: Text(
-                              'All P',
-                              style: TextStyle(fontSize: buttonTextSize),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.green,
-                              foregroundColor: Colors.white,
-                              minimumSize: const Size(110, 42),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton.icon(
-                            onPressed: () => markAll('absent'),
-                            icon: const Icon(Icons.close, size: 18),
-                            label: Text(
-                              'All A',
-                              style: TextStyle(fontSize: buttonTextSize),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.red,
-                              foregroundColor: Colors.white,
-                              minimumSize: const Size(110, 42),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Expanded(
-                      child: ListView.builder(
-                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                        itemCount: students.length,
-                        itemBuilder: (context, index) {
-                          final student = students[index];
-                          final studentId = student['id'];
-                          final currentStatus = attendanceStatus[studentId];
-
-                          return Card(
-                            margin: const EdgeInsets.only(bottom: 10),
-                            elevation: 3,
-                            color: Colors.white.withOpacity(0.96),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: ListTile(
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 8,
-                              ),
-                              leading: Icon(
-                                Icons.person,
-                                color: const Color(0xFF0B2B5E),
-                              ),
-                              title: Text(
-                                student['name'],
-                                style: TextStyle(
-                                  fontSize: isDesktop ? 18 : 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.black87,
-                                ),
-                              ),
-                              trailing: SizedBox(
-                                width: 150,
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.end,
-                                  children: [
-                                    Expanded(
-                                      child: InkWell(
-                                        borderRadius: BorderRadius.circular(10),
-                                        onTap: () {
-                                          setState(() {
-                                            attendanceStatus[studentId] =
-                                                'present';
-                                          });
-                                        },
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 10,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: currentStatus == 'present'
-                                                ? Colors.green
-                                                : Colors.grey.shade200,
-                                            borderRadius: BorderRadius.circular(
-                                              10,
-                                            ),
-                                          ),
-                                          alignment: Alignment.center,
-                                          child: Text(
-                                            'P',
-                                            style: TextStyle(
-                                              color: currentStatus == 'present'
-                                                  ? Colors.white
-                                                  : Colors.black54,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: isDesktop ? 18 : 16,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: InkWell(
-                                        borderRadius: BorderRadius.circular(10),
-                                        onTap: () {
-                                          setState(() {
-                                            attendanceStatus[studentId] =
-                                                'absent';
-                                          });
-                                        },
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 10,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: currentStatus == 'absent'
-                                                ? Colors.red
-                                                : Colors.grey.shade200,
-                                            borderRadius: BorderRadius.circular(
-                                              10,
-                                            ),
-                                          ),
-                                          alignment: Alignment.center,
-                                          child: Text(
-                                            'A',
-                                            style: TextStyle(
-                                              color: currentStatus == 'absent'
-                                                  ? Colors.white
-                                                  : Colors.black54,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: isDesktop ? 18 : 16,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.all(16),
-                          minimumSize: const Size.fromHeight(52),
+        body: Container(
+          decoration: BoxDecoration(
+            image: DecorationImage(
+              image: const AssetImage('assets/images/school_bg.png'),
+              fit: BoxFit.cover,
+              opacity: 0.18,
+            ),
+          ),
+          child: SafeArea(
+            child: isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : errorMessage != null
+                ? ErrorStateView(
+                    message: errorMessage!,
+                    onRetry: fetchStudentsAndAttendance,
+                  )
+                : students.isEmpty
+                ? const Center(child: Text('No students found for this batch.'))
+                : Column(
+                    children: [
+                      Container(
+                        width: double.infinity,
+                        margin: const EdgeInsets.all(12),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
                         ),
-                        onPressed: () async {
-                          final shouldSubmit = await _confirmSubmitAttendance();
-                          if (!shouldSubmit || !mounted) return;
-
-                          final List<Map<String, dynamic>> newAttendanceData =
-                              [];
-
-                          attendanceStatus.forEach((studentId, status) {
-                            if (status != null) {
-                              newAttendanceData.add({
-                                'student_id': studentId,
-                                'batch_id': widget.batchId,
-                                'date': todayDate,
-                                'status': status,
-                              });
-                            }
-                          });
-
-                          if (newAttendanceData.isEmpty) {
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Koi nayi attendance mark nahi ki gayi.',
-                                ),
-                                backgroundColor: Colors.orange,
-                              ),
-                            );
-                            return;
-                          }
-
-                          if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Saving attendance...'),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.96),
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.08),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
                             ),
-                          );
-
-                          final offlineBox = Hive.box('offline_attendance');
-                          final String localKey =
-                              '${widget.batchId}_$todayDate';
-
-                          await offlineBox.put(localKey, newAttendanceData);
-
-                          try {
-                            await supabase
-                                .from('attendance')
-                                .upsert(
-                                  newAttendanceData,
-                                  onConflict: 'student_id, date',
-                                );
-                            await offlineBox.delete(localKey);
-
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Attendance synced! ✅'),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            ElevatedButton.icon(
+                              onPressed: () => markAll('present'),
+                              icon: const Icon(Icons.check, size: 18),
+                              label: Text(
+                                'All P',
+                                style: TextStyle(fontSize: buttonTextSize),
+                              ),
+                              style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.green,
+                                foregroundColor: Colors.white,
+                                minimumSize: const Size(110, 42),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton.icon(
+                              onPressed: () => markAll('absent'),
+                              icon: const Icon(Icons.close, size: 18),
+                              label: Text(
+                                'All A',
+                                style: TextStyle(fontSize: buttonTextSize),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.red,
+                                foregroundColor: Colors.white,
+                                minimumSize: const Size(110, 42),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                          itemCount: students.length,
+                          itemBuilder: (context, index) {
+                            final student = students[index];
+                            final studentId = student['id'];
+                            final currentStatus = attendanceStatus[studentId];
+
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 10),
+                              elevation: 3,
+                              color: Colors.white.withOpacity(0.96),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: ListTile(
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 8,
+                                ),
+                                leading: Icon(
+                                  Icons.person,
+                                  color: const Color(0xFF0B2B5E),
+                                ),
+                                title: Text(
+                                  student['name'],
+                                  style: TextStyle(
+                                    fontSize: isDesktop ? 18 : 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                                trailing: SizedBox(
+                                  width: 150,
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    children: [
+                                      Expanded(
+                                        child: InkWell(
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          onTap: () {
+                                            setState(() {
+                                              attendanceStatus[studentId] =
+                                                  'present';
+                                              hasUnsavedChanges = true;
+                                            });
+                                          },
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 10,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: currentStatus == 'present'
+                                                  ? Colors.green
+                                                  : Colors.grey.shade200,
+                                              borderRadius:
+                                                  BorderRadius.circular(10),
+                                            ),
+                                            alignment: Alignment.center,
+                                            child: Text(
+                                              'P',
+                                              style: TextStyle(
+                                                color:
+                                                    currentStatus == 'present'
+                                                    ? Colors.white
+                                                    : Colors.black54,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: isDesktop ? 18 : 16,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: InkWell(
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          onTap: () {
+                                            setState(() {
+                                              attendanceStatus[studentId] =
+                                                  'absent';
+                                              hasUnsavedChanges = true;
+                                            });
+                                          },
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 10,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: currentStatus == 'absent'
+                                                  ? Colors.red
+                                                  : Colors.grey.shade200,
+                                              borderRadius:
+                                                  BorderRadius.circular(10),
+                                            ),
+                                            alignment: Alignment.center,
+                                            child: Text(
+                                              'A',
+                                              style: TextStyle(
+                                                color: currentStatus == 'absent'
+                                                    ? Colors.white
+                                                    : Colors.black54,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: isDesktop ? 18 : 16,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ),
                             );
-                            Navigator.pop(context);
-                          } catch (e) {
-                            debugPrint('Supabase push failed: $e');
+                          },
+                        ),
+                      ),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.all(16),
+                            minimumSize: const Size.fromHeight(52),
+                          ),
+                          onPressed: () async {
+                            final shouldSubmit =
+                                await _confirmSubmitAttendance();
+                            if (!shouldSubmit || !mounted) return;
+
+                            final List<Map<String, dynamic>> newAttendanceData =
+                                [];
+
+                            attendanceStatus.forEach((studentId, status) {
+                              if (status != null) {
+                                newAttendanceData.add({
+                                  'student_id': studentId,
+                                  'batch_id': widget.batchId,
+                                  'date': todayDate,
+                                  'status': status,
+                                });
+                              }
+                            });
+
+                            if (newAttendanceData.isEmpty) {
+                              if (!mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Koi nayi attendance mark nahi ki gayi.',
+                                  ),
+                                  backgroundColor: Colors.orange,
+                                ),
+                              );
+                              return;
+                            }
+
                             if (!mounted) return;
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
-                                content: Text('Saved offline. 💾'),
-                                backgroundColor: Colors.blueGrey,
+                                content: Text('Saving attendance...'),
                               ),
                             );
-                            Navigator.pop(context);
-                          }
-                        },
-                        child: const Text(
-                          'Submit Attendance',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
+
+                            final offlineBox = Hive.box('offline_attendance');
+                            final String localKey =
+                                '${widget.batchId}_$todayDate';
+                            var savedOffline = false;
+
+                            try {
+                              await offlineBox.put(localKey, newAttendanceData);
+                              savedOffline = true;
+                              await supabase
+                                  .from('attendance')
+                                  .upsert(
+                                    newAttendanceData,
+                                    onConflict: 'student_id, date',
+                                  );
+                              await offlineBox.delete(localKey);
+
+                              if (!mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Attendance synced! ✅'),
+                                  backgroundColor: Colors.green,
+                                ),
+                              );
+                              Navigator.pop(context);
+                            } catch (e) {
+                              debugPrint('Attendance save failed: $e');
+                              if (!mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    savedOffline
+                                        ? 'Saved offline. 💾'
+                                        : 'Could not save attendance. Please try again.',
+                                  ),
+                                  backgroundColor: savedOffline
+                                      ? Colors.blueGrey
+                                      : Colors.red,
+                                ),
+                              );
+                              if (savedOffline) Navigator.pop(context);
+                            }
+                          },
+                          child: const Text(
+                            'Submit Attendance',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
+          ),
         ),
       ),
     );

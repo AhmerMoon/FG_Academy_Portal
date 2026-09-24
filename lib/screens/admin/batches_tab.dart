@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../utils/list_sorting.dart';
+import '../../utils/dashboard_section_header.dart';
+import '../../utils/error_state_view.dart';
 
 class BatchesTab extends StatefulWidget {
   const BatchesTab({super.key});
@@ -13,6 +15,7 @@ class _BatchesTabState extends State<BatchesTab> {
   final supabase = Supabase.instance.client;
   List<dynamic> batches = [];
   bool isLoading = true;
+  String? errorMessage;
 
   @override
   void initState() {
@@ -23,13 +26,20 @@ class _BatchesTabState extends State<BatchesTab> {
   Future<void> fetchBatches() async {
     try {
       final response = await supabase.from('batches').select().order('name');
+      if (!mounted) return;
       setState(() {
         batches = sortBatches(response);
         isLoading = false;
+        errorMessage = null;
       });
     } catch (e) {
       debugPrint('Error fetching batches: $e');
-      setState(() => isLoading = false);
+      if (!mounted) return;
+      setState(() {
+        isLoading = false;
+        errorMessage =
+            'Unable to load batches. Check your connection and try again.';
+      });
     }
   }
 
@@ -92,10 +102,24 @@ class _BatchesTabState extends State<BatchesTab> {
                       'whatsapp_group_id': wId.isEmpty ? null : wId,
                     });
                   }
-                  fetchBatches();
+                  await fetchBatches();
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Batch saved successfully.'),
+                      ),
+                    );
+                  }
                 } catch (e) {
                   debugPrint('Error saving batch: $e');
+                  if (!mounted) return;
                   setState(() => isLoading = false);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Could not save batch. Please try again.'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
                 }
               },
               child: const Text('Save'),
@@ -106,54 +130,12 @@ class _BatchesTabState extends State<BatchesTab> {
     );
   }
 
-  void _deleteBatch(String id, String name) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Batch?'),
-        content: Text(
-          'Kiya tum waqai "$name" ko delete karna chahte ho? Is se jure tamam students error generate kar sakte hain.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () async {
-              Navigator.pop(context);
-              setState(() => isLoading = true);
-              try {
-                await supabase.from('batches').delete().eq('id', id);
-                fetchBatches();
-              } catch (e) {
-                debugPrint('Delete error: $e');
-                setState(() => isLoading = false);
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Error: Pehle is batch k students ko remove karo!',
-                      ),
-                    ),
-                  );
-                }
-              }
-            },
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     if (isLoading) return const Center(child: CircularProgressIndicator());
+    if (errorMessage != null) {
+      return ErrorStateView(message: errorMessage!, onRetry: fetchBatches);
+    }
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -170,55 +152,61 @@ class _BatchesTabState extends State<BatchesTab> {
           ),
         ),
         child: batches.isEmpty
-            ? const Center(child: Text('No batches found in Supabase.'))
-            : ListView.builder(
-                padding: const EdgeInsets.all(12),
-                itemCount: batches.length,
-                itemBuilder: (context, index) {
-                  final batch = batches[index];
-                  final batchName = batch['name']?.toString() ?? 'Batch';
-                  final whatsappId =
-                      batch['whatsapp_group_id']?.toString() ?? 'Not Set';
+            ? Column(
+                children: const [
+                  DashboardSectionHeader(
+                    title: 'Batches',
+                    subtitle: 'Create and manage academy batches',
+                  ),
+                  Expanded(
+                    child: Center(child: Text('No batches found in Supabase.')),
+                  ),
+                ],
+              )
+            : Column(
+                children: [
+                  const DashboardSectionHeader(
+                    title: 'Batches',
+                    subtitle: 'Create and manage academy batches',
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: batches.length,
+                      itemBuilder: (context, index) {
+                        final batch = batches[index];
+                        final batchName = batch['name']?.toString() ?? 'Batch';
+                        final whatsappId =
+                            batch['whatsapp_group_id']?.toString() ?? 'Not Set';
 
-                  return Card(
-                    elevation: 3,
-                    color: Colors.white.withValues(alpha: 0.96),
-                    margin: const EdgeInsets.only(bottom: 12),
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 8,
-                      ),
-                      leading: const Icon(
-                        Icons.class_,
-                        color: Color(0xFF0B2B5E),
-                        size: 26,
-                      ),
-                      title: Text(
-                        batchName,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 17,
-                        ),
-                      ),
-                      subtitle: Text(whatsappId),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.edit, color: Colors.blue),
-                            onPressed: () => _showBatchFormDialog(batch: batch),
+                        return Card(
+                          elevation: 3,
+                          color: Colors.white.withValues(alpha: 0.96),
+                          margin: const EdgeInsets.only(bottom: 12),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 8,
+                            ),
+                            leading: const Icon(
+                              Icons.class_,
+                              color: Color(0xFF0B2B5E),
+                              size: 26,
+                            ),
+                            title: Text(
+                              batchName,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 17,
+                              ),
+                            ),
+                            subtitle: Text(whatsappId),
                           ),
-                          IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.red),
-                            onPressed: () =>
-                                _deleteBatch(batch['id'], batch['name']),
-                          ),
-                        ],
-                      ),
+                        );
+                      },
                     ),
-                  );
-                },
+                  ),
+                ],
               ),
       ),
     );
