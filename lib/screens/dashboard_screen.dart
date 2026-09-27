@@ -149,6 +149,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  void _showComingSoonMessage(String feature) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$feature feature is coming soon.')));
+  }
+
+  void _selectMobileAdminItem(int index) {
+    if (index == 4) {
+      _showComingSoonMessage('Fees');
+      return;
+    }
+    _selectSidebarItem(index);
+  }
+
   Widget _getAdminScreen(bool isDesktop, {Function(Widget)? onNavigate}) {
     switch (_selectedIndex) {
       case 0:
@@ -257,11 +271,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   'Attendance',
                                   3,
                                 ),
+                                _buildComingSoonDrawerItem(
+                                  Icons.payments,
+                                  'Fees',
+                                ),
                               ] else
                                 _buildDrawerItem(
                                   Icons.folder_open,
                                   'My Batches',
                                   0,
+                                ),
+                              if (widget.userRole != 'admin')
+                                _buildComingSoonDrawerItem(
+                                  Icons.emoji_events,
+                                  'Award Lists',
                                 ),
                             ],
                           ),
@@ -299,7 +322,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ? NavigationBar(
                   selectedIndex: _selectedIndex,
                   onDestinationSelected: (int index) =>
-                      _selectSidebarItem(index),
+                      _selectMobileAdminItem(index),
                   destinations: const [
                     NavigationDestination(
                       icon: Icon(Icons.dashboard_outlined),
@@ -320,6 +343,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       icon: Icon(Icons.fact_check_outlined),
                       selectedIcon: Icon(Icons.fact_check),
                       label: 'Attendance',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.payments_outlined),
+                      selectedIcon: Icon(Icons.payments),
+                      label: 'Fees',
                     ),
                   ],
                 )
@@ -369,12 +397,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final entries = teacherOnly
         ? [
             {'title': 'My Batches', 'icon': Icons.folder_open, 'index': 0},
+            {
+              'title': 'Award Lists',
+              'icon': Icons.emoji_events,
+              'index': -1,
+              'comingSoon': true,
+            },
           ]
         : [
             {'title': 'Dashboard', 'icon': Icons.dashboard, 'index': 0},
             {'title': 'Students', 'icon': Icons.people, 'index': 1},
             {'title': 'Batches', 'icon': Icons.class_, 'index': 2},
             {'title': 'Attendance', 'icon': Icons.fact_check, 'index': 3},
+            {
+              'title': 'Fees',
+              'icon': Icons.payments,
+              'index': -1,
+              'comingSoon': true,
+            },
           ];
 
     return Container(
@@ -414,7 +454,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 28),
           ...entries.map((entry) {
             final index = entry['index'] as int;
-            final selected = _selectedIndex == index;
+            final comingSoon = entry['comingSoon'] == true;
+            final selected = !comingSoon && _selectedIndex == index;
             return Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: ListTile(
@@ -435,7 +476,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
-                onTap: () => _selectSidebarItem(index),
+                trailing: comingSoon
+                    ? const Icon(Icons.hourglass_empty, size: 18)
+                    : null,
+                onTap: comingSoon
+                    ? () => _showComingSoonMessage(entry['title'] as String)
+                    : () => _selectSidebarItem(index),
               ),
             );
           }),
@@ -477,6 +523,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
       onTap: () {
         _selectSidebarItem(index);
         Navigator.pop(context);
+      },
+    );
+  }
+
+  ListTile _buildComingSoonDrawerItem(IconData icon, String title) {
+    return ListTile(
+      leading: Icon(icon),
+      title: Text(title),
+      trailing: const Icon(Icons.hourglass_empty, size: 18),
+      onTap: () {
+        Navigator.pop(context);
+        _showComingSoonMessage(title);
       },
     );
   }
@@ -565,11 +623,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
         const SizedBox(height: 8),
         Expanded(
           child: GridView.count(
-            crossAxisCount: isDesktop ? 4 : 2,
+            crossAxisCount: isDesktop ? 4 : 3,
             shrinkWrap: true,
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
-            childAspectRatio: isDesktop ? 1.5 : 1.2,
+            crossAxisSpacing: isDesktop ? 16 : 10,
+            mainAxisSpacing: isDesktop ? 16 : 10,
+            childAspectRatio: isDesktop ? 1.5 : 1.05,
             children: [
               _buildStatCard(
                 'Total Students',
@@ -624,13 +682,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ],
         ),
         child: Padding(
-          padding: const EdgeInsets.all(18.0),
+          padding: titleSize >= 18
+              ? const EdgeInsets.all(18)
+              : const EdgeInsets.all(10),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: titleSize,
                   color: Colors.white.withValues(alpha: 0.92),

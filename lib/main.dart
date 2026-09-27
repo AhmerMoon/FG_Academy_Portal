@@ -11,7 +11,6 @@ Future<void> main() async {
   String? startupError;
   try {
     await Hive.initFlutter();
-    await Hive.openBox('offline_attendance');
     await Hive.openBox('settings'); // Auth session save rakhne ke liye
 
     await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);

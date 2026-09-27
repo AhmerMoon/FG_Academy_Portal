@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'student_screen.dart';
 import '../app_theme.dart';
 import '../utils/list_sorting.dart';
@@ -26,54 +25,13 @@ class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
   void initState() {
     super.initState();
     fetchBatches();
-    syncOfflineData();
   }
 
-  Future<void> syncOfflineData() async {
-    final offlineBox = Hive.box('offline_attendance');
-    if (offlineBox.isEmpty) return;
-
-    bool syncedSomething = false;
-    bool failedSync = false;
-
-    for (var key in offlineBox.keys.toList()) {
-      try {
-        final data = offlineBox.get(key);
-        final List<Map<String, dynamic>> syncData =
-            List<Map<String, dynamic>>.from(
-              (data as List).map((item) => Map<String, dynamic>.from(item)),
-            );
-
-        await supabase
-            .from('attendance')
-            .upsert(syncData, onConflict: 'student_id, date');
-        await offlineBox.delete(key);
-        syncedSomething = true;
-      } catch (e) {
-        debugPrint('Background sync failed for key $key: $e');
-        failedSync = true;
-      }
-    }
-
-    if (syncedSomething && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Offline attendance synced to cloud! ☁️✅'),
-          backgroundColor: Colors.teal,
-          duration: Duration(seconds: 4),
-        ),
-      );
-    }
-    if (failedSync && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Some offline attendance is still pending. Please retry later.',
-          ),
-          backgroundColor: Colors.orange,
-        ),
-      );
-    }
+  Widget _buildBatchesHeader() {
+    return const DashboardSectionHeader(
+      title: 'My Batches',
+      subtitle: 'Choose a batch to take today\'s attendance',
+    );
   }
 
   Future<void> fetchBatches() async {
@@ -118,12 +76,9 @@ class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
             ? ErrorStateView(message: errorMessage!, onRetry: fetchBatches)
             : batches.isEmpty
             ? Column(
-                children: const [
-                  DashboardSectionHeader(
-                    title: 'My Batches',
-                    subtitle: 'Choose a batch to take today\'s attendance',
-                  ),
-                  Expanded(
+                children: [
+                  _buildBatchesHeader(),
+                  const Expanded(
                     child: Center(
                       child: Text('No batches found. Check Supabase.'),
                     ),
@@ -132,10 +87,7 @@ class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
               )
             : Column(
                 children: [
-                  const DashboardSectionHeader(
-                    title: 'My Batches',
-                    subtitle: 'Choose a batch to take today\'s attendance',
-                  ),
+                  _buildBatchesHeader(),
                   Expanded(
                     child: ListView.builder(
                       padding: const EdgeInsets.all(12),

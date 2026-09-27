@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import '../utils/list_sorting.dart';
 import '../utils/error_state_view.dart';
 
@@ -491,21 +490,13 @@ class _StudentsScreenState extends State<StudentsScreen> {
                               ),
                             );
 
-                            final offlineBox = Hive.box('offline_attendance');
-                            final String localKey =
-                                '${widget.batchId}_$todayDate';
-                            var savedOffline = false;
-
                             try {
-                              await offlineBox.put(localKey, newAttendanceData);
-                              savedOffline = true;
                               await supabase
                                   .from('attendance')
                                   .upsert(
                                     newAttendanceData,
                                     onConflict: 'student_id, date',
                                   );
-                              await offlineBox.delete(localKey);
 
                               if (!mounted) return;
                               ScaffoldMessenger.of(context).showSnackBar(
@@ -519,18 +510,13 @@ class _StudentsScreenState extends State<StudentsScreen> {
                               debugPrint('Attendance save failed: $e');
                               if (!mounted) return;
                               ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
+                                const SnackBar(
                                   content: Text(
-                                    savedOffline
-                                        ? 'Saved offline. 💾'
-                                        : 'Could not save attendance. Please try again.',
+                                    'Could not save attendance. Please check your internet connection and try again.',
                                   ),
-                                  backgroundColor: savedOffline
-                                      ? Colors.blueGrey
-                                      : Colors.red,
+                                  backgroundColor: Colors.red,
                                 ),
                               );
-                              if (savedOffline) Navigator.pop(context);
                             }
                           },
                           child: const Text(
