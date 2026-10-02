@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../app_theme.dart';
 
 class DashboardSectionHeader extends StatelessWidget {
@@ -15,48 +16,107 @@ class DashboardSectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-      padding: const EdgeInsets.fromLTRB(18, 14, 12, 14),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [AppTheme.fgNavyBlue, Color(0xFF174A86)],
-        ),
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: const [
-          BoxShadow(
-            color: Color.fromRGBO(11, 43, 94, 0.22),
-            blurRadius: 12,
-            offset: Offset(0, 4),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 600;
+
+        return Container(
+          width: double.infinity,
+          margin: EdgeInsets.fromLTRB(
+            compact ? 8 : 12,
+            compact ? 7 : 12,
+            compact ? 8 : 12,
+            compact ? 5 : 7,
           ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 21,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  subtitle,
-                  style: const TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-              ],
+          decoration: BoxDecoration(
+            gradient: AppTheme.brandGradient,
+            borderRadius: BorderRadius.circular(compact ? 13 : 17),
+            border: Border.all(
+              color: AppTheme.fgGold.withValues(alpha: 0.52),
+              width: 0.9,
             ),
+            boxShadow: [
+              BoxShadow(
+                color: AppTheme.fgNavyBlue.withValues(alpha: 0.14),
+                blurRadius: 16,
+                offset: const Offset(0, 5),
+              ),
+            ],
           ),
-          if (trailing != null) trailing!,
-        ],
-      ),
+          child: Stack(
+            children: [
+              Positioned(
+                right: compact ? 10 : 18,
+                top: -30,
+                child: Icon(
+                  Icons.school_rounded,
+                  size: compact ? 88 : 120,
+                  color: Colors.white.withValues(alpha: 0.045),
+                ),
+              ),
+
+              Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: compact ? 13 : 19,
+                  vertical: compact ? 11 : 16,
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: compact ? 5 : 6,
+                      height: compact ? 42 : 52,
+                      decoration: BoxDecoration(
+                        gradient: AppTheme.goldGradient,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                    ),
+
+                    SizedBox(width: compact ? 10 : 13),
+
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: compact ? 17 : 21,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+
+                          const SizedBox(height: 2),
+
+                          Text(
+                            subtitle,
+                            maxLines: compact ? 1 : 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.80),
+                              fontSize: compact ? 12 : 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    if (trailing != null) ...[
+                      SizedBox(width: compact ? 6 : 14),
+                      trailing!,
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

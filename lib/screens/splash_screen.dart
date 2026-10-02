@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
-import 'package:hive_flutter/hive_flutter.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+import '../app_theme.dart';
+import '../services/auth_service.dart';
 import 'dashboard_screen.dart';
 import 'login_screen.dart';
 
@@ -15,181 +17,242 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
-  static const gold = Color(0xFFD4AF37);
-  final supabase = Supabase.instance.client;
+  final SupabaseClient supabase = Supabase.instance.client;
+
+  final AuthService _authService = AuthService();
 
   @override
   void initState() {
     super.initState();
+
     _checkVersionAndProceed();
   }
 
   Future<void> _checkVersionAndProceed() async {
-    // Splash animation ke liye thora wait
-    await Future.delayed(const Duration(seconds: 2));
+    await Future.delayed(const Duration(milliseconds: 1200));
+
     if (!mounted) return;
 
     try {
-      // 1. Get current app version from pubspec.yaml
       final packageInfo = await PackageInfo.fromPlatform();
-      final currentVersion = packageInfo.version;
 
-      // 2. Get required version from Supabase
       final response = await supabase
           .from('app_settings')
-          .select('min_apk_version, apk_download_url')
+          .select(
+            'min_apk_version, '
+            'apk_download_url',
+          )
           .eq('id', 1)
           .single();
 
-      final requiredVersion = response['min_apk_version'] as String;
-      final downloadUrl = response['apk_download_url'] as String;
+      final requiredVersion = response['min_apk_version']?.toString() ?? '';
 
-      // 3. Compare versions (e.g. "1.0.0" vs "1.0.1")
-      if (_isUpdateRequired(currentVersion, requiredVersion)) {
+      final downloadUrl = response['apk_download_url']?.toString() ?? '';
+
+      if (_isUpdateRequired(packageInfo.version, requiredVersion)) {
         _showUpdateDialog(downloadUrl);
-        return; // Stop flow here
+
+        return;
       }
     } catch (e) {
       debugPrint('Version check failed: $e');
-      // No internet ya Supabase error aaye toh default login flow chalao
     }
 
-    // 4. Normal Auth Flow
-    final settingsBox = Hive.box('settings');
-    final isLoggedIn = settingsBox.get('isLoggedIn', defaultValue: false);
-    final role = settingsBox.get('role', defaultValue: 'teacher');
+    try {
+      final portalUser = await _authService.restoreSession();
 
-    final Widget nextScreen = isLoggedIn
-        ? DashboardScreen(userRole: role)
-        : const LoginScreen();
+      if (!mounted) return;
 
-    if (mounted) {
-      Navigator.of(
-        context,
-      ).pushReplacement(MaterialPageRoute(builder: (_) => nextScreen));
+      if (portalUser == null) {
+        _open(const LoginScreen());
+
+        return;
+      }
+
+      _open(DashboardScreen(userRole: portalUser.role));
+    } catch (e) {
+      debugPrint('Session restore failed: $e');
+
+      if (!mounted) return;
+
+      _open(const LoginScreen());
     }
+  }
+
+  void _open(Widget screen) {
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => screen));
   }
 
   bool _isUpdateRequired(String current, String required) {
     final curr = _parseVersion(current);
+
     final req = _parseVersion(required);
-    if (curr == null || req == null) return false;
+
+    if (curr == null || req == null) {
+      return false;
+    }
 
     for (int i = 0; i < 3; i++) {
-      if (req[i] > curr[i]) return true;
-      if (req[i] < curr[i]) return false;
+      if (req[i] > curr[i]) {
+        return true;
+      }
+
+      if (req[i] < curr[i]) {
+        return false;
+      }
     }
+
     return false;
   }
 
   List<int>? _parseVersion(String version) {
     final parts = version.split('.');
-    if (parts.length < 3) return null;
+
+    if (parts.length < 3) {
+      return null;
+    }
+
     final parsed = <int>[];
+
     for (final part in parts.take(3)) {
       final value = int.tryParse(part);
-      if (value == null) return null;
+
+      if (value == null) {
+        return null;
+      }
+
       parsed.add(value);
     }
+
     return parsed;
   }
 
   void _showUpdateDialog(String url) {
     showDialog(
       context: context,
-      barrierDismissible:
-          false, // Force update (user popup close nahi kar sakta)
-      builder: (context) => PopScope(
-        canPop: false, // Android back button disable
-        child: AlertDialog(
-          title: const Text('Update Required'),
-          content: const Text(
-            'App ka naya version aa chuka hai. Attendance aur portal theek se use karne ke liye app ko foran update karein.',
-          ),
-          actions: [
-            ElevatedButton(
-              onPressed: () async {
-                try {
-                  final uri = Uri.tryParse(url);
-                  if (uri == null || !await canLaunchUrl(uri)) {
-                    throw Exception('Update URL cannot be opened');
-                  }
-                  await launchUrl(uri, mode: LaunchMode.externalApplication);
-                } catch (e) {
-                  debugPrint('Update launch failed: $e');
-                  if (!context.mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Unable to open the update link. Please try again later.',
-                      ),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                }
-              },
-              child: const Text('Download Update'),
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return PopScope(
+          canPop: false,
+          child: AlertDialog(
+            icon: const Icon(
+              Icons.system_update_alt_rounded,
+              size: 36,
+              color: AppTheme.fgNavyBlue,
             ),
-          ],
-        ),
-      ),
+            title: const Text('Update Required'),
+            content: const Text(
+              'A newer FG Academy Portal version is required before continuing.',
+              textAlign: TextAlign.center,
+            ),
+            actionsAlignment: MainAxisAlignment.center,
+            actions: [
+              ElevatedButton.icon(
+                onPressed: () async {
+                  final uri = Uri.tryParse(url);
+
+                  if (uri == null) {
+                    return;
+                  }
+
+                  try {
+                    await launchUrl(uri, mode: LaunchMode.externalApplication);
+                  } catch (e) {
+                    debugPrint('Update URL error: $e');
+                  }
+                },
+                icon: const Icon(Icons.download_rounded),
+                label: const Text('Download Update'),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Container(
-        decoration: BoxDecoration(
-          image: DecorationImage(
-            image: const AssetImage('assets/images/school_bg.png'),
-            fit: BoxFit.cover,
-            opacity: 0.2,
-          ),
-        ),
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(top: 60),
-              child: Center(
-                child: Image.asset('assets/images/app_logo_bg.png', width: 200)
-                    .animate()
-                    .fadeIn(duration: 900.ms)
-                    .scale(
-                      begin: const Offset(0.7, 0.7),
-                      end: const Offset(1, 1),
-                      duration: 900.ms,
-                      curve: Curves.easeOutBack,
-                    ),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset('assets/images/school_bg.png', fit: BoxFit.cover),
+
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  AppTheme.fgNavyBlue.withValues(alpha: 0.88),
+                  const Color(0xFF061C3B).withValues(alpha: 0.93),
+                ],
               ),
             ),
-            const Spacer(),
-            Center(
-              child:
-                  const Text(
-                        'Evening Coaching Classes',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: gold,
-                          fontSize: 36,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.5,
-                        ),
-                      )
-                      .animate()
-                      .fadeIn(delay: 500.ms, duration: 700.ms)
-                      .slideY(
-                        begin: 1,
-                        end: 0,
-                        delay: 500.ms,
-                        duration: 700.ms,
-                        curve: Curves.easeOut,
-                      ),
+          ),
+
+          SafeArea(
+            child: Column(
+              children: [
+                const Spacer(),
+
+                Container(
+                  width: 140,
+                  height: 140,
+                  padding: const EdgeInsets.all(13),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(30),
+                    border: Border.all(color: AppTheme.fgGold, width: 2),
+                  ),
+                  child: Image.asset('assets/images/app_logo_bg.png'),
+                ).animate().fadeIn().scale(begin: const Offset(0.9, 0.9)),
+
+                const SizedBox(height: 25),
+
+                const Text(
+                  'FG Academy Portal',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+
+                const SizedBox(height: 5),
+
+                const Text(
+                  'Evening Coaching Classes',
+                  style: TextStyle(
+                    color: AppTheme.fgGold,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+
+                const Spacer(),
+
+                const SizedBox(
+                  width: 280,
+                  child: LinearProgressIndicator(minHeight: 3),
+                ),
+
+                const SizedBox(height: 13),
+
+                const Text(
+                  'Securing your academy workspace…',
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+
+                const SizedBox(height: 35),
+              ],
             ),
-            const Spacer(),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

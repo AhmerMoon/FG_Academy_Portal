@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../utils/list_sorting.dart';
+
+import '../../app_theme.dart';
 import '../../utils/automation_launcher.dart';
-import '../../utils/error_state_view.dart';
 import '../../utils/dashboard_section_header.dart';
+import '../../utils/error_state_view.dart';
+import '../../widgets/academy_background.dart';
+import '../../utils/list_sorting.dart';
 
 class AdminAttendanceTab extends StatefulWidget {
   final Function(Widget screen)? onNavigate;
@@ -17,259 +21,313 @@ class AdminAttendanceTab extends StatefulWidget {
 }
 
 class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
-  final supabase = Supabase.instance.client;
+  final SupabaseClient supabase = Supabase.instance.client;
+
   List<dynamic> batches = [];
+
   bool isLoading = true;
   String? errorMessage;
 
   @override
   void initState() {
     super.initState();
+
     fetchBatches();
   }
 
+  String get _today => DateTime.now().toIso8601String().split('T').first;
+
   Future<void> fetchBatches() async {
     try {
-      final response = await supabase.from('batches').select().order('name');
-      final studentsResponse = await supabase
-          .from('students')
-          .select('batch_id');
-      final today = DateTime.now().toIso8601String().split('T')[0];
-      final attendanceResponse = await supabase
-          .from('attendance')
-          .select('batch_id, status')
-          .eq('date', today);
-      final strengthByBatch = <String, int>{};
-      for (final student in studentsResponse) {
-        final batchId = student['batch_id']?.toString();
-        if (batchId != null) {
-          strengthByBatch[batchId] = (strengthByBatch[batchId] ?? 0) + 1;
+      final results = await Future.wait([
+        supabase.from('batches').select('id, name, class_level'),
+        supabase.from('students').select('batch_id'),
+        supabase
+            .from('attendance')
+            .select('batch_id, status')
+            .eq('date', _today),
+      ]);
+
+      final batchRows = results[0];
+      final studentRows = results[1];
+      final attendanceRows = results[2];
+
+      final total = <String, int>{};
+      final present = <String, int>{};
+      final absent = <String, int>{};
+
+      for (final student in studentRows) {
+        final id = student['batch_id']?.toString();
+
+        if (id != null) {
+          total[id] = (total[id] ?? 0) + 1;
         }
       }
-      final presentByBatch = <String, int>{};
-      final absentByBatch = <String, int>{};
-      for (final record in attendanceResponse) {
-        final batchId = record['batch_id']?.toString();
-        if (batchId == null) continue;
-        if (record['status'] == 'present') {
-          presentByBatch[batchId] = (presentByBatch[batchId] ?? 0) + 1;
-        } else if (record['status'] == 'absent') {
-          absentByBatch[batchId] = (absentByBatch[batchId] ?? 0) + 1;
+
+      for (final row in attendanceRows) {
+        final id = row['batch_id']?.toString();
+
+        if (id == null) continue;
+
+        if (row['status'] == 'present') {
+          present[id] = (present[id] ?? 0) + 1;
+        }
+
+        if (row['status'] == 'absent') {
+          absent[id] = (absent[id] ?? 0) + 1;
         }
       }
-      final batchesWithStats = response.map((batch) {
-        final batchId = batch['id'].toString();
-        final batchCopy = Map<String, dynamic>.from(batch);
-        batchCopy['student_count'] = strengthByBatch[batchId] ?? 0;
-        batchCopy['present_count'] = presentByBatch[batchId] ?? 0;
-        batchCopy['absent_count'] = absentByBatch[batchId] ?? 0;
-        return batchCopy;
+
+      final mapped = batchRows.map((batch) {
+        final id = batch['id'].toString();
+
+        final copy = Map<String, dynamic>.from(batch);
+
+        copy['student_count'] = total[id] ?? 0;
+        copy['present_count'] = present[id] ?? 0;
+        copy['absent_count'] = absent[id] ?? 0;
+
+        return copy;
       }).toList();
+
       if (!mounted) return;
+
       setState(() {
-        batches = sortBatches(batchesWithStats);
+        batches = sortBatches(mapped);
+
         isLoading = false;
         errorMessage = null;
       });
     } catch (e) {
-      debugPrint('Error: $e');
+      debugPrint('Attendance dashboard error: $e');
+
       if (!mounted) return;
+
       setState(() {
         isLoading = false;
+
         errorMessage =
             'Unable to load attendance batches. Check your connection and try again.';
       });
     }
   }
 
-  void _openAttendance(BuildContext context, String batchId, String batchName) {
-    final String today = DateTime.now().toIso8601String().split('T')[0];
+  void _openAttendance(Map<String, dynamic> batch) {
+    final id = batch['id'].toString();
+
+    final name = batch['name']?.toString() ?? 'Batch';
+
     final screen = EditAttendanceScreen(
-      batchId: batchId,
-      batchName: batchName,
-      initialDate: today,
+      batchId: id,
+      batchName: name,
+      initialDate: _today,
     );
 
     if (widget.onNavigate != null && widget.onBack != null) {
       widget.onNavigate!(
         EditAttendanceScreen(
-          batchId: batchId,
-          batchName: batchName,
-          initialDate: today,
+          batchId: id,
+          batchName: name,
+          initialDate: _today,
           onBack: widget.onBack,
         ),
       );
+
       return;
     }
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => screen),
-    ).then((_) {
-      if (mounted) fetchBatches();
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen)).then((
+      _,
+    ) {
+      if (mounted) {
+        fetchBatches();
+      }
     });
   }
 
   Future<void> _startAutomation() async {
     final started = await launchAutomation();
+
     if (!mounted) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           started
-              ? 'Automation Started'
-              : 'Automation could not start. Check the backend file and Windows setup.',
+              ? 'WhatsApp report automation started.'
+              : 'Automation could not start.',
         ),
-        backgroundColor: started ? Colors.green : Colors.red,
+        backgroundColor: started ? AppTheme.success : AppTheme.danger,
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    if (isLoading) return const Center(child: CircularProgressIndicator());
+    if (isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
     if (errorMessage != null) {
       return ErrorStateView(message: errorMessage!, onRetry: fetchBatches);
     }
-    final isExpanded = MediaQuery.sizeOf(context).width >= 800;
 
-    return Container(
-      decoration: BoxDecoration(
-        image: DecorationImage(
-          image: const AssetImage('assets/images/school_bg.png'),
-          fit: BoxFit.cover,
-          opacity: 0.2,
-        ),
-      ),
-      child: Column(
-        children: [
-          DashboardSectionHeader(
-            title: 'Attendance',
-            subtitle: 'Today\'s strength and attendance by batch',
-            trailing: isExpanded
-                ? Tooltip(
-                    message: 'Send WhatsApp Reports',
-                    child: Material(
-                      color: const Color(0xFF25D366),
-                      borderRadius: BorderRadius.circular(10),
-                      child: InkWell(
-                        onTap: _startAutomation,
-                        borderRadius: BorderRadius.circular(10),
-                        child: const SizedBox(
-                          width: 56,
-                          height: 56,
-                          child: Center(
-                            child: FaIcon(
-                              FontAwesomeIcons.whatsapp,
-                              color: Colors.white,
-                              size: 30,
-                            ),
-                          ),
-                        ),
+    return RefreshIndicator(
+      onRefresh: fetchBatches,
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverToBoxAdapter(
+            child: DashboardSectionHeader(
+              title: 'Attendance',
+              subtitle: 'Today’s batch strength and attendance overview',
+              trailing: isWindowsPlatform
+                  ? ElevatedButton.icon(
+                      onPressed: _startAutomation,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF25D366),
+                        foregroundColor: Colors.white,
                       ),
-                    ),
-                  )
-                : null,
+                      icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 17),
+                      label: const Text('Send Reports'),
+                    )
+                  : null,
+            ),
           ),
-          Expanded(
-            child: batches.isEmpty
-                ? const Center(child: Text('No batches found.'))
-                : ListView.builder(
-                    padding: const EdgeInsets.all(12),
-                    itemCount: batches.length,
-                    itemBuilder: (context, index) {
-                      final batch = batches[index];
-                      final batchName = batch['name']?.toString() ?? 'Batch';
-
-                      return Card(
-                        elevation: 3,
-                        color: Colors.white.withValues(alpha: 0.96),
-                        margin: const EdgeInsets.only(bottom: 12),
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 18,
-                            vertical: 8,
-                          ),
-                          leading: const Icon(
-                            Icons.fact_check,
-                            color: Color(0xFF0B2B5E),
-                            size: 26,
-                          ),
-                          title: Text(
-                            batchName,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 17,
-                            ),
-                          ),
-                          subtitle: isExpanded
-                              ? const Text('Tap to view and edit attendance')
-                              : Padding(
-                                  padding: const EdgeInsets.only(top: 8),
-                                  child: Row(
-                                    children: [
-                                      _AttendanceCount(
-                                        label: 'Total',
-                                        value: batch['student_count'] ?? 0,
-                                        color: Colors.blueGrey,
-                                      ),
-                                      _AttendanceCount(
-                                        label: 'Present',
-                                        value: batch['present_count'] ?? 0,
-                                        color: Colors.green,
-                                      ),
-                                      _AttendanceCount(
-                                        label: 'Absent',
-                                        value: batch['absent_count'] ?? 0,
-                                        color: Colors.red,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                          trailing: isExpanded
-                              ? SizedBox(
-                                  width: 210,
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.end,
-                                    children: [
-                                      _AttendanceCount(
-                                        label: 'Total',
-                                        value: batch['student_count'] ?? 0,
-                                        color: Colors.blueGrey,
-                                      ),
-                                      _AttendanceCount(
-                                        label: 'Present',
-                                        value: batch['present_count'] ?? 0,
-                                        color: Colors.green,
-                                      ),
-                                      _AttendanceCount(
-                                        label: 'Absent',
-                                        value: batch['absent_count'] ?? 0,
-                                        color: Colors.red,
-                                      ),
-                                    ],
-                                  ),
-                                )
-                              : null,
-                          onTap: () =>
-                              _openAttendance(context, batch['id'], batchName),
-                        ),
-                      );
-                    },
+          if (batches.isEmpty)
+            const SliverFillRemaining(
+              child: Center(child: Text('No batches found.')),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.all(12),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) => _buildAttendanceBatchCard(
+                    Map<String, dynamic>.from(batches[index]),
                   ),
-          ),
+                  childCount: batches.length,
+                ),
+              ),
+            ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildAttendanceBatchCard(Map<String, dynamic> batch) {
+    final total = (batch['student_count'] as num?)?.toInt() ?? 0;
+    final present = (batch['present_count'] as num?)?.toInt() ?? 0;
+    final absent = (batch['absent_count'] as num?)?.toInt() ?? 0;
+    final unmarked = total - present - absent;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => _openAttendance(batch),
+        child: Padding(
+          padding: const EdgeInsets.all(15),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 620;
+              final title = Row(
+                children: [
+                  Container(
+                    width: 47,
+                    height: 47,
+                    decoration: BoxDecoration(
+                      color: AppTheme.fgNavyBlue.withValues(alpha: 0.07),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.fact_check_outlined,
+                      color: AppTheme.fgNavyBlue,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          batch['name']?.toString() ?? 'Batch',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        const Text(
+                          'Open attendance register',
+                          style: TextStyle(
+                            color: AppTheme.textSecondary,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: AppTheme.textSecondary,
+                  ),
+                ],
+              );
+
+              final stats = Wrap(
+                spacing: 8,
+                runSpacing: 7,
+                children: [
+                  _AttendanceBadge(
+                    label: 'Total',
+                    value: total,
+                    color: AppTheme.info,
+                  ),
+                  _AttendanceBadge(
+                    label: 'Present',
+                    value: present,
+                    color: AppTheme.success,
+                  ),
+                  _AttendanceBadge(
+                    label: 'Absent',
+                    value: absent,
+                    color: AppTheme.danger,
+                  ),
+                  _AttendanceBadge(
+                    label: 'Unmarked',
+                    value: unmarked < 0 ? 0 : unmarked,
+                    color: AppTheme.warning,
+                  ),
+                ],
+              );
+
+              return compact
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [title, const SizedBox(height: 12), stats],
+                    )
+                  : Row(
+                      children: [
+                        Expanded(child: title),
+                        const SizedBox(width: 14),
+                        stats,
+                      ],
+                    );
+            },
+          ),
+        ),
       ),
     );
   }
 }
 
-class _AttendanceCount extends StatelessWidget {
+class _AttendanceBadge extends StatelessWidget {
   final String label;
-  final dynamic value;
+  final int value;
   final Color color;
 
-  const _AttendanceCount({
+  const _AttendanceBadge({
     required this.label,
     required this.value,
     required this.color,
@@ -277,22 +335,31 @@ class _AttendanceCount extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 10),
+    return Container(
+      constraints: const BoxConstraints(minWidth: 66),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+      ),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Text(
             '$value',
             style: TextStyle(
               color: color,
-              fontSize: 21,
-              fontWeight: FontWeight.bold,
+              fontWeight: FontWeight.w800,
+              fontSize: 15,
             ),
           ),
           Text(
             label,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            style: const TextStyle(
+              color: AppTheme.textSecondary,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
       ),
@@ -300,8 +367,10 @@ class _AttendanceCount extends StatelessWidget {
   }
 }
 
-// Sub-Screen: Attendance Viewer & Editor with Date Navigator
-// Sub-Screen: Attendance Viewer & Editor with Date Navigator & Safe Save
+// ============================================================================
+// EDIT ATTENDANCE
+// ============================================================================
+
 class EditAttendanceScreen extends StatefulWidget {
   final String batchId;
   final String batchName;
@@ -321,281 +390,509 @@ class EditAttendanceScreen extends StatefulWidget {
 }
 
 class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
-  final supabase = Supabase.instance.client;
+  final SupabaseClient supabase = Supabase.instance.client;
+
   List<dynamic> students = [];
-  Map<String, String> attendanceData = {};
-  Set<String> modifiedStudents =
-      {}; // Track karega kis bache ka data change hua
+
+  final Map<String, String> attendanceData = {};
+  final Map<String, int> _priorAbsenceStreak = {};
+
+  final Set<String> modifiedStudents = {};
+
   bool isLoading = true;
+  bool isSaving = false;
+
   String? errorMessage;
+
   late DateTime currentDate;
 
   @override
   void initState() {
     super.initState();
+
     currentDate = DateTime.parse(widget.initialDate);
+
     fetchStudentsAndAttendance();
   }
 
+  String get dateString => currentDate.toIso8601String().split('T').first;
+
+  bool get canGoForward {
+    final today = DateTime.now();
+
+    final cleanToday = DateTime(today.year, today.month, today.day);
+
+    return currentDate.isBefore(cleanToday);
+  }
+
+  int get presentCount =>
+      attendanceData.values.where((status) => status == 'present').length;
+
+  int get absentCount =>
+      attendanceData.values.where((status) => status == 'absent').length;
+
+  int get unmarkedCount => students.length - presentCount - absentCount;
+
+  String _dateOnly(DateTime value) {
+    return DateTime(
+      value.year,
+      value.month,
+      value.day,
+    ).toIso8601String().split('T').first;
+  }
+
+  int _absenceStreakFor(String studentId) {
+    final previous = _priorAbsenceStreak[studentId] ?? 0;
+    final selectedStatus = attendanceData[studentId];
+
+    if (selectedStatus == 'present') {
+      return 0;
+    }
+
+    if (selectedStatus == 'absent') {
+      return previous + 1;
+    }
+
+    return previous;
+  }
+
+  bool _needsParentFollowUp(String studentId) {
+    return _absenceStreakFor(studentId) >= 4;
+  }
+
   Future<void> fetchStudentsAndAttendance() async {
-    final String dateString = currentDate.toIso8601String().split('T')[0];
+    setState(() {
+      isLoading = true;
+      errorMessage = null;
+    });
 
     try {
-      final studentsRes = await supabase
-          .from('students')
-          .select()
-          .eq('batch_id', widget.batchId)
-          .order('name');
-      final attendanceRes = await supabase
-          .from('attendance')
-          .select('student_id, status')
-          .eq('batch_id', widget.batchId)
-          .eq('date', dateString);
+      final historyStart = _dateOnly(
+        currentDate.subtract(const Duration(days: 60)),
+      );
+
+      final results = await Future.wait([
+        supabase
+            .from('students')
+            .select('id, name')
+            .eq('batch_id', widget.batchId)
+            .order('name', ascending: true),
+        supabase
+            .from('attendance')
+            .select('student_id, status')
+            .eq('batch_id', widget.batchId)
+            .eq('date', dateString),
+        supabase
+            .from('attendance')
+            .select('student_id, date, status')
+            .eq('batch_id', widget.batchId)
+            .gte('date', historyStart)
+            .lt('date', dateString)
+            .order('date', ascending: false),
+      ]);
+
+      final studentRows = sortStudents(results[0]);
+      final attendanceRows = results[1];
+      final historyRows = results[2];
 
       attendanceData.clear();
-      modifiedStudents.clear(); // Nayi date par reset kar do
+      _priorAbsenceStreak.clear();
+      modifiedStudents.clear();
 
-      for (var record in attendanceRes) {
-        attendanceData[record['student_id']] = record['status'];
+      for (final student in studentRows) {
+        _priorAbsenceStreak[student['id'].toString()] = 0;
+      }
+
+      for (final row in attendanceRows) {
+        attendanceData[row['student_id'].toString()] = row['status'].toString();
+      }
+
+      final historyByStudent = <String, List<Map<String, dynamic>>>{};
+
+      for (final rawRow in historyRows) {
+        final row = Map<String, dynamic>.from(rawRow);
+        final studentId = row['student_id']?.toString();
+
+        if (studentId == null) continue;
+
+        historyByStudent.putIfAbsent(studentId, () => []).add(row);
+      }
+
+      for (final entry in historyByStudent.entries) {
+        entry.value.sort(
+          (a, b) => b['date'].toString().compareTo(a['date'].toString()),
+        );
+
+        var streak = 0;
+
+        for (final row in entry.value) {
+          final status = row['status']?.toString();
+
+          if (status == 'absent') {
+            streak++;
+            continue;
+          }
+
+          if (status == 'present') {
+            break;
+          }
+        }
+
+        _priorAbsenceStreak[entry.key] = streak;
       }
 
       if (!mounted) return;
+
       setState(() {
-        students = sortStudents(studentsRes);
+        students = studentRows;
+
         isLoading = false;
         errorMessage = null;
       });
     } catch (e) {
-      debugPrint('Error: $e');
+      debugPrint('Attendance load error: $e');
+
       if (!mounted) return;
+
       setState(() {
         isLoading = false;
+
         errorMessage =
             'Unable to load attendance. Check your connection and try again.';
       });
     }
   }
 
-  void _updateLocalStatus(String studentId, String newStatus) {
+  void _setStatus(String studentId, String status) {
     setState(() {
-      attendanceData[studentId] = newStatus;
-      modifiedStudents.add(studentId); // Mark as modified
+      attendanceData[studentId] = status;
+
+      modifiedStudents.add(studentId);
     });
   }
 
-  Future<void> _saveChangesToSupabase() async {
+  void _markAll(String status) {
+    setState(() {
+      for (final student in students) {
+        final id = student['id'].toString();
+
+        attendanceData[id] = status;
+
+        modifiedStudents.add(id);
+      }
+    });
+  }
+
+  Future<void> _saveChanges() async {
     if (modifiedStudents.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Koi change nahi kiya gaya.')),
-      );
+      _showMessage('No attendance changes to save.');
+
       return;
     }
 
-    setState(() => isLoading = true);
-    final String dateString = currentDate.toIso8601String().split('T')[0];
-    List<Map<String, dynamic>> updates = [];
+    final updates = <Map<String, dynamic>>[];
 
-    // Sirf unko update karo jin me change aya ha
-    for (String sId in modifiedStudents) {
+    for (final studentId in modifiedStudents) {
+      final status = attendanceData[studentId];
+
+      if (status == null) {
+        continue;
+      }
+
       updates.add({
-        'student_id': sId,
+        'student_id': studentId,
         'batch_id': widget.batchId,
         'date': dateString,
-        'status': attendanceData[sId],
+        'status': status,
       });
     }
+
+    if (updates.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      isSaving = true;
+    });
 
     try {
       await supabase
           .from('attendance')
           .upsert(updates, onConflict: 'student_id, date');
+
+      if (!mounted) return;
+
       setState(() {
-        modifiedStudents.clear(); // Save hone k baad clear kar do
-        isLoading = false;
+        modifiedStudents.clear();
+
+        isSaving = false;
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Attendance updated successfully! ✅',
-              style: TextStyle(color: Colors.white),
-            ),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
+
+      _showMessage('Attendance saved successfully.');
     } catch (e) {
-      debugPrint('Update failed: $e');
-      setState(() => isLoading = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Error saving attendance!',
-              style: TextStyle(color: Colors.white),
-            ),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      debugPrint('Attendance save error: $e');
+
+      if (!mounted) return;
+
+      setState(() {
+        isSaving = false;
+      });
+
+      _showMessage('Unable to save attendance.', error: true);
     }
   }
 
-  void _changeDate(int days) {
+  Future<bool> _confirmDiscard() async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) {
+            return AlertDialog(
+              title: const Text('Unsaved Changes'),
+              content: Text(
+                '${modifiedStudents.length} attendance change(s) have not been saved. Discard them?',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Keep Editing'),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.danger,
+                  ),
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: const Text('Discard'),
+                ),
+              ],
+            );
+          },
+        ) ??
+        false;
+  }
+
+  Future<void> _changeToDate(DateTime date) async {
     if (modifiedStudents.isNotEmpty) {
-      // Agar unsaved changes hain to warn karo
-      _showUnsavedWarningDialog(() {
-        setState(() {
-          currentDate = currentDate.add(Duration(days: days));
-          isLoading = true;
-        });
-        fetchStudentsAndAttendance();
-      });
-      return;
+      final discard = await _confirmDiscard();
+
+      if (!discard || !mounted) {
+        return;
+      }
     }
 
     setState(() {
-      currentDate = currentDate.add(Duration(days: days));
-      isLoading = true;
+      currentDate = date;
     });
-    fetchStudentsAndAttendance();
+
+    await fetchStudentsAndAttendance();
   }
 
-  void _pickDate() async {
-    final DateTime? picked = await showDatePicker(
+  Future<void> _changeDate(int days) async {
+    await _changeToDate(currentDate.add(Duration(days: days)));
+  }
+
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
       context: context,
       initialDate: currentDate,
       firstDate: DateTime(2026, 8, 1),
       lastDate: DateTime.now(),
     );
 
-    if (picked != null) {
-      if (modifiedStudents.isNotEmpty) {
-        _showUnsavedWarningDialog(() {
-          setState(() {
-            currentDate = picked;
-            isLoading = true;
-          });
-          fetchStudentsAndAttendance();
-        });
+    if (picked == null || !mounted) {
+      return;
+    }
+
+    await _changeToDate(picked);
+  }
+
+  Future<void> _attemptBack() async {
+    if (modifiedStudents.isNotEmpty) {
+      final discard = await _confirmDiscard();
+
+      if (!discard || !mounted) {
         return;
       }
+    }
 
-      setState(() {
-        currentDate = picked;
-        isLoading = true;
-      });
-      fetchStudentsAndAttendance();
+    if (widget.onBack != null) {
+      widget.onBack!();
+      return;
+    }
+
+    if (mounted) {
+      Navigator.of(context).pop();
     }
   }
 
-  void _showUnsavedWarningDialog(VoidCallback onConfirm) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Unsaved Changes'),
-        content: const Text(
-          'Tumne kuch attendance change ki ha par save nahi ki. Date change karne se changes zaya ho jayengi. Proceed?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () {
-              Navigator.pop(context);
-              onConfirm();
-            },
-            child: const Text('Discard & Proceed'),
-          ),
-        ],
+  void _showMessage(String message, {bool error = false}) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: error ? AppTheme.danger : AppTheme.success,
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final String dateString = currentDate.toIso8601String().split('T')[0];
-    final bool canGoForward = currentDate.isBefore(
-      DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day),
-    );
-
     return PopScope(
       canPop: modifiedStudents.isEmpty,
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop && modifiedStudents.isNotEmpty) {
-          _showUnsavedWarningDialog(() => Navigator.pop(context));
+        if (!didPop) {
+          _attemptBack();
         }
       },
       child: Scaffold(
+        backgroundColor: Colors.transparent,
         appBar: AppBar(
-          automaticallyImplyLeading: widget.onBack == null,
-          leading: widget.onBack == null
-              ? null
-              : IconButton(
-                  tooltip: 'Back to Attendance',
-                  icon: const Icon(Icons.arrow_back),
-                  onPressed: modifiedStudents.isEmpty
-                      ? widget.onBack
-                      : () => _showUnsavedWarningDialog(widget.onBack!),
-                ),
+          automaticallyImplyLeading: false,
+          leading: IconButton(
+            tooltip: 'Back',
+            onPressed: _attemptBack,
+            icon: const Icon(Icons.arrow_back_rounded),
+          ),
           title: Text(widget.batchName),
           actions: [
             IconButton(
-              icon: const Icon(Icons.calendar_month),
+              tooltip: 'Choose Date',
               onPressed: isLoading ? null : _pickDate,
+              icon: const Icon(Icons.calendar_month_outlined),
             ),
+            const SizedBox(width: 5),
           ],
         ),
-        body: Container(
-          decoration: BoxDecoration(
-            image: DecorationImage(
-              image: const AssetImage('assets/images/school_bg.png'),
-              fit: BoxFit.cover,
-              opacity: 0.18,
-            ),
-          ),
+        body: AcademyBackground(
           child: Column(
             children: [
-              // Date Navigator Bar
-              Container(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                color: Colors.teal.shade50,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.chevron_left, size: 30),
-                      onPressed: isLoading ? null : () => _changeDate(-1),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
+                child: Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            IconButton(
+                              tooltip: 'Previous Day',
+                              onPressed: isLoading
+                                  ? null
+                                  : () => _changeDate(-1),
+                              icon: const Icon(Icons.chevron_left_rounded),
+                            ),
+                            Expanded(
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(10),
+                                onTap: isLoading ? null : _pickDate,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 9,
+                                  ),
+                                  child: Column(
+                                    children: [
+                                      Text(
+                                        DateFormat('EEEE').format(currentDate),
+                                        style: const TextStyle(
+                                          color: AppTheme.textSecondary,
+                                          fontSize: 10,
+                                        ),
+                                      ),
+                                      Text(
+                                        DateFormat(
+                                          'dd MMM yyyy',
+                                        ).format(currentDate),
+                                        style: const TextStyle(
+                                          color: AppTheme.fgNavyBlue,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 17,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Next Day',
+                              onPressed: isLoading || !canGoForward
+                                  ? null
+                                  : () => _changeDate(1),
+                              icon: const Icon(Icons.chevron_right_rounded),
+                            ),
+                          ],
+                        ),
+                        const Divider(height: 22),
+                        Wrap(
+                          alignment: WrapAlignment.center,
+                          spacing: 7,
+                          runSpacing: 7,
+                          children: [
+                            _AttendanceBadge(
+                              label: 'Total',
+                              value: students.length,
+                              color: AppTheme.info,
+                            ),
+                            _AttendanceBadge(
+                              label: 'Present',
+                              value: presentCount,
+                              color: AppTheme.success,
+                            ),
+                            _AttendanceBadge(
+                              label: 'Absent',
+                              value: absentCount,
+                              color: AppTheme.danger,
+                            ),
+                            _AttendanceBadge(
+                              label: 'Unmarked',
+                              value: unmarkedCount < 0 ? 0 : unmarkedCount,
+                              color: AppTheme.warning,
+                            ),
+                            _AttendanceBadge(
+                              label: 'Changed',
+                              value: modifiedStudents.length,
+                              color: AppTheme.fgGold,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 13),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: isLoading || isSaving
+                                    ? null
+                                    : () => _markAll('present'),
+                                icon: const Icon(Icons.done_all_rounded),
+                                label: const Text('Mark All Present'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: AppTheme.success,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: isLoading || isSaving
+                                    ? null
+                                    : () => _markAll('absent'),
+                                icon: const Icon(Icons.close_rounded),
+                                label: const Text('Mark All Absent'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: AppTheme.danger,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 20),
-                    Text(
-                      dateString,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.teal,
-                      ),
-                    ),
-                    const SizedBox(width: 20),
-                    IconButton(
-                      icon: const Icon(Icons.chevron_right, size: 30),
-                      onPressed: isLoading || !canGoForward
-                          ? null
-                          : () => _changeDate(1),
-                      color: canGoForward && !isLoading
-                          ? Colors.black
-                          : Colors.grey,
-                    ),
-                  ],
+                  ),
                 ),
               ),
-              // Students List
               Expanded(
                 child: errorMessage != null
                     ? ErrorStateView(
@@ -604,107 +901,186 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
                       )
                     : isLoading
                     ? const Center(child: CircularProgressIndicator())
+                    : students.isEmpty
+                    ? const Center(child: Text('No students found.'))
                     : ListView.builder(
-                        padding: const EdgeInsets.all(12),
+                        padding: const EdgeInsets.fromLTRB(12, 6, 12, 100),
                         itemCount: students.length,
                         itemBuilder: (context, index) {
                           final student = students[index];
-                          final sId = student['id'];
-                          final status = attendanceData[sId] ?? 'unmarked';
+
+                          final id = student['id'].toString();
+
+                          final status = attendanceData[id];
+
+                          final absenceStreak = _absenceStreakFor(id);
+
+                          final needsFollowUp = _needsParentFollowUp(id);
 
                           return Card(
-                            margin: const EdgeInsets.only(bottom: 10),
-                            color: Colors.white.withValues(alpha: 0.96),
-                            elevation: 2,
-                            child: ListTile(
-                              title: Text(student['name']),
-                              trailing: SizedBox(
-                                width: 150,
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: InkWell(
-                                        borderRadius: BorderRadius.circular(10),
-                                        onTap: () =>
-                                            _updateLocalStatus(sId, 'present'),
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 10,
+                            margin: const EdgeInsets.only(bottom: 8),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              side: BorderSide(
+                                color: needsFollowUp
+                                    ? AppTheme.danger.withValues(alpha: 0.55)
+                                    : AppTheme.border,
+                                width: needsFollowUp ? 1.4 : 1,
+                              ),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 8,
+                              ),
+                              child: Row(
+                                children: [
+                                  CircleAvatar(
+                                    radius: 18,
+                                    backgroundColor: needsFollowUp
+                                        ? AppTheme.danger.withValues(
+                                            alpha: 0.10,
+                                          )
+                                        : AppTheme.fgNavyBlue.withValues(
+                                            alpha: 0.08,
                                           ),
-                                          decoration: BoxDecoration(
-                                            color: status == 'present'
-                                                ? Colors.green
-                                                : Colors.grey.shade200,
-                                            borderRadius: BorderRadius.circular(
-                                              10,
-                                            ),
-                                          ),
-                                          alignment: Alignment.center,
-                                          child: Text(
-                                            'P',
-                                            style: TextStyle(
-                                              color: status == 'present'
-                                                  ? Colors.white
-                                                  : Colors.black54,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ),
+                                    foregroundColor: needsFollowUp
+                                        ? AppTheme.danger
+                                        : AppTheme.fgNavyBlue,
+                                    child: Text(
+                                      '${index + 1}',
+                                      style: const TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
                                       ),
                                     ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: InkWell(
-                                        borderRadius: BorderRadius.circular(10),
-                                        onTap: () =>
-                                            _updateLocalStatus(sId, 'absent'),
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 10,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: status == 'absent'
-                                                ? Colors.red
-                                                : Colors.grey.shade200,
-                                            borderRadius: BorderRadius.circular(
-                                              10,
-                                            ),
-                                          ),
-                                          alignment: Alignment.center,
-                                          child: Text(
-                                            'A',
-                                            style: TextStyle(
-                                              color: status == 'absent'
-                                                  ? Colors.white
-                                                  : Colors.black54,
-                                              fontWeight: FontWeight.bold,
-                                            ),
+                                  ),
+                                  const SizedBox(width: 11),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          student['name']?.toString() ??
+                                              'Student',
+                                          style: TextStyle(
+                                            color: needsFollowUp
+                                                ? AppTheme.danger
+                                                : AppTheme.textPrimary,
+                                            fontSize: 15.5,
+                                            fontWeight: FontWeight.w800,
                                           ),
                                         ),
-                                      ),
+                                        if (needsFollowUp) ...[
+                                          const SizedBox(height: 3),
+                                          Text(
+                                            'Absent $absenceStreak consecutive attendance days • Parent follow-up',
+                                            style: const TextStyle(
+                                              color: AppTheme.danger,
+                                              fontSize: 12.5,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ],
+                                      ],
                                     ),
-                                  ],
-                                ),
+                                  ),
+                                  _StatusButton(
+                                    label: 'P',
+                                    selected: status == 'present',
+                                    selectedColor: AppTheme.success,
+                                    onTap: isSaving
+                                        ? null
+                                        : () => _setStatus(id, 'present'),
+                                  ),
+                                  const SizedBox(width: 7),
+                                  _StatusButton(
+                                    label: 'A',
+                                    selected: status == 'absent',
+                                    selectedColor: AppTheme.danger,
+                                    onTap: isSaving
+                                        ? null
+                                        : () => _setStatus(id, 'absent'),
+                                  ),
+                                ],
                               ),
                             ),
                           );
                         },
                       ),
               ),
-              if (modifiedStudents.isNotEmpty)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            ],
+          ),
+        ),
+        bottomNavigationBar: modifiedStudents.isEmpty
+            ? null
+            : SafeArea(
+                child: Container(
+                  color: Colors.white,
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
                   child: ElevatedButton.icon(
-                    onPressed: isLoading ? null : _saveChangesToSupabase,
-                    icon: const Icon(Icons.save),
-                    label: const Text('Save Changes'),
-                    style: ElevatedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(52),
+                    onPressed: isSaving ? null : _saveChanges,
+                    icon: isSaving
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : const Icon(Icons.save_outlined),
+                    label: Text(
+                      isSaving
+                          ? 'Saving…'
+                          : 'Save ${modifiedStudents.length} Change(s)',
                     ),
                   ),
                 ),
-            ],
+              ),
+      ),
+    );
+  }
+}
+
+class _StatusButton extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final Color selectedColor;
+  final VoidCallback? onTap;
+
+  const _StatusButton({
+    required this.label,
+    required this.selected,
+    required this.selectedColor,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? selectedColor : AppTheme.surfaceSoft,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          width: 48,
+          height: 40,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: selected ? selectedColor : AppTheme.border,
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: selected ? Colors.white : AppTheme.textSecondary,
+              fontWeight: FontWeight.w800,
+            ),
           ),
         ),
       ),

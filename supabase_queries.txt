@@ -1,0 +1,344 @@
+-- Extension lazmi hai UUIDs ke liye
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- 1. Batches Table
+CREATE TABLE batches (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  name TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 2. Students Table
+CREATE TABLE students (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  name TEXT NOT NULL,
+  batch_id UUID REFERENCES batches(id) ON DELETE CASCADE,
+  stream TEXT, -- Yahan 'Bio', 'CS' waghera save hoga future ke liye
+  status TEXT DEFAULT 'enrolled', -- 'trial' ya 'enrolled'
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 3. Attendance Table
+CREATE TABLE attendance (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  student_id UUID REFERENCES students(id) ON DELETE CASCADE,
+  batch_id UUID REFERENCES batches(id) ON DELETE CASCADE,
+  date DATE NOT NULL,
+  status TEXT NOT NULL, -- 'present', 'absent', 'leave'
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+  UNIQUE(student_id, date) -- Logic: Ek bachay ki ek din mein sirf ek attendance lag sakti hai
+);
+
+ALTER TABLE batches DISABLE ROW LEVEL SECURITY;
+
+-- Disable RLS for students table dev phase ke liye
+ALTER TABLE students DISABLE ROW LEVEL SECURITY;
+
+-- 9 Boys
+INSERT INTO students (name, batch_id) VALUES
+('Muhammad Kaif', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Muhammad Ali Raza', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Saim Sadaqat', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Muhammad Haris', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Munammad Mahad Kiyani', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Muhammad Mujtaba', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Fawad Siddique', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Sana Ullah Pre 9', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Junaid Haider', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('H M Umair Hassaan', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Muhammad Rafi', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Muhammad Shaheer', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Muhammad Zeeshan Shahid', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Syed Ghayur Haider Pre 9', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Zulqurnain', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1));
+
+-- 9 Girls
+INSERT INTO students (name, batch_id) VALUES
+('Abrish Rauf', (SELECT id FROM batches WHERE name ILIKE '%9%Girl%' LIMIT 1)),
+('Anzala Fatima', (SELECT id FROM batches WHERE name ILIKE '%9%Girl%' LIMIT 1)),
+('Zoha Behzad', (SELECT id FROM batches WHERE name ILIKE '%9%Girl%' LIMIT 1)),
+('Fiza Shahzad', (SELECT id FROM batches WHERE name ILIKE '%9%Girl%' LIMIT 1)),
+('Kinz-ul-Eman', (SELECT id FROM batches WHERE name ILIKE '%9%Girl%' LIMIT 1)),
+('Fatima Tuz Zahra', (SELECT id FROM batches WHERE name ILIKE '%9%Girl%' LIMIT 1)),
+('Saba Khanum Jaffari', (SELECT id FROM batches WHERE name ILIKE '%9%Girl%' LIMIT 1)),
+('Bisma Ehtisham', (SELECT id FROM batches WHERE name ILIKE '%9%Girl%' LIMIT 1)),
+('Sofia Amir', (SELECT id FROM batches WHERE name ILIKE '%9%Girl%' LIMIT 1)),
+('Anaya Noor', (SELECT id FROM batches WHERE name ILIKE '%9%Girl%' LIMIT 1)),
+('Memoona Shaukat', (SELECT id FROM batches WHERE name ILIKE '%9%Girl%' LIMIT 1)),
+('Hamania Shahid', (SELECT id FROM batches WHERE name ILIKE '%9%Girl%' LIMIT 1)),
+('Afeen Malik', (SELECT id FROM batches WHERE name ILIKE '%9%Girl%' LIMIT 1)),
+('Fatiha', (SELECT id FROM batches WHERE name ILIKE '%9%Girl%' LIMIT 1)),
+('Sundas Iftikhar', (SELECT id FROM batches WHERE name ILIKE '%9%Girl%' LIMIT 1)),
+('Tuba Khalil', (SELECT id FROM batches WHERE name ILIKE '%9%Girl%' LIMIT 1)),
+('Ayesha Mariyum', (SELECT id FROM batches WHERE name ILIKE '%9%Girl%' LIMIT 1));
+
+-- 10 Boys
+INSERT INTO students (name, batch_id) VALUES
+('Muhammad Eibad', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Ahmed Hassan', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Abdullah', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Muhammad Saad', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Talha Hashmi', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Husnain Ali', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Abu Huraira', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Muhammad Qasim', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Eibad Ameen', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Muhammad Ahmad', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Muhammad Taha', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Hassaan Muddassar', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Muhammad Abdullah', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Arqam Raza', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Ibrahim Zahid', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Muhammad Shaheer Khalid', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Uzair Akbar', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Muhammad Awais', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Mustafa', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Ehtesham Raza', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Muhammad Mazhar Khattak', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('Abdul Hadi', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1)),
+('M. Abdullah', (SELECT id FROM batches WHERE name ILIKE '%10%Boy%' LIMIT 1));
+
+-- 10 Girls
+INSERT INTO students (name, batch_id) VALUES
+('Kinza Irum Noor', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Musferah Ehtisham', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Kalsoom Bibi', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Zainab Bibi', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Rida Hijab', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Amna Bibi', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Hadiya', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Sundas', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Tehreem', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Mahnoor', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Minahil Asghar', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Minahil Khan', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Khadija', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Amna Noor', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Eman Siddique', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Arooj Fatima', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Wajiha Ishaq', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Anum', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Marriyum', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Aiman', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Ayesha Batool', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1)),
+('Saiqa', (SELECT id FROM batches WHERE name ILIKE '%10%Girl%' LIMIT 1));
+
+-- 11 Boys
+INSERT INTO students (name, batch_id) VALUES
+('Muhammad Asif', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Muhammad Ikram', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Adeem Gohar', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Muhammad Rauf Khan', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Abdullah Yousafzai', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Muhammad Hassan Zahid', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Zaid Mukhtar', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Ahmad Mukhtar', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Umer Awan', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Muhammad Bin Qasim', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Talha Riaz', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Attique-ur-Rehman', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Muhammad Ali Jilani', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Abdul Hannan Khan', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Jubair Khan', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Asad Khan', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Shaheer Irfen', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Huzaifa Qasim', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Hassan Ahmad', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Adeeb', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Arslan', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Mutarib Alii', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Wahaj Usman', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Muhammad Mazhar', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Samiullah Asif', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Haider Ali', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1)),
+('Fahad Jamil', (SELECT id FROM batches WHERE name ILIKE '%11%Boy%' LIMIT 1));
+
+-- 11 Girls
+INSERT INTO students (name, batch_id) VALUES
+('Nabira Naveed', (SELECT id FROM batches WHERE name ILIKE '%11%Girl%' LIMIT 1)),
+('Aiman Fatima', (SELECT id FROM batches WHERE name ILIKE '%11%Girl%' LIMIT 1)),
+('Umama Fiaz', (SELECT id FROM batches WHERE name ILIKE '%11%Girl%' LIMIT 1)),
+('Shamayem Choudhary', (SELECT id FROM batches WHERE name ILIKE '%11%Girl%' LIMIT 1)),
+('Zainab', (SELECT id FROM batches WHERE name ILIKE '%11%Girl%' LIMIT 1)),
+('Rameen Fatima', (SELECT id FROM batches WHERE name ILIKE '%11%Girl%' LIMIT 1)),
+('Minahil Fatima', (SELECT id FROM batches WHERE name ILIKE '%11%Girl%' LIMIT 1)),
+('Amna Zubair', (SELECT id FROM batches WHERE name ILIKE '%11%Girl%' LIMIT 1)),
+('Aliysha Fatima', (SELECT id FROM batches WHERE name ILIKE '%11%Girl%' LIMIT 1)),
+('Moqaddus Ahmad', (SELECT id FROM batches WHERE name ILIKE '%11%Girl%' LIMIT 1)),
+('Wania', (SELECT id FROM batches WHERE name ILIKE '%11%Girl%' LIMIT 1)),
+('Afsheen', (SELECT id FROM batches WHERE name ILIKE '%11%Girl%' LIMIT 1)),
+('Hafsa', (SELECT id FROM batches WHERE name ILIKE '%11%Girl%' LIMIT 1)),
+('Farzeen', (SELECT id FROM batches WHERE name ILIKE '%11%Girl%' LIMIT 1)),
+('Fatima Sarfraz', (SELECT id FROM batches WHERE name ILIKE '%11%Girl%' LIMIT 1)),
+('Misbah Javed', (SELECT id FROM batches WHERE name ILIKE '%11%Girl%' LIMIT 1)),
+('Ishmal Ramzan', (SELECT id FROM batches WHERE name ILIKE '%11%Girl%' LIMIT 1)),
+('Abeera Khawer', (SELECT id FROM batches WHERE name ILIKE '%11%Girl%' LIMIT 1));
+
+-- 12 Boys
+INSERT INTO students (name, batch_id) VALUES
+('Zohair Khan', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Mehtab Ahsan', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Sohail Farooq', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Farzad', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Hasnain', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Sarib', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Abdul Rehman', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Hassan Nawaz', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Mudassir Naqaz', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Ayyaz Butt', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Kumail', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Rayyan', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Salman Noor', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Rao Saif Ullah', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Abdur Raffay', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('M Abdullah', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Uzair Shoukat', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Yasir Abbas', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('M Akbar', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Sehran', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Muhammad Junaid', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('M. Talha', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1)),
+('Hadi', (SELECT id FROM batches WHERE name ILIKE '%12%Boy%' LIMIT 1));
+
+-- 12 Girls
+INSERT INTO students (name, batch_id) VALUES
+('Zumar Asad', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Imama Zubair', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Abrish Fatima', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Nozaira Fatima', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Hifsa Naveed', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Fajr Asad', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Sara Mirza', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Sofia Shoaib', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Mashal Rahim', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Sara Ali', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Hafza Mahnoor', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Hijab Imran', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Syeda Zahra Naqvi', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Ayesha Sabir', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Haleema', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Seerat', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Syeda Shehr Bano', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Areesha Shahzad', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Areeba', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Manha', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Hajira', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Qudsia', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Gulbashra', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Sawera Mustafa', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1)),
+('Tehreem Khalid', (SELECT id FROM batches WHERE name ILIKE '%12%Girl%' LIMIT 1));
+
+INSERT INTO students (name, batch_id) VALUES
+('Nameer Raza', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Hammad Abubakar', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Haris Ahmad', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Muhammad Usman', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Muhammad Abdullah', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Muhammad Umar Majid', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Abdul Moiz', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Talha', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Abdullah Butt', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Mouavia', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Syed Abdul Mateen', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Sharoon Arshad', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Muhammad Waris', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Danial Hussain', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Muhammad Waleed Pre 9', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Saqlain', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('Hamza Ajmal', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1)),
+('M. Azan', (SELECT id FROM batches WHERE name ILIKE '%9%Boy%' LIMIT 1));
+
+-- Naya column banaya (agar pehle se nahi hai)
+ALTER TABLE batches ADD COLUMN IF NOT EXISTS whatsapp_group_id TEXT;
+
+-- Har batch ke samne uska specific Group ID set kiya
+UPDATE batches SET whatsapp_group_id = 'LX6ohSxk4PlDCvFmW1v65T' WHERE name ILIKE '%9%boy%';
+UPDATE batches SET whatsapp_group_id = 'ERQZVJsApPq5dM01ofj8XK' WHERE name ILIKE '%9%girl%';
+UPDATE batches SET whatsapp_group_id = 'CASWdozSKbrFomp8dbZOsI' WHERE name ILIKE '%12%boy%' OR name ILIKE '%XII%boy%';
+UPDATE batches SET whatsapp_group_id = 'GH9KNbO7Jdv77Go96dqoZH' WHERE name ILIKE '%12%girl%' OR name ILIKE '%XII%girl%';
+UPDATE batches SET whatsapp_group_id = 'DwQFacM7W8vCPoAko0gxTx' WHERE name ILIKE '%11%boy%' OR name ILIKE '%XI%boy%';
+UPDATE batches SET whatsapp_group_id = 'EZrpvV8dfZkHu4XJAbRSP9' WHERE name ILIKE '%11%girl%' OR name ILIKE '%XI%girl%';
+UPDATE batches SET whatsapp_group_id = 'DBfejJWKClF6o0ZJWCbO1v' WHERE name ILIKE '%10%boy%';
+UPDATE batches SET whatsapp_group_id = 'ICyOSqP7coE0B04iWbhAQU' WHERE name ILIKE '%10%girl%';
+
+-- Pehle attendance delete karo taake foreign key error na aaye
+DELETE FROM attendance WHERE student_id IN (
+    SELECT id FROM students WHERE name IN (
+        'Ayesha Mariyum', 'Insharah',                                     -- 9th Girls
+        'Muhammad Eibad', 'Hassaan Mudassar', 'Hassaan Muddassar',        -- 10th Boys
+        'Uzair Akbar', 'Muhammad Awais', 'Mustafa', 'Ehtesham Raza', 'Ehtisham Raza',
+        'Muhammad Mazhar Khattak', 'M. Abdullah',
+        'Moqaddus Ahmad', 'Hafsa', 'Mehreen Mustafa', 'Mehraan Mustafa',  -- 11th Girls
+        'Muhammad Asif', 'Mo Arsal Gul', 'Haider Ali', 'Abu Bakar', 'Abu-bakar', 'Haseeb Ali', 'Shayan Waqar', 'Shayan wagar', -- 11th Boys
+        'Manha', 'Sawera Mustafa',                                        -- 12th Girls
+        'Sarib', 'M Akbar', 'Muhammad Akbar', 'M. Ali', 'Muhammad Ali', 'M. Mohsin', 'Muhammad Mohsin' -- 12th Boys
+    )
+);
+
+-- Ab unko students table se nikaal do
+DELETE FROM students WHERE name IN (
+    'Ayesha Mariyum', 'Insharah',
+    'Muhammad Eibad', 'Hassaan Mudassar', 'Hassaan Muddassar',
+    'Uzair Akbar', 'Muhammad Awais', 'Mustafa', 'Ehtesham Raza', 'Ehtisham Raza',
+    'Muhammad Mazhar Khattak', 'M. Abdullah',
+    'Moqaddus Ahmad', 'Hafsa', 'Mehreen Mustafa', 'Mehraan Mustafa',
+    'Muhammad Asif', 'Mo Arsal Gul', 'Haider Ali', 'Abu Bakar', 'Abu-bakar', 'Haseeb Ali', 'Shayan Waqar', 'Shayan wagar',
+    'Manha', 'Sawera Mustafa',
+    'Sarib', 'M Akbar', 'Muhammad Akbar', 'M. Ali', 'Muhammad Ali', 'M. Mohsin', 'Muhammad Mohsin'
+);
+
+INSERT INTO attendance (student_id, batch_id, date, status)
+SELECT id, batch_id, '2026-09-18', 'present'
+FROM students
+ON CONFLICT (student_id, date) 
+DO UPDATE SET status = 'present';
+
+UPDATE attendance 
+SET status = 'absent'
+WHERE date = '2026-09-18' 
+AND student_id IN (
+    SELECT id FROM students 
+    WHERE name IN (
+        'Kinz-ul-Eman', 'Memoona Shaukat', 'Fatiha',                                   -- 9th Girls
+        'Muhammad Kaif', 'Muhammad Ali Raza', 'Muhammad Mahad Kiyani', 'Syed Abdul Mateen', 'Sharoon Arshad', 'Saqlain', -- 9th Boys
+        'Zainab Bibi', 'Amna Bibi', 'Minahil Asghar', 'Minahil Khan', 'Khadija', 'Amna Noor', 'Eman Siddique', 'Arooj Fatima', 'Marriyum', -- 10th Girls
+        'Ahmed Hassan', 'Abdullah', 'Talha Hashmi', 'Abu Huraira', 'Muhammad Qasim', 'Muhammad Shaheer Khalid', -- 10th Boys
+        'Aliysha Fatima', 'Farzeen', 'Jawahir Sajjad', 'Ajiya',                        -- 11th Girls
+        'Muhammad Hassan Zahid', 'Samiullah Asif', 'Zaman Joiya',                      -- 11th Boys
+        'Mashal Rahim', 'Syeda Zahra Naqvi', 'Hajira',                                 -- 12th Girls
+        'Mehtab Ahsan', 'M Abdullah', 'Muhammad Abdullah', 'Yasir Abbas'               -- 12th Boys
+    )
+);
+
+UPDATE attendance
+SET status = 'absent'
+WHERE date < '2026-09-18'
+AND student_id IN (
+    SELECT id FROM students WHERE name IN ('Arqam Raza', 'Argam Raza')
+);
+
+create table app_users (
+  id uuid default gen_random_uuid() primary key,
+  username text unique not null,
+  password text not null,
+  role text not null
+);
+
+insert into app_users (username, password, role) values 
+('admin', 'Mpswah@786', 'admin'),
+('teacher', 'fgei2026', 'teacher');
+
+ALTER TABLE app_users DISABLE ROW LEVEL SECURITY;
+
+create table app_settings (
+  id int primary key,
+  min_apk_version text not null,
+  apk_download_url text not null
+);
+
+insert into app_settings (id, min_apk_version, apk_download_url) values 
+(1, '1.0.0', 'https://github.com/AhmerMoon/FG_Academy_Portal/actions'); 
+-- Jab tum drive par APK rakhoge toh is link ko Supabase se update kar dena
+
+update app_settings set apk_download_url = 'https://github.com/AhmerMoon/FG_Academy_Portal/releases/download/latest/app-release.apk' where id = 1;
+update app_settings set apk_download_url = 'https://github.com/AhmerMoon/FG_Academy_Portal/releases/download/latest/app-release.apk' where id = 1;
