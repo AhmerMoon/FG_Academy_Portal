@@ -10,6 +10,8 @@ import '../../../utils/error_state_view.dart';
 import '../../../utils/fee_audit_pdf_generator.dart';
 
 const Set<String> _editableFixedStaffNames = {
+  'Mr. Zahid Rehman',
+  'Mr. Shahid',
   'Mr. Tariq Khan',
   'Mr. Ahmer Moon',
   'Ms. Samina',
