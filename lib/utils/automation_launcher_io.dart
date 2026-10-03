@@ -3,19 +3,29 @@ import 'dart:io';
 bool get isWindowsPlatform => Platform.isWindows;
 
 Future<bool> launchAutomation() async {
-  if (!Platform.isWindows) return false;
-
-  final batchFile = File('${Directory.current.path}\\FGEI_Backend\\main.bat');
-  if (!batchFile.existsSync()) return false;
+  if (!Platform.isWindows) {
+    return false;
+  }
 
   try {
-    final result = await Process.run('cmd', [
+    // Always use the actual Flutter EXE directory,
+    // not whatever Windows happens to use as current directory.
+    final exeDirectory = File(Platform.resolvedExecutable).parent;
+
+    final batchFile = File('${exeDirectory.path}\\FGEI_Backend\\main.bat');
+
+    if (!batchFile.existsSync()) {
+      return false;
+    }
+
+    await Process.start('cmd.exe', [
       '/c',
       'start',
       '',
       batchFile.path,
-    ]);
-    return result.exitCode == 0;
+    ], workingDirectory: batchFile.parent.path);
+
+    return true;
   } catch (e) {
     return false;
   }

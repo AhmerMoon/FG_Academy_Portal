@@ -1,4 +1,5 @@
 name: Build Academy Portal
+
 on:
   push:
     branches:
@@ -8,8 +9,13 @@ permissions:
   contents: write
 
 jobs:
+  # ==========================================================
+  # ANDROID
+  # ==========================================================
+
   build-android:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -23,17 +29,26 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build APK
+      - name: Build Release APK
         run: flutter build apk --release
+
+      - name: Prepare APK
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk FG_Academy_Portal.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Android-APK
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: FG_Academy_Portal.apk
+
+  # ==========================================================
+  # WINDOWS
+  # ==========================================================
 
   build-windows:
     runs-on: windows-latest
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -50,17 +65,47 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build Windows
-        run: flutter build windows
+      - name: Build Windows Release
+        run: flutter build windows --release
 
-      - name: Upload Windows Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Windows-EXE
-          path: build\windows\x64\runner\Release\
+      # ------------------------------------------------------
+      # COPY WHATSAPP AUTOMATION
+      #
+      # IMPORTANT:
+      # .env and .venv are intentionally NOT copied.
+      # Secret key stays only on the Academy PC.
+      # ------------------------------------------------------
 
-      - name: Zip Windows Release
-        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath Academy_Portal_Windows.zip
+      - name: Add WhatsApp Automation Backend
+        shell: powershell
+        run: |
+          $destination = "build\windows\x64\runner\Release\FGEI_Backend"
+
+          New-Item -ItemType Directory -Force -Path $destination
+
+          Copy-Item "FGEI_Backend\main.py" `
+            "$destination\main.py" -Force
+
+          Copy-Item "FGEI_Backend\main.bat" `
+            "$destination\main.bat" -Force
+
+          Copy-Item "FGEI_Backend\setup_backend.bat" `
+            "$destination\setup_backend.bat" -Force
+
+          Copy-Item "FGEI_Backend\requirements.txt" `
+            "$destination\requirements.txt" -Force
+
+          Write-Host "WhatsApp backend added successfully."
+
+          Get-ChildItem $destination
+
+      - name: Create Windows ZIP
+        shell: powershell
+        run: |
+          Compress-Archive `
+            -Path "build\windows\x64\runner\Release\*" `
+            -DestinationPath "Academy_Portal_Windows.zip" `
+            -Force
 
       - name: Upload Windows ZIP Artifact
         uses: actions/upload-artifact@v4
@@ -68,34 +113,46 @@ jobs:
           name: Windows-ZIP
           path: Academy_Portal_Windows.zip
 
+  # ==========================================================
+  # GITHUB RELEASE
+  # ==========================================================
+
   create-release:
-    needs: [build-android, build-windows]
+    needs:
+      - build-android
+      - build-windows
+
     runs-on: ubuntu-latest
+
     steps:
-      - name: Download APK Artifact
+      - name: Download Android APK
         uses: actions/download-artifact@v4
         with:
           name: Android-APK
           path: release-assets/android
 
-      - name: Download Windows Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: Windows-EXE
-          path: release-assets/windows
-
-      - name: Download Windows ZIP Artifact
+      - name: Download Windows ZIP
         uses: actions/download-artifact@v4
         with:
           name: Windows-ZIP
-          path: release-assets/windows-zip
+          path: release-assets/windows
 
-      - name: Create Release and Upload Artifacts
+      - name: Create or Update Latest Release
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "release-assets/android/app-release.apk,release-assets/windows/*.exe,release-assets/windows-zip/Academy_Portal_Windows.zip"
+          artifacts: "release-assets/android/FG_Academy_Portal.apk,release-assets/windows/Academy_Portal_Windows.zip"
           tag: "latest"
-          name: "Latest Update"
+          name: "FG Academy Portal - Latest Update"
+          body: |
+            Latest FG Academy Portal release.
+
+            Downloads:
+            - FG_Academy_Portal.apk - Android
+            - Academy_Portal_Windows.zip - Windows
+
+            The Windows package includes the WhatsApp attendance
+            automation backend. The local .env secret file is not
+            included for security.
           allowUpdates: true
           makeLatest: true
           token: ${{ secrets.GITHUB_TOKEN }}
