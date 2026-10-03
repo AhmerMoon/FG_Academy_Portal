@@ -139,6 +139,16 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
         batches,
       ).map((row) => Map<String, dynamic>.from(row)).toList();
 
+      final firstBatch = batches.isEmpty ? null : batches.first;
+
+      final firstClassLevel =
+          (firstBatch?['class_level'] as num?)?.toInt() ?? 0;
+
+      final firstSubjects = _subjectsFor(
+        user: user,
+        classLevel: firstClassLevel,
+      );
+
       if (!mounted) return;
 
       setState(() {
@@ -146,16 +156,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
         _batches = batches;
 
-        _selectedBatchId = batches.isEmpty
-            ? null
-            : batches.first['id'].toString();
+        _selectedBatchId = firstBatch?['id']?.toString();
 
-        _selectedSubject = _subjectsFor(
-          user: user,
-          classLevel: batches.isEmpty
-              ? 0
-              : (batches.first['class_level'] as num?)?.toInt() ?? 0,
-        ).firstOrNull;
+        _selectedSubject = firstSubjects.isEmpty ? null : firstSubjects.first;
 
         _loading = false;
 
@@ -222,7 +225,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     setState(() {
       _selectedBatchId = batchId;
 
-      _selectedSubject = subjects.firstOrNull;
+      _selectedSubject = subjects.isEmpty ? null : subjects.first;
 
       _selectedTestId = null;
 
@@ -324,6 +327,13 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     }
   }
 
+  // ==========================================================
+  // LOAD ALL STUDENTS FOR SELECTED BATCH + SUBJECT
+  //
+  // IMPORTANT:
+  // Attendance is intentionally NOT queried here.
+  // ==========================================================
+
   Future<void> _loadTestStudents() async {
     final test = _selectedTest;
 
@@ -345,8 +355,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
     final testId = test['id'].toString();
 
-    final testDate = test['test_date'].toString();
-
     setState(() {
       _loadingStudents = true;
     });
@@ -358,12 +366,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
             .select('id, name, stream')
             .eq('batch_id', batchId)
             .order('name', ascending: true),
-        _supabase
-            .from('attendance')
-            .select('student_id, status')
-            .eq('batch_id', batchId)
-            .eq('date', testDate)
-            .eq('status', 'present'),
+
         _supabase
             .from('award_marks')
             .select('student_id, marks')
@@ -372,14 +375,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
       final rawStudents = results[0] as List;
 
-      final attendance = results[1] as List;
-
-      final marks = results[2] as List;
-
-      final presentIds = attendance
-          .map((row) => row['student_id']?.toString())
-          .whereType<String>()
-          .toSet();
+      final marks = results[1] as List;
 
       final marksByStudent = <String, double>{};
 
@@ -400,16 +396,14 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
         final id = student['id'].toString();
 
-        if (!presentIds.contains(id)) {
-          continue;
-        }
-
         final rawStream = student['stream'];
 
         final stream = rawStream is List
             ? rawStream.map((item) => item.toString()).toList()
             : <String>[];
 
+        // Only subject filtering remains.
+        // Attendance is intentionally ignored.
         if (!stream.contains(subject)) {
           continue;
         }
@@ -520,7 +514,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                       trailing: const Icon(Icons.edit_calendar_outlined),
                       onTap: chooseDate,
                     ),
+
                     const SizedBox(height: 12),
+
                     TextFormField(
                       controller: maxMarksController,
                       keyboardType: const TextInputType.numberWithOptions(
@@ -535,7 +531,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                         hintText: '20',
                       ),
                     ),
+
                     const SizedBox(height: 14),
+
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
@@ -543,12 +541,16 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                         borderRadius: BorderRadius.circular(11),
                       ),
                       child: const Text(
-                        'Only students marked Present on this date and studying this subject will appear.',
-                        style: TextStyle(fontSize: 13, height: 1.4),
+                        'Test date is for record only. '
+                        'All students studying this subject will appear '
+                        'regardless of attendance.',
+                        style: TextStyle(fontSize: 13.5, height: 1.45),
                       ),
                     ),
+
                     if (dialogError != null) ...[
                       const SizedBox(height: 12),
+
                       Text(
                         dialogError!,
                         style: const TextStyle(
@@ -562,9 +564,12 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
+                  onPressed: () {
+                    Navigator.pop(dialogContext);
+                  },
                   child: const Text('Cancel'),
                 ),
+
                 ElevatedButton.icon(
                   onPressed: () {
                     final maxMarks = double.tryParse(
@@ -661,7 +666,8 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
       if (marks < 0 || marks > maxMarks) {
         _showMessage(
-          '${student.name}: marks must be between 0 and ${_formatNumber(maxMarks)}.',
+          '${student.name}: marks must be between '
+          '0 and ${_formatNumber(maxMarks)}.',
           error: true,
         );
 
@@ -711,23 +717,25 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     final confirmed =
         await showDialog<bool>(
           context: context,
-          builder: (dialogContext) => AlertDialog(
-            title: const Text('Clear Saved Mark?'),
-            content: Text('Remove the saved mark for ${student.name}?'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.danger,
+          builder: (dialogContext) {
+            return AlertDialog(
+              title: const Text('Clear Saved Mark?'),
+              content: Text('Remove the saved mark for ${student.name}?'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Cancel'),
                 ),
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('Clear'),
-              ),
-            ],
-          ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.danger,
+                  ),
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: const Text('Clear'),
+                ),
+              ],
+            );
+          },
         ) ??
         false;
 
@@ -755,19 +763,20 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
     final lower = message.toLowerCase();
 
-    if (lower.contains('no eligible present students')) {
-      return 'No eligible Present students were found for that date. Check attendance first.';
+    if (lower.contains('no students were found')) {
+      return 'No students were found for this batch and subject.';
     }
 
     if (lower.contains('not assigned')) {
       return 'This teacher is not assigned to that subject/class.';
     }
 
-    if (lower.contains('marked present')) {
-      return 'Attendance changed. Only students marked Present on the test date can receive marks.';
+    if (lower.contains('does not belong')) {
+      return 'Student does not belong to this batch or subject.';
     }
 
-    return 'Operation failed. Please check the selected batch, subject, date and attendance.';
+    return 'Operation failed. Please check the selected batch, '
+        'subject, date and marks.';
   }
 
   void _showMessage(String value, {bool error = false}) {
@@ -857,7 +866,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
             final subject = DropdownButtonFormField<String>(
               key: ValueKey(
-                'award-subject-$_selectedBatchId-$_selectedSubject',
+                'award-subject-'
+                '$_selectedBatchId-'
+                '$_selectedSubject',
               ),
               initialValue: subjects.contains(_selectedSubject)
                   ? _selectedSubject
@@ -906,9 +917,13 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   batch,
+
                   const SizedBox(height: 10),
+
                   subject,
+
                   const SizedBox(height: 10),
+
                   addButton,
                 ],
               );
@@ -917,9 +932,13 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
             return Row(
               children: [
                 Expanded(child: batch),
+
                 const SizedBox(width: 12),
+
                 Expanded(child: subject),
+
                 const SizedBox(width: 12),
+
                 addButton,
               ],
             );
@@ -956,21 +975,29 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                     color: AppTheme.fgNavyBlue,
                     size: 54,
                   ),
+
                   const SizedBox(height: 14),
+
                   const Text(
                     'No Tests Yet',
                     style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
                   ),
+
                   const SizedBox(height: 7),
+
                   Text(
-                    'Create the first ${feeSubjectLabel(_selectedSubject!)} test for this batch.',
+                    'Create the first '
+                    '${feeSubjectLabel(_selectedSubject!)} '
+                    'test for this batch.',
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       color: AppTheme.textSecondary,
                       fontSize: 14,
                     ),
                   ),
+
                   const SizedBox(height: 18),
+
                   ElevatedButton.icon(
                     onPressed: _createTest,
                     icon: const Icon(Icons.add_rounded),
@@ -996,7 +1023,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                   child: Padding(
                     padding: EdgeInsets.all(24),
                     child: Text(
-                      'No eligible Present students found for this test.',
+                      'No students found for this subject.',
                       textAlign: TextAlign.center,
                     ),
                   ),
@@ -1019,7 +1046,11 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final selector = DropdownButtonFormField<String>(
-              key: ValueKey('award-test-$_selectedTestId-${_tests.length}'),
+              key: ValueKey(
+                'award-test-'
+                '$_selectedTestId-'
+                '${_tests.length}',
+              ),
               initialValue: _selectedTestId,
               isExpanded: true,
               decoration: const InputDecoration(
@@ -1034,7 +1065,8 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                 return DropdownMenuItem(
                   value: item['id'].toString(),
                   child: Text(
-                    'T$no  •  ${date == null ? item['test_date'] : DateFormat('dd MMM yyyy').format(date)}',
+                    'T$no  •  '
+                    '${date == null ? item['test_date'] : DateFormat('dd MMM yyyy').format(date)}',
                   ),
                 );
               }).toList(),
@@ -1066,7 +1098,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                       ),
                       _TestBadge(
                         icon: Icons.people_outline,
-                        text: 'Present: ${_students.length}',
+                        text: 'Students: ${_students.length}',
                       ),
                       _TestBadge(
                         icon: Icons.menu_book_outlined,
@@ -1085,7 +1117,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
             return Row(
               children: [
                 SizedBox(width: 360, child: selector),
+
                 const SizedBox(width: 14),
+
                 Expanded(child: details),
               ],
             );
@@ -1121,7 +1155,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                     style: const TextStyle(fontWeight: FontWeight.w800),
                   ),
                 ),
+
                 const SizedBox(width: 12),
+
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1133,11 +1169,15 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                           fontWeight: FontWeight.w800,
                         ),
                       ),
+
                       const SizedBox(height: 3),
+
                       Text(
                         saved == null
-                            ? 'Present • Mark not entered'
-                            : 'Saved: ${_formatNumber(saved)} / ${_formatNumber(maxMarks)}',
+                            ? 'Mark not entered'
+                            : 'Saved: '
+                                  '${_formatNumber(saved)} / '
+                                  '${_formatNumber(maxMarks)}',
                         style: TextStyle(
                           color: saved == null
                               ? AppTheme.textSecondary
@@ -1149,11 +1189,16 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                     ],
                   ),
                 ),
+
                 const SizedBox(width: 10),
+
                 SizedBox(
                   width: 110,
                   child: TextFormField(
-                    key: ValueKey('${student.id}-${student.savedMarks}'),
+                    key: ValueKey(
+                      '${student.id}-'
+                      '${student.savedMarks}',
+                    ),
                     initialValue: _draftMarks[student.id] ?? '',
                     enabled: !_saving,
                     textAlign: TextAlign.center,
@@ -1177,8 +1222,10 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                     },
                   ),
                 ),
+
                 if (saved != null) ...[
                   const SizedBox(width: 5),
+
                   IconButton(
                     tooltip: 'Clear saved mark',
                     onPressed: _saving ? null : () => _clearMark(student),
@@ -1207,7 +1254,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
           children: [
             Expanded(
               child: Text(
-                '${_students.length} Present student(s)',
+                '${_students.length} student(s)',
                 style: const TextStyle(
                   color: AppTheme.textSecondary,
                   fontSize: 14,
@@ -1215,6 +1262,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                 ),
               ),
             ),
+
             ElevatedButton.icon(
               onPressed: _saving ? null : _saveMarks,
               icon: _saving
@@ -1278,7 +1326,9 @@ class _TestBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 17, color: AppTheme.fgNavyBlue),
+
           const SizedBox(width: 6),
+
           Text(
             text,
             style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
@@ -1287,8 +1337,4 @@ class _TestBadge extends StatelessWidget {
       ),
     );
   }
-}
-
-extension _FirstOrNullExtension<T> on List<T> {
-  T? get firstOrNull => isEmpty ? null : first;
 }
