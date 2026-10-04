@@ -19,6 +19,7 @@ import 'login_screen.dart';
 import 'profile_screen.dart';
 import 'teacher_batches_screen.dart';
 import 'admin/fees/excel_fee_test_screen.dart';
+import 'admin/teachers_tab.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String userRole;
@@ -97,6 +98,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
           icon: Icons.emoji_events_outlined,
           selectedIcon: Icons.emoji_events_rounded,
         ),
+        _NavigationItem(
+          index: 6,
+          label: 'Teachers',
+          icon: Icons.co_present_outlined,
+          selectedIcon: Icons.co_present_rounded,
+        ),
       ];
     }
 
@@ -151,7 +158,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void _openProfile() {
     setState(() {
       _activeSubScreen = null;
-      _selectedIndex = _isAdmin ? 6 : 2;
+      _selectedIndex = _isAdmin ? 7 : 2;
     });
   }
 
@@ -325,6 +332,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           return AwardListsScreen(userRole: widget.userRole);
 
         case 6:
+          return const TeachersTab();
+
+        case 7:
           return _profile();
 
         default:
@@ -348,7 +358,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   String get _currentTitle {
-    if (_isAdmin && _selectedIndex == 6) {
+    if (_isAdmin && _selectedIndex == 7) {
       return 'Profile';
     }
 
@@ -379,7 +389,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       case 4:
         return 3;
 
-      case 6:
+      case 7:
         return 4;
 
       case 2:
@@ -678,8 +688,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _tabletRail() {
+    final selectedPosition = _items.indexWhere(
+      (item) => item.index == _selectedIndex,
+    );
     return NavigationRail(
-      selectedIndex: _selectedIndex,
+      selectedIndex: selectedPosition >= 0 ? selectedPosition : null,
       labelType: NavigationRailLabelType.all,
       minWidth: 82,
       groupAlignment: -0.75,
@@ -723,7 +736,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ),
       ),
-      onDestinationSelected: _selectSection,
+      onDestinationSelected: (position) {
+        _selectSection(_items[position].index);
+      },
       destinations: _items.map((item) {
         return NavigationRailDestination(
           icon: Icon(item.icon),

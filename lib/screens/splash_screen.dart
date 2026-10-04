@@ -248,7 +248,32 @@ class _SplashScreenState extends State<SplashScreen> {
                   style: TextStyle(color: Colors.white70, fontSize: 13),
                 ),
 
-                const SizedBox(height: 35),
+                const SizedBox(height: 18),
+
+                const Text(
+                  'Developed by Ahmer Moon Majid',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: AppTheme.fgGold,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+
+                const SizedBox(height: 3),
+
+                const Text(
+                  'ahmermoonmajid@gmail.com',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+
+                const SizedBox(height: 24),
               ],
             ),
           ),

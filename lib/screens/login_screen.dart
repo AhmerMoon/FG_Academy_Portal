@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import 'forgot_password_screen.dart';
+import 'register_teacher_screen.dart';
 import '../app_theme.dart';
 import '../services/auth_service.dart';
 import 'dashboard_screen.dart';
@@ -309,7 +310,25 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
 
-          const SizedBox(height: 21),
+          const SizedBox(height: 6),
+
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: isLoading
+                  ? null
+                  : () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const ForgotPasswordScreen(),
+                        ),
+                      );
+                    },
+              child: const Text('Forgot Password?'),
+            ),
+          ),
+
+          const SizedBox(height: 10),
 
           SizedBox(
             height: 51,
@@ -326,6 +345,45 @@ class _LoginScreenState extends State<LoginScreen> {
                     )
                   : const Icon(Icons.login_rounded),
               label: Text(isLoading ? 'Signing In…' : 'Sign In'),
+            ),
+          ),
+
+          const SizedBox(height: 18),
+
+          Row(
+            children: [
+              const Expanded(child: Divider()),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Text(
+                  'NEW TEACHER',
+                  style: TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const Expanded(child: Divider()),
+            ],
+          ),
+
+          const SizedBox(height: 16),
+
+          SizedBox(
+            height: 49,
+            child: OutlinedButton.icon(
+              onPressed: isLoading
+                  ? null
+                  : () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const RegisterTeacherScreen(),
+                        ),
+                      );
+                    },
+              icon: const Icon(Icons.person_add_alt_1_rounded),
+              label: const Text('Request Teacher Access'),
             ),
           ),
         ],

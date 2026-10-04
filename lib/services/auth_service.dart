@@ -13,6 +13,10 @@ class AuthService {
 
   Session? get currentSession => _client.auth.currentSession;
 
+  // ============================================================
+  // SIGN IN
+  // ============================================================
+
   Future<PortalUser> signIn({
     required String email,
     required String password,
@@ -43,12 +47,13 @@ class AuthService {
 
       if (portalUser == null) {
         throw StateError(
-          'This account is not registered for FG Academy Portal.',
+          'Your teacher access request is still pending '
+          'or this account is not registered for FG Academy Portal.',
         );
       }
 
       if (!portalUser.isActive) {
-        throw StateError('This portal account is disabled.');
+        throw StateError('This portal account is currently disabled.');
       }
 
       await _cachePortalUser(portalUser);
@@ -61,6 +66,198 @@ class AuthService {
       rethrow;
     }
   }
+
+  // ============================================================
+  // TEACHER SELF-REGISTRATION
+  // ============================================================
+
+  Future<void> registerTeacher({
+    required String fullName,
+    required String email,
+    required String password,
+    required String subject,
+    required List<int> classLevels,
+  }) async {
+    final name = fullName.trim();
+    final normalizedEmail = email.trim().toLowerCase();
+    final normalizedSubject = normalizeTeacherSubject(subject);
+
+    if (name.length < 2) {
+      throw ArgumentError('Please enter your full name.');
+    }
+
+    if (normalizedEmail.isEmpty || !normalizedEmail.contains('@')) {
+      throw ArgumentError('Please enter a valid email.');
+    }
+
+    final passwordError = validatePassword(password);
+
+    if (passwordError != null) {
+      throw ArgumentError(passwordError);
+    }
+
+    if (normalizedSubject.isEmpty) {
+      throw ArgumentError('Subject is required.');
+    }
+
+    if (classLevels.isEmpty) {
+      throw ArgumentError('Select at least one class.');
+    }
+
+    final levels =
+        classLevels
+            .where((value) => const [9, 10, 11, 12].contains(value))
+            .toSet()
+            .toList()
+          ..sort();
+
+    if (levels.isEmpty) {
+      throw ArgumentError('Select at least one valid class.');
+    }
+
+    final response = await _client.auth.signUp(
+      email: normalizedEmail,
+      password: password,
+      data: {
+        'portal_registration': 'teacher_request',
+        'full_name': name,
+        'subject_name': normalizedSubject,
+        'class_levels': levels,
+      },
+    );
+
+    if (response.user == null) {
+      throw StateError('Teacher registration could not be created.');
+    }
+
+    // If email confirmation is disabled Supabase may
+    // automatically create a session. Pending teachers
+    // must never stay logged in.
+    if (_client.auth.currentSession != null) {
+      await _client.auth.signOut();
+    }
+
+    await _clearCache();
+  }
+
+  static String normalizeTeacherSubject(String value) {
+    final raw = value.trim();
+
+    switch (raw.toLowerCase()) {
+      case 'physics':
+      case 'phy':
+        return 'Phy';
+
+      case 'chemistry':
+      case 'chem':
+        return 'Chem';
+
+      case 'mathematics':
+      case 'maths':
+      case 'math':
+        return 'Math';
+
+      case 'english':
+      case 'eng':
+        return 'Eng';
+
+      case 'computer':
+      case 'computer science':
+      case 'comp':
+        return 'Comp';
+
+      case 'biology':
+      case 'bio':
+        return 'Bio';
+
+      default:
+        return raw;
+    }
+  }
+
+  static String subjectLabel(String code) {
+    switch (code) {
+      case 'Phy':
+        return 'Physics';
+
+      case 'Chem':
+        return 'Chemistry';
+
+      case 'Math':
+        return 'Mathematics';
+
+      case 'Eng':
+        return 'English';
+
+      case 'Comp':
+        return 'Computer';
+
+      case 'Bio':
+        return 'Biology';
+
+      default:
+        return code;
+    }
+  }
+
+  // ============================================================
+  // FORGOT PASSWORD — EMAIL OTP
+  // ============================================================
+
+  Future<void> sendPasswordResetOtp({required String email}) async {
+    final normalizedEmail = email.trim().toLowerCase();
+
+    if (normalizedEmail.isEmpty || !normalizedEmail.contains('@')) {
+      throw ArgumentError('Please enter a valid email address.');
+    }
+
+    await _client.auth.signInWithOtp(
+      email: normalizedEmail,
+      shouldCreateUser: false,
+    );
+  }
+
+  Future<void> resetPasswordWithOtp({
+    required String email,
+    required String otp,
+    required String newPassword,
+  }) async {
+    final normalizedEmail = email.trim().toLowerCase();
+    final cleanOtp = otp.trim();
+
+    if (normalizedEmail.isEmpty) {
+      throw ArgumentError('Email is required.');
+    }
+
+    if (cleanOtp.isEmpty) {
+      throw ArgumentError('Verification code is required.');
+    }
+
+    final validation = validatePassword(newPassword);
+
+    if (validation != null) {
+      throw ArgumentError(validation);
+    }
+
+    final response = await _client.auth.verifyOTP(
+      email: normalizedEmail,
+      token: cleanOtp,
+      type: OtpType.email,
+    );
+
+    if (response.session == null) {
+      throw StateError('Verification could not be completed.');
+    }
+
+    await _client.auth.updateUser(UserAttributes(password: newPassword));
+
+    await _client.auth.signOut();
+    await _clearCache();
+  }
+
+  // ============================================================
+  // SESSION / PROFILE
+  // ============================================================
 
   Future<PortalUser?> restoreSession() async {
     if (_client.auth.currentSession == null) {
@@ -135,6 +332,10 @@ class AuthService {
     );
   }
 
+  // ============================================================
+  // NORMAL PASSWORD CHANGE FROM PROFILE
+  // ============================================================
+
   Future<void> changePassword({
     String? currentPassword,
     required String newPassword,
@@ -159,22 +360,14 @@ class AuthService {
 
     if (oldPassword == newPassword) {
       throw ArgumentError(
-        'New password must be different from the current password.',
+        'New password must be different from '
+        'the current password.',
       );
     }
 
-    // IMPORTANT:
-    // Do NOT call signInWithPassword() here.
-    //
-    // The user is already authenticated. Supabase supports validating the
-    // current password directly as part of updateUser(). This avoids replacing
-    // the active session while Flutter is displaying the profile/dialog.
     await _client.auth.updateUser(
       UserAttributes(password: newPassword, currentPassword: oldPassword),
     );
-
-    // Password change is optional in FG Academy Portal.
-    // There is no mandatory first-login password-change state to complete.
 
     final refreshed = await loadCurrentUser();
 
@@ -190,6 +383,10 @@ class AuthService {
       await _clearCache();
     }
   }
+
+  // ============================================================
+  // PASSWORD RULES
+  // ============================================================
 
   static String? validatePassword(String password) {
     if (password.length < 10) {
@@ -215,17 +412,17 @@ class AuthService {
     return null;
   }
 
+  // ============================================================
+  // LOCAL CACHE
+  // ============================================================
+
   Future<void> _cachePortalUser(PortalUser user) async {
     final box = Hive.box('settings');
 
     await box.put('isLoggedIn', true);
-
     await box.put('role', user.role);
-
     await box.put('username', user.fullName);
-
     await box.put('email', user.email);
-
     await box.put('user_id', user.userId);
   }
 
