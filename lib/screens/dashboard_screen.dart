@@ -18,6 +18,7 @@ import 'admin/students_tab.dart';
 import 'login_screen.dart';
 import 'profile_screen.dart';
 import 'teacher_batches_screen.dart';
+import 'admin/fees/excel_fee_test_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String userRole;
@@ -45,6 +46,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String? _statsError;
 
   bool get _isAdmin => widget.userRole == 'admin';
+  bool get _canUseExcelFeeTest {
+    if (!_isAdmin || !isWindowsPlatform) {
+      return false;
+    }
+
+    final email = Hive.box(
+      'settings',
+    ).get('email')?.toString().trim().toLowerCase();
+
+    return email == 'ahmermoonmajid@gmail.com';
+  }
 
   List<_NavigationItem> get _items {
     if (_isAdmin) {
@@ -1058,7 +1070,53 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     },
                   ),
                   const SizedBox(height: 14),
+
                   _strengthCard(),
+
+                  if (_canUseExcelFeeTest) ...[
+                    const SizedBox(height: 12),
+
+                    Card(
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 17,
+                          vertical: 8,
+                        ),
+                        leading: Container(
+                          width: 48,
+                          height: 48,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: AppTheme.warning.withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.science_rounded,
+                            color: AppTheme.warning,
+                            size: 27,
+                          ),
+                        ),
+                        title: const Text(
+                          'Excel Fees (Test)',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15,
+                          ),
+                        ),
+                        subtitle: const Text(
+                          'Experimental local Excel '
+                          'fee reports • Ahmer only',
+                        ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: () {
+                          _navigateToSubScreen(
+                            ExcelFeeTestScreen(onBack: _closeSubScreen),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+
                   if (isWindowsPlatform) ...[
                     const SizedBox(height: 12),
                     Card(

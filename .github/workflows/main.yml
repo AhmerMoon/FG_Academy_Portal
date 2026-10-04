@@ -9,10 +9,6 @@ permissions:
   contents: write
 
 jobs:
-  # ==========================================================
-  # ANDROID
-  # ==========================================================
-
   build-android:
     runs-on: ubuntu-latest
 
@@ -42,10 +38,6 @@ jobs:
           name: Android-APK
           path: FG_Academy_Portal.apk
 
-  # ==========================================================
-  # WINDOWS
-  # ==========================================================
-
   build-windows:
     runs-on: windows-latest
 
@@ -68,36 +60,50 @@ jobs:
       - name: Build Windows Release
         run: flutter build windows --release
 
-      # ------------------------------------------------------
-      # COPY WHATSAPP AUTOMATION
-      #
-      # IMPORTANT:
-      # .env and .venv are intentionally NOT copied.
-      # Secret key stays only on the Academy PC.
-      # ------------------------------------------------------
-
-      - name: Add WhatsApp Automation Backend
+      - name: Add Local Automation Backend
         shell: powershell
         run: |
-          $destination = "build\windows\x64\runner\Release\FGEI_Backend"
+          $release = "build\windows\x64\runner\Release"
+          $backend = "$release\FGEI_Backend"
+          $feeData = "$release\Fee_Data"
 
-          New-Item -ItemType Directory -Force -Path $destination
+          New-Item -ItemType Directory -Force -Path $backend
+          New-Item -ItemType Directory -Force -Path $feeData
 
           Copy-Item "FGEI_Backend\main.py" `
-            "$destination\main.py" -Force
+            "$backend\main.py" -Force
 
           Copy-Item "FGEI_Backend\main.bat" `
-            "$destination\main.bat" -Force
+            "$backend\main.bat" -Force
 
           Copy-Item "FGEI_Backend\setup_backend.bat" `
-            "$destination\setup_backend.bat" -Force
+            "$backend\setup_backend.bat" -Force
 
           Copy-Item "FGEI_Backend\requirements.txt" `
-            "$destination\requirements.txt" -Force
+            "$backend\requirements.txt" -Force
 
-          Write-Host "WhatsApp backend added successfully."
+          Copy-Item "FGEI_Backend\fee_excel_bridge.py" `
+            "$backend\fee_excel_bridge.py" -Force
 
-          Get-ChildItem $destination
+          @"
+          FG Academy Local Fee Data
+
+          Put monthly Excel workbooks in this folder.
+
+          Required naming:
+          Fee_2026-09.xlsx
+          Fee_2026-10.xlsx
+          Fee_2026-11.xlsx
+
+          Excel workbooks are intentionally NOT included
+          in the GitHub release.
+          "@ | Set-Content "$feeData\PUT_FEE_FILES_HERE.txt"
+
+          Write-Host "Backend files:"
+          Get-ChildItem $backend
+
+          Write-Host "Fee data folder:"
+          Get-ChildItem $feeData
 
       - name: Create Windows ZIP
         shell: powershell
@@ -112,10 +118,6 @@ jobs:
         with:
           name: Windows-ZIP
           path: Academy_Portal_Windows.zip
-
-  # ==========================================================
-  # GITHUB RELEASE
-  # ==========================================================
 
   create-release:
     needs:
@@ -147,12 +149,16 @@ jobs:
             Latest FG Academy Portal release.
 
             Downloads:
-            - FG_Academy_Portal.apk - Android
-            - Academy_Portal_Windows.zip - Windows
+            - FG_Academy_Portal.apk
+            - Academy_Portal_Windows.zip
 
-            The Windows package includes the WhatsApp attendance
-            automation backend. The local .env secret file is not
-            included for security.
+            Windows package includes:
+            - WhatsApp reporting backend
+            - Excel Fees test bridge
+            - Empty Fee_Data folder
+
+            Local .env files and financial Excel workbooks
+            are intentionally not included.
           allowUpdates: true
           makeLatest: true
           token: ${{ secrets.GITHUB_TOKEN }}

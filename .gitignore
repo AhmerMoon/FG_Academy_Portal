@@ -24,6 +24,9 @@ __pycache__/
 *.ipr
 *.iws
 .idea/
+Fee_Data/*.xlsx
+Fee_Data/*.xls
+Fee_Data/*.xlsm
 
 # The .vscode folder contains launch configuration and tasks you configure in
 # VS Code which you may wish to be included in version control, so this line
