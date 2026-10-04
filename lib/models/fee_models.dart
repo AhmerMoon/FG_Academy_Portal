@@ -30,6 +30,8 @@ class FeeStudentEntry {
   final String status;
   final double amountPaid;
 
+  final String remarks;
+
   const FeeStudentEntry({
     required this.studentId,
     required this.batchId,
@@ -40,6 +42,7 @@ class FeeStudentEntry {
     required this.paymentMonth,
     required this.status,
     required this.amountPaid,
+    required this.remarks,
   });
 
   bool get isPaid => status == 'paid';
@@ -63,6 +66,7 @@ class FeeStudentEntry {
       paymentMonth: payment?['payment_month']?.toString() ?? paymentMonth,
       status: payment?['status']?.toString() ?? 'unpaid',
       amountPaid: (payment?['amount_paid'] as num?)?.toDouble() ?? 0,
+      remarks: student['fee_remarks']?.toString() ?? '',
     );
   }
 
@@ -71,6 +75,7 @@ class FeeStudentEntry {
     String? status,
     double? amountPaid,
     String? paymentMonth,
+    String? remarks,
   }) {
     return FeeStudentEntry(
       studentId: studentId,
@@ -82,6 +87,7 @@ class FeeStudentEntry {
       paymentMonth: paymentMonth ?? this.paymentMonth,
       status: status ?? this.status,
       amountPaid: amountPaid ?? this.amountPaid,
+      remarks: remarks ?? this.remarks,
     );
   }
 }

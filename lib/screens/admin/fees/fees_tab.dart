@@ -118,6 +118,8 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
 
   final Map<String, String> _draftAmounts = {};
 
+  final Map<String, String> _draftRemarks = {};
+
   final Set<String> _savingStudentIds = {};
 
   Set<String> _presentStudentIdsForMonth = {};
@@ -223,11 +225,14 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
 
   void _resetDraftAmounts(List<FeeStudentEntry> entries) {
     _draftAmounts.clear();
+    _draftRemarks.clear();
 
     for (final entry in entries) {
       final value = entry.isPaid ? entry.amountPaid : entry.defaultFee;
 
       _draftAmounts[entry.studentId] = _editableAmount(value);
+
+      _draftRemarks[entry.studentId] = entry.remarks;
     }
   }
 
@@ -426,6 +431,56 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
     }
 
     await _savePayment(entry: entry, paid: true, amount: amount);
+  }
+
+  Future<void> _saveRemarks(FeeStudentEntry entry) async {
+    if (_savingStudentIds.contains(entry.studentId)) {
+      return;
+    }
+
+    final remarks = (_draftRemarks[entry.studentId] ?? entry.remarks).trim();
+
+    if (remarks == entry.remarks.trim()) {
+      _showMessage('No remarks change to save.');
+      return;
+    }
+
+    setState(() {
+      _savingStudentIds.add(entry.studentId);
+    });
+
+    try {
+      await _service.saveStudentFeeRemarks(
+        studentId: entry.studentId,
+        remarks: remarks,
+      );
+
+      if (!mounted) return;
+
+      final index = _entries.indexWhere(
+        (item) => item.studentId == entry.studentId,
+      );
+
+      if (index != -1) {
+        setState(() {
+          _entries[index] = entry.copyWith(remarks: remarks);
+
+          _draftRemarks[entry.studentId] = remarks;
+        });
+      }
+
+      _showMessage('${entry.name} remarks saved.');
+    } catch (e) {
+      debugPrint('Fee remarks save error: $e');
+
+      _showMessage('Unable to save remarks.\n$e', error: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _savingStudentIds.remove(entry.studentId);
+        });
+      }
+    }
   }
 
   Future<void> _savePayment({
@@ -1559,6 +1614,31 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
             icon: const Icon(Icons.save_outlined),
             color: AppTheme.fgNavyBlue,
           ),
+        SizedBox(
+          width: 300,
+          child: TextFormField(
+            key: ValueKey('${entry.studentId}-remarks-${entry.remarks}'),
+            initialValue: _draftRemarks[entry.studentId] ?? entry.remarks,
+            enabled: !saving,
+            minLines: 1,
+            maxLines: 2,
+            inputFormatters: [LengthLimitingTextInputFormatter(500)],
+            decoration: InputDecoration(
+              labelText: 'Remarks',
+              hintText: 'e.g. Orphan / sibling concession',
+              isDense: true,
+              prefixIcon: const Icon(Icons.notes_rounded),
+              suffixIcon: IconButton(
+                tooltip: 'Save remarks',
+                onPressed: saving ? null : () => _saveRemarks(entry),
+                icon: const Icon(Icons.save_outlined),
+              ),
+            ),
+            onChanged: (value) {
+              _draftRemarks[entry.studentId] = value;
+            },
+          ),
+        ),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(

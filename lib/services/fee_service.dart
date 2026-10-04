@@ -94,7 +94,7 @@ class FeeService {
         .from('students')
         .select(
           'id, name, batch_id, '
-          'default_fee, stream',
+          'default_fee, stream, fee_remarks',
         )
         .eq('batch_id', batchId)
         .order('name', ascending: true);
@@ -167,6 +167,22 @@ class FeeService {
     }
 
     return result.toString();
+  }
+
+  Future<void> saveStudentFeeRemarks({
+    required String studentId,
+    required String remarks,
+  }) async {
+    final cleaned = remarks.trim();
+
+    if (cleaned.length > 500) {
+      throw ArgumentError('Fee remarks cannot exceed 500 characters.');
+    }
+
+    await _client.rpc(
+      'admin_set_student_fee_remarks',
+      params: {'p_student_id': studentId, 'p_remarks': cleaned},
+    );
   }
 
   Future<String> addStudent({
