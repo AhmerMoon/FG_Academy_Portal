@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import 'teacher_attendance_history_screen.dart';
 import '../app_theme.dart';
 import '../utils/error_state_view.dart';
 import '../utils/list_sorting.dart';
@@ -597,43 +597,49 @@ class _StudentsScreenState extends State<StudentsScreen> {
               ),
 
               actions: [
-                TextButton(
-                  onPressed: () {
-                    Navigator.of(dialogContext).pop();
-                  },
-                  child: const Text('Cancel'),
+                IconButton(
+                  tooltip: 'Attendance History',
+                  onPressed: isSaving || _isAddingStudent
+                      ? null
+                      : () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => TeacherAttendanceHistoryScreen(
+                                batchId: widget.batchId,
+                                batchName: widget.batchName,
+                              ),
+                            ),
+                          );
+                        },
+                  icon: const Icon(Icons.history_rounded),
                 ),
 
-                ElevatedButton.icon(
-                  onPressed: () {
-                    final name = nameController.text.trim();
-
-                    if (name.isEmpty) {
-                      setDialogState(() {
-                        dialogError = 'Student name is required.';
-                      });
-
-                      return;
-                    }
-
-                    if (selectedGroup == null) {
-                      setDialogState(() {
-                        dialogError = 'Please confirm the group subject.';
-                      });
-
-                      return;
-                    }
-
-                    Navigator.of(dialogContext).pop(
-                      _NewAttendanceStudentDraft(
-                        name: name,
-                        groupSubject: selectedGroup!,
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.person_add_alt_1_rounded),
-                  label: const Text('Add Student'),
+                IconButton(
+                  tooltip: 'Add New Student',
+                  onPressed: isSaving || _isAddingStudent
+                      ? null
+                      : _openAddStudentDialog,
+                  icon: _isAddingStudent
+                      ? const SizedBox(
+                          width: 21,
+                          height: 21,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Icon(Icons.person_add_alt_1_rounded),
                 ),
+
+                IconButton(
+                  tooltip: 'Refresh',
+                  onPressed: isSaving || _isAddingStudent
+                      ? null
+                      : fetchStudentsAndAttendance,
+                  icon: const Icon(Icons.refresh_rounded),
+                ),
+
+                const SizedBox(width: 4),
               ],
             );
           },

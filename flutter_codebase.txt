@@ -1,7 +1,7 @@
 ================================================================================
 FLUTTER PROJECT CODEBASE
 Project Root: D:\academy_portal
-Total Dart Files: 37
+Total Dart Files: 41
 ================================================================================
 
 lib/main.dart:
@@ -1076,6 +1076,8 @@ class FeeStudentEntry {
   final String status;
   final double amountPaid;
 
+  final String remarks;
+
   const FeeStudentEntry({
     required this.studentId,
     required this.batchId,
@@ -1086,6 +1088,7 @@ class FeeStudentEntry {
     required this.paymentMonth,
     required this.status,
     required this.amountPaid,
+    required this.remarks,
   });
 
   bool get isPaid => status == 'paid';
@@ -1109,6 +1112,7 @@ class FeeStudentEntry {
       paymentMonth: payment?['payment_month']?.toString() ?? paymentMonth,
       status: payment?['status']?.toString() ?? 'unpaid',
       amountPaid: (payment?['amount_paid'] as num?)?.toDouble() ?? 0,
+      remarks: student['fee_remarks']?.toString() ?? '',
     );
   }
 
@@ -1117,6 +1121,7 @@ class FeeStudentEntry {
     String? status,
     double? amountPaid,
     String? paymentMonth,
+    String? remarks,
   }) {
     return FeeStudentEntry(
       studentId: studentId,
@@ -1128,6 +1133,7 @@ class FeeStudentEntry {
       paymentMonth: paymentMonth ?? this.paymentMonth,
       status: status ?? this.status,
       amountPaid: amountPaid ?? this.amountPaid,
+      remarks: remarks ?? this.remarks,
     );
   }
 }
@@ -5262,6 +5268,8 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
 
   final Map<String, String> _draftAmounts = {};
 
+  final Map<String, String> _draftRemarks = {};
+
   final Set<String> _savingStudentIds = {};
 
   Set<String> _presentStudentIdsForMonth = {};
@@ -5367,11 +5375,14 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
 
   void _resetDraftAmounts(List<FeeStudentEntry> entries) {
     _draftAmounts.clear();
+    _draftRemarks.clear();
 
     for (final entry in entries) {
       final value = entry.isPaid ? entry.amountPaid : entry.defaultFee;
 
       _draftAmounts[entry.studentId] = _editableAmount(value);
+
+      _draftRemarks[entry.studentId] = entry.remarks;
     }
   }
 
@@ -5570,6 +5581,56 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
     }
 
     await _savePayment(entry: entry, paid: true, amount: amount);
+  }
+
+  Future<void> _saveRemarks(FeeStudentEntry entry) async {
+    if (_savingStudentIds.contains(entry.studentId)) {
+      return;
+    }
+
+    final remarks = (_draftRemarks[entry.studentId] ?? entry.remarks).trim();
+
+    if (remarks == entry.remarks.trim()) {
+      _showMessage('No remarks change to save.');
+      return;
+    }
+
+    setState(() {
+      _savingStudentIds.add(entry.studentId);
+    });
+
+    try {
+      await _service.saveStudentFeeRemarks(
+        studentId: entry.studentId,
+        remarks: remarks,
+      );
+
+      if (!mounted) return;
+
+      final index = _entries.indexWhere(
+        (item) => item.studentId == entry.studentId,
+      );
+
+      if (index != -1) {
+        setState(() {
+          _entries[index] = entry.copyWith(remarks: remarks);
+
+          _draftRemarks[entry.studentId] = remarks;
+        });
+      }
+
+      _showMessage('${entry.name} remarks saved.');
+    } catch (e) {
+      debugPrint('Fee remarks save error: $e');
+
+      _showMessage('Unable to save remarks.\n$e', error: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _savingStudentIds.remove(entry.studentId);
+        });
+      }
+    }
   }
 
   Future<void> _savePayment({
@@ -6703,6 +6764,31 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
             icon: const Icon(Icons.save_outlined),
             color: AppTheme.fgNavyBlue,
           ),
+        SizedBox(
+          width: 300,
+          child: TextFormField(
+            key: ValueKey('${entry.studentId}-remarks-${entry.remarks}'),
+            initialValue: _draftRemarks[entry.studentId] ?? entry.remarks,
+            enabled: !saving,
+            minLines: 1,
+            maxLines: 2,
+            inputFormatters: [LengthLimitingTextInputFormatter(500)],
+            decoration: InputDecoration(
+              labelText: 'Remarks',
+              hintText: 'e.g. Orphan / sibling concession',
+              isDense: true,
+              prefixIcon: const Icon(Icons.notes_rounded),
+              suffixIcon: IconButton(
+                tooltip: 'Save remarks',
+                onPressed: saving ? null : () => _saveRemarks(entry),
+                icon: const Icon(Icons.save_outlined),
+              ),
+            ),
+            onChanged: (value) {
+              _draftRemarks[entry.studentId] = value;
+            },
+          ),
+        ),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
@@ -8570,6 +8656,676 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
 }
 
 
+lib/screens/admin/teachers_tab.dart:
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../../app_theme.dart';
+import '../../services/auth_service.dart';
+import '../../utils/dashboard_section_header.dart';
+import '../../utils/error_state_view.dart';
+
+class TeachersTab extends StatefulWidget {
+  const TeachersTab({super.key});
+
+  @override
+  State<TeachersTab> createState() => _TeachersTabState();
+}
+
+class _TeachersTabState extends State<TeachersTab> {
+  final SupabaseClient _client = Supabase.instance.client;
+
+  List<Map<String, dynamic>> _pending = [];
+  List<Map<String, dynamic>> _teachers = [];
+
+  final Map<String, List<Map<String, dynamic>>> _assignments = {};
+
+  final Set<String> _busyIds = {};
+
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+
+    try {
+      final results = await Future.wait<dynamic>([
+        _client
+            .from('teacher_registration_requests')
+            .select(
+              'id, full_name, email, '
+              'subject_name, class_levels, '
+              'status, requested_at',
+            )
+            .eq('status', 'pending')
+            .order('requested_at', ascending: true),
+        _client
+            .from('user_profiles')
+            .select(
+              'user_id, email, full_name, '
+              'role, is_active, created_at',
+            )
+            .eq('role', 'teacher')
+            .order('full_name'),
+        _client
+            .from('teacher_assignments')
+            .select(
+              'teacher_id, class_level, '
+              'subject_code',
+            )
+            .order('class_level'),
+      ]);
+
+      final pending = (results[0] as List)
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList();
+
+      final teachers = (results[1] as List)
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList();
+
+      final assignmentRows = (results[2] as List)
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList();
+
+      final grouped = <String, List<Map<String, dynamic>>>{};
+
+      for (final row in assignmentRows) {
+        final id = row['teacher_id']?.toString();
+
+        if (id == null || id.isEmpty) {
+          continue;
+        }
+
+        grouped.putIfAbsent(id, () => []).add(row);
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _pending = pending;
+        _teachers = teachers;
+
+        _assignments
+          ..clear()
+          ..addAll(grouped);
+
+        _loading = false;
+        _error = null;
+      });
+    } catch (e) {
+      debugPrint('Teachers tab load error: $e');
+
+      if (!mounted) return;
+
+      setState(() {
+        _loading = false;
+        _error = 'Unable to load teachers and access requests.';
+      });
+    }
+  }
+
+  void _message(String value, {bool error = false}) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(value),
+        backgroundColor: error ? AppTheme.danger : AppTheme.success,
+      ),
+    );
+  }
+
+  List<int> _requestClasses(Map<String, dynamic> request) {
+    final raw = request['class_levels'];
+
+    if (raw is! List) {
+      return [];
+    }
+
+    final values = raw
+        .map((value) => int.tryParse(value.toString()))
+        .whereType<int>()
+        .toList();
+
+    values.sort();
+
+    return values;
+  }
+
+  Future<void> _approve(Map<String, dynamic> request) async {
+    final id = request['id'].toString();
+
+    if (_busyIds.contains(id)) return;
+
+    final name = request['full_name']?.toString() ?? 'Teacher';
+
+    final confirmed =
+        await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) {
+            return AlertDialog(
+              title: const Text('Approve Teacher?'),
+              content: Text(
+                'Approve portal access for $name?\n\n'
+                'Their selected classes and subject '
+                'will become active immediately.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop(false);
+                  },
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop(true);
+                  },
+                  icon: const Icon(Icons.check_circle_outline),
+                  label: const Text('Approve'),
+                ),
+              ],
+            );
+          },
+        ) ??
+        false;
+
+    if (!confirmed || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _busyIds.add(id);
+    });
+
+    try {
+      await _client.rpc(
+        'admin_approve_teacher_request',
+        params: {'p_request_id': id},
+      );
+
+      await _load();
+
+      _message('$name has been approved.');
+    } catch (e) {
+      debugPrint('Teacher approval error: $e');
+
+      _message('Teacher could not be approved.\n$e', error: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busyIds.remove(id);
+        });
+      }
+    }
+  }
+
+  Future<void> _reject(Map<String, dynamic> request) async {
+    final id = request['id'].toString();
+
+    if (_busyIds.contains(id)) return;
+
+    final controller = TextEditingController();
+
+    final reason = await showDialog<String?>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Reject Request?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('You may optionally enter a reason.'),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Reason (optional)',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger),
+              onPressed: () {
+                Navigator.of(dialogContext).pop(controller.text.trim());
+              },
+              child: const Text('Reject'),
+            ),
+          ],
+        );
+      },
+    );
+
+    controller.dispose();
+
+    if (reason == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _busyIds.add(id);
+    });
+
+    try {
+      await _client.rpc(
+        'admin_reject_teacher_request',
+        params: {
+          'p_request_id': id,
+          'p_reason': reason.isEmpty ? null : reason,
+        },
+      );
+
+      await _load();
+
+      _message('Teacher request rejected.');
+    } catch (e) {
+      debugPrint('Teacher rejection error: $e');
+
+      _message('Request could not be rejected.', error: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busyIds.remove(id);
+        });
+      }
+    }
+  }
+
+  Future<void> _setActive(Map<String, dynamic> teacher, bool active) async {
+    final id = teacher['user_id'].toString();
+
+    if (_busyIds.contains(id)) return;
+
+    setState(() {
+      _busyIds.add(id);
+    });
+
+    try {
+      await _client.rpc(
+        'admin_set_portal_user_active',
+        params: {'p_user_id': id, 'p_active': active},
+      );
+
+      await _load();
+
+      _message(
+        active ? 'Teacher account enabled.' : 'Teacher account disabled.',
+      );
+    } catch (e) {
+      debugPrint('Teacher active status error: $e');
+
+      _message('Could not change account status.', error: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busyIds.remove(id);
+        });
+      }
+    }
+  }
+
+  String _teacherAssignments(String teacherId) {
+    final rows = _assignments[teacherId] ?? const [];
+
+    if (rows.isEmpty) {
+      return 'No teaching assignment';
+    }
+
+    return rows
+        .map((row) {
+          final level = row['class_level']?.toString() ?? '';
+
+          final subject = AuthService.subjectLabel(
+            row['subject_code']?.toString() ?? '',
+          );
+
+          return 'Class $level • $subject';
+        })
+        .join('   |   ');
+  }
+
+  Widget _pendingSection() {
+    return Card(
+      margin: const EdgeInsets.fromLTRB(10, 8, 10, 12),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.pending_actions_rounded,
+                  color: AppTheme.fgNavyBlue,
+                  size: 28,
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    'Pending Requests (${_pending.length})',
+                    style: const TextStyle(
+                      fontSize: 19,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            if (_pending.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 20),
+                child: Center(
+                  child: Text(
+                    'No teacher access requests are pending.',
+                    style: TextStyle(color: AppTheme.textSecondary),
+                  ),
+                ),
+              )
+            else
+              ..._pending.map((request) {
+                final id = request['id'].toString();
+
+                final busy = _busyIds.contains(id);
+
+                final name = request['full_name']?.toString() ?? 'Teacher';
+
+                final email = request['email']?.toString() ?? '';
+
+                final subject = AuthService.subjectLabel(
+                  request['subject_name']?.toString() ?? '',
+                );
+
+                final classes = _requestClasses(
+                  request,
+                ).map((value) => '$value').join(', ');
+
+                return Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppTheme.fgNavyBlue.withValues(alpha: 0.035),
+                    borderRadius: BorderRadius.circular(13),
+                    border: Border.all(
+                      color: AppTheme.fgNavyBlue.withValues(alpha: 0.10),
+                    ),
+                  ),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final narrow = constraints.maxWidth < 690;
+
+                      final details = Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            name,
+                            style: const TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            email,
+                            style: const TextStyle(
+                              color: AppTheme.textSecondary,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 7,
+                            runSpacing: 7,
+                            children: [
+                              Chip(
+                                avatar: const Icon(
+                                  Icons.menu_book_outlined,
+                                  size: 17,
+                                ),
+                                label: Text(subject),
+                              ),
+                              Chip(
+                                avatar: const Icon(
+                                  Icons.school_outlined,
+                                  size: 17,
+                                ),
+                                label: Text('Classes $classes'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      );
+
+                      final actions = Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: busy ? null : () => _reject(request),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppTheme.danger,
+                            ),
+                            icon: const Icon(Icons.close_rounded),
+                            label: const Text('Reject'),
+                          ),
+                          ElevatedButton.icon(
+                            onPressed: busy ? null : () => _approve(request),
+                            icon: busy
+                                ? const SizedBox(
+                                    width: 17,
+                                    height: 17,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Icon(Icons.check_rounded),
+                            label: const Text('Approve'),
+                          ),
+                        ],
+                      );
+
+                      if (narrow) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            details,
+                            const SizedBox(height: 13),
+                            actions,
+                          ],
+                        );
+                      }
+
+                      return Row(
+                        children: [
+                          Expanded(child: details),
+                          const SizedBox(width: 14),
+                          actions,
+                        ],
+                      );
+                    },
+                  ),
+                );
+              }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _teachersSection() {
+    return Card(
+      margin: const EdgeInsets.fromLTRB(10, 0, 10, 25),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.co_present_rounded,
+                  color: AppTheme.fgNavyBlue,
+                  size: 28,
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    'Teachers (${_teachers.length})',
+                    style: const TextStyle(
+                      fontSize: 19,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            if (_teachers.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 20),
+                child: Center(child: Text('No approved teachers found.')),
+              )
+            else
+              ..._teachers.map((teacher) {
+                final id = teacher['user_id'].toString();
+
+                final name = teacher['full_name']?.toString() ?? 'Teacher';
+
+                final email = teacher['email']?.toString() ?? '';
+
+                final active = teacher['is_active'] == true;
+
+                final busy = _busyIds.contains(id);
+
+                return ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 5,
+                    vertical: 5,
+                  ),
+                  leading: CircleAvatar(
+                    backgroundColor: AppTheme.fgNavyBlue,
+                    foregroundColor: Colors.white,
+                    child: Text(
+                      name.isEmpty ? '?' : name[0].toUpperCase(),
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  title: Text(
+                    name,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  subtitle: Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(email),
+                        const SizedBox(height: 3),
+                        Text(_teacherAssignments(id)),
+                      ],
+                    ),
+                  ),
+                  trailing: busy
+                      ? const SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : SizedBox(
+                          width: 125,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              Text(
+                                active ? 'Active' : 'Disabled',
+                                style: TextStyle(
+                                  color: active
+                                      ? AppTheme.success
+                                      : AppTheme.danger,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Switch.adaptive(
+                                value: active,
+                                onChanged: (value) {
+                                  _setActive(teacher, value);
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                );
+              }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_error != null) {
+      return ErrorStateView(message: _error!, onRetry: _load);
+    }
+
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverToBoxAdapter(
+            child: DashboardSectionHeader(
+              title: 'Teachers',
+              subtitle:
+                  'Approve teacher registrations and manage portal access',
+              trailing: IconButton(
+                tooltip: 'Refresh',
+                color: Colors.white,
+                onPressed: _load,
+                icon: const Icon(Icons.refresh_rounded),
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(child: _pendingSection()),
+          SliverToBoxAdapter(child: _teachersSection()),
+        ],
+      ),
+    );
+  }
+}
+
+
 lib/screens/award_lists_screen.dart:
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9935,6 +10691,7 @@ import 'login_screen.dart';
 import 'profile_screen.dart';
 import 'teacher_batches_screen.dart';
 import 'admin/fees/excel_fee_test_screen.dart';
+import 'admin/teachers_tab.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String userRole;
@@ -10013,6 +10770,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
           icon: Icons.emoji_events_outlined,
           selectedIcon: Icons.emoji_events_rounded,
         ),
+        _NavigationItem(
+          index: 6,
+          label: 'Teachers',
+          icon: Icons.co_present_outlined,
+          selectedIcon: Icons.co_present_rounded,
+        ),
       ];
     }
 
@@ -10067,7 +10830,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void _openProfile() {
     setState(() {
       _activeSubScreen = null;
-      _selectedIndex = _isAdmin ? 6 : 2;
+      _selectedIndex = _isAdmin ? 7 : 2;
     });
   }
 
@@ -10241,6 +11004,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           return AwardListsScreen(userRole: widget.userRole);
 
         case 6:
+          return const TeachersTab();
+
+        case 7:
           return _profile();
 
         default:
@@ -10264,7 +11030,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   String get _currentTitle {
-    if (_isAdmin && _selectedIndex == 6) {
+    if (_isAdmin && _selectedIndex == 7) {
       return 'Profile';
     }
 
@@ -10295,7 +11061,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       case 4:
         return 3;
 
-      case 6:
+      case 7:
         return 4;
 
       case 2:
@@ -10594,8 +11360,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _tabletRail() {
+    final selectedPosition = _items.indexWhere(
+      (item) => item.index == _selectedIndex,
+    );
     return NavigationRail(
-      selectedIndex: _selectedIndex,
+      selectedIndex: selectedPosition >= 0 ? selectedPosition : null,
       labelType: NavigationRailLabelType.all,
       minWidth: 82,
       groupAlignment: -0.75,
@@ -10639,7 +11408,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ),
       ),
-      onDestinationSelected: _selectSection,
+      onDestinationSelected: (position) {
+        _selectSection(_items[position].index);
+      },
       destinations: _items.map((item) {
         return NavigationRailDestination(
           icon: Icon(item.icon),
@@ -11262,10 +12033,352 @@ class _MetricCard extends StatelessWidget {
 }
 
 
-lib/screens/login_screen.dart:
+lib/screens/forgot_password_screen.dart:
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../app_theme.dart';
+import '../services/auth_service.dart';
+
+class ForgotPasswordScreen extends StatefulWidget {
+  const ForgotPasswordScreen({super.key});
+
+  @override
+  State<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
+}
+
+class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
+  final AuthService _authService = AuthService();
+
+  final _emailController = TextEditingController();
+  final _otpController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _confirmController = TextEditingController();
+
+  bool _codeSent = false;
+  bool _loading = false;
+  bool _hidePassword = true;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _otpController.dispose();
+    _passwordController.dispose();
+    _confirmController.dispose();
+
+    super.dispose();
+  }
+
+  void _message(String value, {bool error = false}) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(value),
+        backgroundColor: error ? AppTheme.danger : AppTheme.success,
+      ),
+    );
+  }
+
+  Future<void> _sendCode() async {
+    if (_loading) return;
+
+    setState(() {
+      _loading = true;
+    });
+
+    try {
+      await _authService.sendPasswordResetOtp(email: _emailController.text);
+
+      if (!mounted) return;
+
+      setState(() {
+        _codeSent = true;
+      });
+
+      _message('Verification code sent. Check your email.');
+    } on AuthException catch (e) {
+      _message(e.message, error: true);
+    } on ArgumentError catch (e) {
+      _message(e.message?.toString() ?? 'Invalid email.', error: true);
+    } catch (e) {
+      debugPrint('Password OTP error: $e');
+
+      _message('Could not send verification code.', error: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _resetPassword() async {
+    if (_loading) return;
+
+    if (_passwordController.text != _confirmController.text) {
+      _message('Passwords do not match.', error: true);
+
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+    });
+
+    try {
+      await _authService.resetPasswordWithOtp(
+        email: _emailController.text,
+        otp: _otpController.text,
+        newPassword: _passwordController.text,
+      );
+
+      if (!mounted) return;
+
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return AlertDialog(
+            icon: const Icon(
+              Icons.check_circle_outline_rounded,
+              color: AppTheme.success,
+              size: 40,
+            ),
+            title: const Text('Password Updated'),
+            content: const Text(
+              'Your password has been changed successfully. '
+              'You can now sign in using the new password.',
+              textAlign: TextAlign.center,
+            ),
+            actionsAlignment: MainAxisAlignment.center,
+            actions: [
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                },
+                child: const Text('Back to Login'),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (!mounted) return;
+
+      Navigator.of(context).pop();
+    } on AuthException catch (e) {
+      _message(e.message, error: true);
+    } on ArgumentError catch (e) {
+      _message(
+        e.message?.toString() ?? 'Please check the information.',
+        error: true,
+      );
+    } catch (e) {
+      debugPrint('Password reset error: $e');
+
+      _message(
+        'Password could not be reset. '
+        'Check the code and try again.',
+        error: true,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset('assets/images/school_bg.png', fit: BoxFit.cover),
+          Container(color: AppTheme.fgNavyBlue.withValues(alpha: 0.83)),
+          SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(18),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 520),
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(25),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              IconButton(
+                                tooltip: 'Back',
+                                onPressed: _loading
+                                    ? null
+                                    : () {
+                                        Navigator.of(context).pop();
+                                      },
+                                icon: const Icon(Icons.arrow_back_rounded),
+                              ),
+                              const SizedBox(width: 8),
+                              const Expanded(
+                                child: Text(
+                                  'Forgot Password',
+                                  style: TextStyle(
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _codeSent
+                                ? 'Enter the verification code sent to your email and choose a new password.'
+                                : 'Enter your registered academy email to receive a verification code.',
+                            style: const TextStyle(
+                              color: AppTheme.textSecondary,
+                              fontSize: 14,
+                              height: 1.45,
+                            ),
+                          ),
+                          const SizedBox(height: 23),
+                          TextField(
+                            controller: _emailController,
+                            enabled: !_codeSent && !_loading,
+                            keyboardType: TextInputType.emailAddress,
+                            autocorrect: false,
+                            decoration: const InputDecoration(
+                              labelText: 'Email Address',
+                              prefixIcon: Icon(Icons.alternate_email_rounded),
+                            ),
+                          ),
+                          if (!_codeSent) ...[
+                            const SizedBox(height: 22),
+                            SizedBox(
+                              height: 51,
+                              child: ElevatedButton.icon(
+                                onPressed: _loading ? null : _sendCode,
+                                icon: _loading
+                                    ? const SizedBox(
+                                        width: 19,
+                                        height: 19,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : const Icon(
+                                        Icons.mark_email_unread_outlined,
+                                      ),
+                                label: Text(
+                                  _loading
+                                      ? 'Sending…'
+                                      : 'Send Verification Code',
+                                ),
+                              ),
+                            ),
+                          ] else ...[
+                            const SizedBox(height: 14),
+                            TextField(
+                              controller: _otpController,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: 'Verification Code',
+                                prefixIcon: Icon(Icons.pin_outlined),
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            TextField(
+                              controller: _passwordController,
+                              obscureText: _hidePassword,
+                              decoration: InputDecoration(
+                                labelText: 'New Password',
+                                prefixIcon: const Icon(
+                                  Icons.lock_outline_rounded,
+                                ),
+                                suffixIcon: IconButton(
+                                  onPressed: () {
+                                    setState(() {
+                                      _hidePassword = !_hidePassword;
+                                    });
+                                  },
+                                  icon: Icon(
+                                    _hidePassword
+                                        ? Icons.visibility_outlined
+                                        : Icons.visibility_off_outlined,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            TextField(
+                              controller: _confirmController,
+                              obscureText: true,
+                              textInputAction: TextInputAction.done,
+                              onSubmitted: (_) {
+                                if (!_loading) {
+                                  _resetPassword();
+                                }
+                              },
+                              decoration: const InputDecoration(
+                                labelText: 'Confirm New Password',
+                                prefixIcon: Icon(Icons.lock_reset_rounded),
+                              ),
+                            ),
+                            const SizedBox(height: 22),
+                            SizedBox(
+                              height: 51,
+                              child: ElevatedButton.icon(
+                                onPressed: _loading ? null : _resetPassword,
+                                icon: _loading
+                                    ? const SizedBox(
+                                        width: 19,
+                                        height: 19,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : const Icon(Icons.password_rounded),
+                                label: Text(
+                                  _loading ? 'Updating…' : 'Set New Password',
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            TextButton.icon(
+                              onPressed: _loading ? null : _sendCode,
+                              icon: const Icon(Icons.refresh_rounded),
+                              label: const Text('Resend Code'),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+lib/screens/login_screen.dart:
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'forgot_password_screen.dart';
+import 'register_teacher_screen.dart';
 import '../app_theme.dart';
 import '../services/auth_service.dart';
 import 'dashboard_screen.dart';
@@ -11574,7 +12687,25 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
 
-          const SizedBox(height: 21),
+          const SizedBox(height: 6),
+
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: isLoading
+                  ? null
+                  : () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const ForgotPasswordScreen(),
+                        ),
+                      );
+                    },
+              child: const Text('Forgot Password?'),
+            ),
+          ),
+
+          const SizedBox(height: 10),
 
           SizedBox(
             height: 51,
@@ -11591,6 +12722,45 @@ class _LoginScreenState extends State<LoginScreen> {
                     )
                   : const Icon(Icons.login_rounded),
               label: Text(isLoading ? 'Signing In…' : 'Sign In'),
+            ),
+          ),
+
+          const SizedBox(height: 18),
+
+          Row(
+            children: [
+              const Expanded(child: Divider()),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Text(
+                  'NEW TEACHER',
+                  style: TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const Expanded(child: Divider()),
+            ],
+          ),
+
+          const SizedBox(height: 16),
+
+          SizedBox(
+            height: 49,
+            child: OutlinedButton.icon(
+              onPressed: isLoading
+                  ? null
+                  : () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const RegisterTeacherScreen(),
+                        ),
+                      );
+                    },
+              icon: const Icon(Icons.person_add_alt_1_rounded),
+              label: const Text('Request Teacher Access'),
             ),
           ),
         ],
@@ -12265,6 +13435,350 @@ class _InfoTile extends StatelessWidget {
 }
 
 
+lib/screens/register_teacher_screen.dart:
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../app_theme.dart';
+import '../services/auth_service.dart';
+
+class RegisterTeacherScreen extends StatefulWidget {
+  const RegisterTeacherScreen({super.key});
+
+  @override
+  State<RegisterTeacherScreen> createState() => _RegisterTeacherScreenState();
+}
+
+class _RegisterTeacherScreenState extends State<RegisterTeacherScreen> {
+  final AuthService _authService = AuthService();
+
+  final _nameController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _subjectController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _confirmController = TextEditingController();
+
+  final Set<int> _classes = {};
+
+  bool _loading = false;
+  bool _hidePassword = true;
+  bool _hideConfirm = true;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    _subjectController.dispose();
+    _passwordController.dispose();
+    _confirmController.dispose();
+
+    super.dispose();
+  }
+
+  void _message(String value, {bool error = false}) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(value),
+        backgroundColor: error ? AppTheme.danger : AppTheme.success,
+      ),
+    );
+  }
+
+  Future<void> _submit() async {
+    if (_loading) return;
+
+    final password = _passwordController.text;
+
+    if (password != _confirmController.text) {
+      _message('Passwords do not match.', error: true);
+
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+    });
+
+    try {
+      await _authService.registerTeacher(
+        fullName: _nameController.text,
+        email: _emailController.text,
+        password: password,
+        subject: _subjectController.text,
+        classLevels: _classes.toList(),
+      );
+
+      if (!mounted) return;
+
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return AlertDialog(
+            icon: const Icon(
+              Icons.mark_email_read_outlined,
+              color: AppTheme.success,
+              size: 38,
+            ),
+            title: const Text('Request Submitted'),
+            content: const Text(
+              'Your teacher access request has been '
+              'sent to the academy administrator.\n\n'
+              'If you receive an email verification '
+              'message, please verify your email.\n\n'
+              'You can sign in using this same password '
+              'after the administrator approves your request.',
+              textAlign: TextAlign.center,
+            ),
+            actionsAlignment: MainAxisAlignment.center,
+            actions: [
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                },
+                child: const Text('OK'),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (!mounted) return;
+
+      Navigator.of(context).pop();
+    } on AuthException catch (e) {
+      debugPrint('Teacher registration auth error: ${e.message}');
+
+      _message(e.message, error: true);
+    } on ArgumentError catch (e) {
+      _message(
+        e.message?.toString() ?? 'Please check the entered information.',
+        error: true,
+      );
+    } catch (e) {
+      debugPrint('Teacher registration error: $e');
+
+      _message(
+        'Registration could not be submitted. '
+        'Please check the details and try again.',
+        error: true,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset('assets/images/school_bg.png', fit: BoxFit.cover),
+          Container(color: AppTheme.fgNavyBlue.withValues(alpha: 0.83)),
+          SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(18),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 620),
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(25),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              IconButton(
+                                tooltip: 'Back',
+                                onPressed: _loading
+                                    ? null
+                                    : () {
+                                        Navigator.of(context).pop();
+                                      },
+                                icon: const Icon(Icons.arrow_back_rounded),
+                              ),
+                              const SizedBox(width: 8),
+                              const Expanded(
+                                child: Text(
+                                  'Teacher Registration',
+                                  style: TextStyle(
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 5),
+                          const Text(
+                            'Request access to FG Academy Portal. '
+                            'Your account becomes active only '
+                            'after administrator approval.',
+                            style: TextStyle(
+                              color: AppTheme.textSecondary,
+                              height: 1.45,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          TextField(
+                            controller: _nameController,
+                            textCapitalization: TextCapitalization.words,
+                            decoration: const InputDecoration(
+                              labelText: 'Full Name',
+                              prefixIcon: Icon(Icons.person_outline_rounded),
+                            ),
+                          ),
+                          const SizedBox(height: 13),
+                          TextField(
+                            controller: _emailController,
+                            keyboardType: TextInputType.emailAddress,
+                            autocorrect: false,
+                            decoration: const InputDecoration(
+                              labelText: 'Email Address',
+                              prefixIcon: Icon(Icons.alternate_email_rounded),
+                            ),
+                          ),
+                          const SizedBox(height: 13),
+                          TextField(
+                            controller: _subjectController,
+                            textCapitalization: TextCapitalization.words,
+                            decoration: const InputDecoration(
+                              labelText: 'Subject',
+                              hintText: 'Physics, Urdu, Islamiyat...',
+                              prefixIcon: Icon(Icons.menu_book_outlined),
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          const Text(
+                            'Classes You Teach',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 9),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [9, 10, 11, 12].map((level) {
+                              return FilterChip(
+                                label: Text('Class $level'),
+                                selected: _classes.contains(level),
+                                onSelected: _loading
+                                    ? null
+                                    : (selected) {
+                                        setState(() {
+                                          if (selected) {
+                                            _classes.add(level);
+                                          } else {
+                                            _classes.remove(level);
+                                          }
+                                        });
+                                      },
+                              );
+                            }).toList(),
+                          ),
+                          const SizedBox(height: 19),
+                          TextField(
+                            controller: _passwordController,
+                            obscureText: _hidePassword,
+                            decoration: InputDecoration(
+                              labelText: 'Choose Password',
+                              helperText:
+                                  'Minimum 10 characters with uppercase, '
+                                  'lowercase, number and special character.',
+                              prefixIcon: const Icon(
+                                Icons.lock_outline_rounded,
+                              ),
+                              suffixIcon: IconButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _hidePassword = !_hidePassword;
+                                  });
+                                },
+                                icon: Icon(
+                                  _hidePassword
+                                      ? Icons.visibility_outlined
+                                      : Icons.visibility_off_outlined,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 13),
+                          TextField(
+                            controller: _confirmController,
+                            obscureText: _hideConfirm,
+                            textInputAction: TextInputAction.done,
+                            onSubmitted: (_) {
+                              if (!_loading) {
+                                _submit();
+                              }
+                            },
+                            decoration: InputDecoration(
+                              labelText: 'Confirm Password',
+                              prefixIcon: const Icon(Icons.lock_reset_rounded),
+                              suffixIcon: IconButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _hideConfirm = !_hideConfirm;
+                                  });
+                                },
+                                icon: Icon(
+                                  _hideConfirm
+                                      ? Icons.visibility_outlined
+                                      : Icons.visibility_off_outlined,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          SizedBox(
+                            height: 52,
+                            child: ElevatedButton.icon(
+                              onPressed: _loading ? null : _submit,
+                              icon: _loading
+                                  ? const SizedBox(
+                                      width: 19,
+                                      height: 19,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Icon(Icons.send_rounded),
+                              label: Text(
+                                _loading
+                                    ? 'Submitting…'
+                                    : 'Request Teacher Access',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
 lib/screens/splash_screen.dart:
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -12516,7 +14030,32 @@ class _SplashScreenState extends State<SplashScreen> {
                   style: TextStyle(color: Colors.white70, fontSize: 13),
                 ),
 
-                const SizedBox(height: 35),
+                const SizedBox(height: 18),
+
+                const Text(
+                  'Developed by Ahmer Moon Majid',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: AppTheme.fgGold,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+
+                const SizedBox(height: 3),
+
+                const Text(
+                  'ahmermoonmajid@gmail.com',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+
+                const SizedBox(height: 24),
               ],
             ),
           ),
@@ -12531,7 +14070,7 @@ lib/screens/student_screen.dart:
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import 'teacher_attendance_history_screen.dart';
 import '../app_theme.dart';
 import '../utils/error_state_view.dart';
 import '../utils/list_sorting.dart';
@@ -13932,6 +15471,353 @@ class _ConfirmationRow extends StatelessWidget {
 }
 
 
+lib/screens/teacher_attendance_history_screen.dart:
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../app_theme.dart';
+import '../utils/error_state_view.dart';
+import '../utils/list_sorting.dart';
+import '../widgets/academy_background.dart';
+
+class TeacherAttendanceHistoryScreen extends StatefulWidget {
+  final String batchId;
+  final String batchName;
+
+  const TeacherAttendanceHistoryScreen({
+    super.key,
+    required this.batchId,
+    required this.batchName,
+  });
+
+  @override
+  State<TeacherAttendanceHistoryScreen> createState() =>
+      _TeacherAttendanceHistoryScreenState();
+}
+
+class _TeacherAttendanceHistoryScreenState
+    extends State<TeacherAttendanceHistoryScreen> {
+  final SupabaseClient _supabase = Supabase.instance.client;
+
+  DateTime _selectedDate = DateTime(
+    DateTime.now().year,
+    DateTime.now().month,
+    DateTime.now().day,
+  );
+
+  List<dynamic> _students = [];
+
+  final Map<String, String> _attendance = {};
+
+  bool _loading = true;
+  String? _error;
+
+  String get _dateString => _selectedDate.toIso8601String().split('T').first;
+
+  int get _present =>
+      _attendance.values.where((value) => value == 'present').length;
+
+  int get _absent =>
+      _attendance.values.where((value) => value == 'absent').length;
+
+  int get _unmarked => _students.length - _present - _absent;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+
+    try {
+      final results = await Future.wait<dynamic>([
+        _supabase
+            .from('students')
+            .select('id, name')
+            .eq('batch_id', widget.batchId)
+            .order('name', ascending: true),
+        _supabase
+            .from('attendance')
+            .select('student_id, status')
+            .eq('batch_id', widget.batchId)
+            .eq('date', _dateString),
+      ]);
+
+      final students = sortStudents(results[0] as List);
+
+      final rows = results[1] as List;
+
+      final attendance = <String, String>{};
+
+      for (final row in rows) {
+        final id = row['student_id']?.toString();
+
+        final status = row['status']?.toString();
+
+        if (id != null && status != null) {
+          attendance[id] = status;
+        }
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _students = students;
+
+        _attendance
+          ..clear()
+          ..addAll(attendance);
+
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('Teacher attendance history error: $e');
+
+      if (!mounted) return;
+
+      setState(() {
+        _loading = false;
+        _error = 'Unable to load attendance history.';
+      });
+    }
+  }
+
+  Future<void> _chooseDate() async {
+    final now = DateTime.now();
+
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2025, 1, 1),
+      lastDate: DateTime(now.year, now.month, now.day),
+    );
+
+    if (selected == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _selectedDate = selected;
+    });
+
+    await _load();
+  }
+
+  Future<void> _moveDay(int days) async {
+    final candidate = _selectedDate.add(Duration(days: days));
+
+    final now = DateTime.now();
+
+    final today = DateTime(now.year, now.month, now.day);
+
+    if (candidate.isAfter(today)) {
+      return;
+    }
+
+    setState(() {
+      _selectedDate = candidate;
+    });
+
+    await _load();
+  }
+
+  Widget _stat(String label, int value, Color color) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 92),
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(11),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '$value',
+            style: TextStyle(
+              color: color,
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppTheme.textSecondary,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      appBar: AppBar(
+        title: Text('${widget.batchName} History'),
+        actions: [
+          IconButton(
+            tooltip: 'Choose Date',
+            onPressed: _loading ? null : _chooseDate,
+            icon: const Icon(Icons.calendar_month_outlined),
+          ),
+        ],
+      ),
+      body: AcademyBackground(
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _error != null
+            ? ErrorStateView(message: _error!, onRetry: _load)
+            : Column(
+                children: [
+                  Card(
+                    margin: const EdgeInsets.all(12),
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              IconButton(
+                                tooltip: 'Previous Day',
+                                onPressed: () => _moveDay(-1),
+                                icon: const Icon(Icons.chevron_left_rounded),
+                              ),
+                              Expanded(
+                                child: InkWell(
+                                  onTap: _chooseDate,
+                                  child: Column(
+                                    children: [
+                                      Text(
+                                        DateFormat(
+                                          'EEEE',
+                                        ).format(_selectedDate),
+                                        style: const TextStyle(
+                                          color: AppTheme.textSecondary,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      Text(
+                                        DateFormat(
+                                          'dd MMMM yyyy',
+                                        ).format(_selectedDate),
+                                        style: const TextStyle(
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.w800,
+                                          color: AppTheme.fgNavyBlue,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Next Day',
+                                onPressed: () => _moveDay(1),
+                                icon: const Icon(Icons.chevron_right_rounded),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            alignment: WrapAlignment.center,
+                            children: [
+                              _stat('Present', _present, AppTheme.success),
+                              _stat('Absent', _absent, AppTheme.danger),
+                              _stat('Unmarked', _unmarked, AppTheme.warning),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: RefreshIndicator(
+                      onRefresh: _load,
+                      child: ListView.builder(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+                        itemCount: _students.length,
+                        itemBuilder: (context, index) {
+                          final student = _students[index];
+
+                          final id = student['id'].toString();
+
+                          final name = student['name']?.toString() ?? 'Student';
+
+                          final status = _attendance[id];
+
+                          final present = status == 'present';
+
+                          final absent = status == 'absent';
+
+                          final color = present
+                              ? AppTheme.success
+                              : absent
+                              ? AppTheme.danger
+                              : AppTheme.warning;
+
+                          final text = present
+                              ? 'Present'
+                              : absent
+                              ? 'Absent'
+                              : 'Unmarked';
+
+                          final icon = present
+                              ? Icons.check_circle_rounded
+                              : absent
+                              ? Icons.cancel_rounded
+                              : Icons.help_outline_rounded;
+
+                          return Card(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            child: ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor: color.withValues(alpha: 0.10),
+                                foregroundColor: color,
+                                child: Icon(icon),
+                              ),
+                              title: Text(
+                                name,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              trailing: Text(
+                                text,
+                                style: TextStyle(
+                                  color: color,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+
 lib/screens/teacher_batches_screen.dart:
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -14198,6 +16084,10 @@ class AuthService {
 
   Session? get currentSession => _client.auth.currentSession;
 
+  // ============================================================
+  // SIGN IN
+  // ============================================================
+
   Future<PortalUser> signIn({
     required String email,
     required String password,
@@ -14228,12 +16118,13 @@ class AuthService {
 
       if (portalUser == null) {
         throw StateError(
-          'This account is not registered for FG Academy Portal.',
+          'Your teacher access request is still pending '
+          'or this account is not registered for FG Academy Portal.',
         );
       }
 
       if (!portalUser.isActive) {
-        throw StateError('This portal account is disabled.');
+        throw StateError('This portal account is currently disabled.');
       }
 
       await _cachePortalUser(portalUser);
@@ -14246,6 +16137,198 @@ class AuthService {
       rethrow;
     }
   }
+
+  // ============================================================
+  // TEACHER SELF-REGISTRATION
+  // ============================================================
+
+  Future<void> registerTeacher({
+    required String fullName,
+    required String email,
+    required String password,
+    required String subject,
+    required List<int> classLevels,
+  }) async {
+    final name = fullName.trim();
+    final normalizedEmail = email.trim().toLowerCase();
+    final normalizedSubject = normalizeTeacherSubject(subject);
+
+    if (name.length < 2) {
+      throw ArgumentError('Please enter your full name.');
+    }
+
+    if (normalizedEmail.isEmpty || !normalizedEmail.contains('@')) {
+      throw ArgumentError('Please enter a valid email.');
+    }
+
+    final passwordError = validatePassword(password);
+
+    if (passwordError != null) {
+      throw ArgumentError(passwordError);
+    }
+
+    if (normalizedSubject.isEmpty) {
+      throw ArgumentError('Subject is required.');
+    }
+
+    if (classLevels.isEmpty) {
+      throw ArgumentError('Select at least one class.');
+    }
+
+    final levels =
+        classLevels
+            .where((value) => const [9, 10, 11, 12].contains(value))
+            .toSet()
+            .toList()
+          ..sort();
+
+    if (levels.isEmpty) {
+      throw ArgumentError('Select at least one valid class.');
+    }
+
+    final response = await _client.auth.signUp(
+      email: normalizedEmail,
+      password: password,
+      data: {
+        'portal_registration': 'teacher_request',
+        'full_name': name,
+        'subject_name': normalizedSubject,
+        'class_levels': levels,
+      },
+    );
+
+    if (response.user == null) {
+      throw StateError('Teacher registration could not be created.');
+    }
+
+    // If email confirmation is disabled Supabase may
+    // automatically create a session. Pending teachers
+    // must never stay logged in.
+    if (_client.auth.currentSession != null) {
+      await _client.auth.signOut();
+    }
+
+    await _clearCache();
+  }
+
+  static String normalizeTeacherSubject(String value) {
+    final raw = value.trim();
+
+    switch (raw.toLowerCase()) {
+      case 'physics':
+      case 'phy':
+        return 'Phy';
+
+      case 'chemistry':
+      case 'chem':
+        return 'Chem';
+
+      case 'mathematics':
+      case 'maths':
+      case 'math':
+        return 'Math';
+
+      case 'english':
+      case 'eng':
+        return 'Eng';
+
+      case 'computer':
+      case 'computer science':
+      case 'comp':
+        return 'Comp';
+
+      case 'biology':
+      case 'bio':
+        return 'Bio';
+
+      default:
+        return raw;
+    }
+  }
+
+  static String subjectLabel(String code) {
+    switch (code) {
+      case 'Phy':
+        return 'Physics';
+
+      case 'Chem':
+        return 'Chemistry';
+
+      case 'Math':
+        return 'Mathematics';
+
+      case 'Eng':
+        return 'English';
+
+      case 'Comp':
+        return 'Computer';
+
+      case 'Bio':
+        return 'Biology';
+
+      default:
+        return code;
+    }
+  }
+
+  // ============================================================
+  // FORGOT PASSWORD — EMAIL OTP
+  // ============================================================
+
+  Future<void> sendPasswordResetOtp({required String email}) async {
+    final normalizedEmail = email.trim().toLowerCase();
+
+    if (normalizedEmail.isEmpty || !normalizedEmail.contains('@')) {
+      throw ArgumentError('Please enter a valid email address.');
+    }
+
+    await _client.auth.signInWithOtp(
+      email: normalizedEmail,
+      shouldCreateUser: false,
+    );
+  }
+
+  Future<void> resetPasswordWithOtp({
+    required String email,
+    required String otp,
+    required String newPassword,
+  }) async {
+    final normalizedEmail = email.trim().toLowerCase();
+    final cleanOtp = otp.trim();
+
+    if (normalizedEmail.isEmpty) {
+      throw ArgumentError('Email is required.');
+    }
+
+    if (cleanOtp.isEmpty) {
+      throw ArgumentError('Verification code is required.');
+    }
+
+    final validation = validatePassword(newPassword);
+
+    if (validation != null) {
+      throw ArgumentError(validation);
+    }
+
+    final response = await _client.auth.verifyOTP(
+      email: normalizedEmail,
+      token: cleanOtp,
+      type: OtpType.email,
+    );
+
+    if (response.session == null) {
+      throw StateError('Verification could not be completed.');
+    }
+
+    await _client.auth.updateUser(UserAttributes(password: newPassword));
+
+    await _client.auth.signOut();
+    await _clearCache();
+  }
+
+  // ============================================================
+  // SESSION / PROFILE
+  // ============================================================
 
   Future<PortalUser?> restoreSession() async {
     if (_client.auth.currentSession == null) {
@@ -14320,6 +16403,10 @@ class AuthService {
     );
   }
 
+  // ============================================================
+  // NORMAL PASSWORD CHANGE FROM PROFILE
+  // ============================================================
+
   Future<void> changePassword({
     String? currentPassword,
     required String newPassword,
@@ -14344,22 +16431,14 @@ class AuthService {
 
     if (oldPassword == newPassword) {
       throw ArgumentError(
-        'New password must be different from the current password.',
+        'New password must be different from '
+        'the current password.',
       );
     }
 
-    // IMPORTANT:
-    // Do NOT call signInWithPassword() here.
-    //
-    // The user is already authenticated. Supabase supports validating the
-    // current password directly as part of updateUser(). This avoids replacing
-    // the active session while Flutter is displaying the profile/dialog.
     await _client.auth.updateUser(
       UserAttributes(password: newPassword, currentPassword: oldPassword),
     );
-
-    // Password change is optional in FG Academy Portal.
-    // There is no mandatory first-login password-change state to complete.
 
     final refreshed = await loadCurrentUser();
 
@@ -14375,6 +16454,10 @@ class AuthService {
       await _clearCache();
     }
   }
+
+  // ============================================================
+  // PASSWORD RULES
+  // ============================================================
 
   static String? validatePassword(String password) {
     if (password.length < 10) {
@@ -14400,17 +16483,17 @@ class AuthService {
     return null;
   }
 
+  // ============================================================
+  // LOCAL CACHE
+  // ============================================================
+
   Future<void> _cachePortalUser(PortalUser user) async {
     final box = Hive.box('settings');
 
     await box.put('isLoggedIn', true);
-
     await box.put('role', user.role);
-
     await box.put('username', user.fullName);
-
     await box.put('email', user.email);
-
     await box.put('user_id', user.userId);
   }
 
@@ -14582,7 +16665,7 @@ class FeeService {
         .from('students')
         .select(
           'id, name, batch_id, '
-          'default_fee, stream',
+          'default_fee, stream, fee_remarks',
         )
         .eq('batch_id', batchId)
         .order('name', ascending: true);
@@ -14655,6 +16738,22 @@ class FeeService {
     }
 
     return result.toString();
+  }
+
+  Future<void> saveStudentFeeRemarks({
+    required String studentId,
+    required String remarks,
+  }) async {
+    final cleaned = remarks.trim();
+
+    if (cleaned.length > 500) {
+      throw ArgumentError('Fee remarks cannot exceed 500 characters.');
+    }
+
+    await _client.rpc(
+      'admin_set_student_fee_remarks',
+      params: {'p_student_id': studentId, 'p_remarks': cleaned},
+    );
   }
 
   Future<String> addStudent({

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:printing/printing.dart';
-
+import 'fee_setup_screen.dart';
 import '../../../app_theme.dart';
 import '../../../models/fee_models.dart';
 import '../../../services/fee_service.dart';
@@ -10,8 +10,6 @@ import '../../../utils/dashboard_section_header.dart';
 import '../../../utils/error_state_view.dart';
 import '../../../utils/fee_month.dart';
 import '../../../utils/fee_pdf_generator.dart';
-// ignore: unused_import
-import '../../../widgets/academy_background.dart';
 import 'fee_audit_dashboard.dart';
 
 class FeesTab extends StatefulWidget {
@@ -41,21 +39,18 @@ class _FeesTabState extends State<FeesTab> {
         if (!isMobile)
           const DashboardSectionHeader(
             title: 'Fee Management',
-            subtitle: 'Fee collection and financial reporting',
+            subtitle: 'Fee collection, reports and financial setup',
           ),
 
         Padding(
           padding: isMobile
               ? const EdgeInsets.fromLTRB(8, 5, 8, 5)
               : const EdgeInsets.fromLTRB(12, 8, 12, 8),
-          child: Align(
-            alignment: Alignment.centerLeft,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
             child: SegmentedButton<int>(
-              style: ButtonStyle(
-                visualDensity: isMobile
-                    ? VisualDensity.compact
-                    : VisualDensity.standard,
-              ),
+              style: const ButtonStyle(visualDensity: VisualDensity.compact),
+              showSelectedIcon: false,
               segments: const [
                 ButtonSegment<int>(
                   value: 0,
@@ -66,6 +61,11 @@ class _FeesTabState extends State<FeesTab> {
                   value: 1,
                   icon: Icon(Icons.analytics_outlined),
                   label: Text('Audit Reports'),
+                ),
+                ButtonSegment<int>(
+                  value: 2,
+                  icon: Icon(Icons.tune_rounded),
+                  label: Text('Fee Setup'),
                 ),
               ],
               selected: {_selectedSection},
@@ -84,6 +84,7 @@ class _FeesTabState extends State<FeesTab> {
             children: [
               FeeCollectionPanel(onDataChanged: _financialDataChanged),
               FeeAuditDashboard(key: ValueKey(_reportRevision)),
+              FeeSetupScreen(onDataChanged: _financialDataChanged),
             ],
           ),
         ),
