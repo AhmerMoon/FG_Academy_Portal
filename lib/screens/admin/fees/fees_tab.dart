@@ -11,6 +11,7 @@ import '../../../utils/error_state_view.dart';
 import '../../../utils/fee_month.dart';
 import '../../../utils/fee_pdf_generator.dart';
 import 'fee_audit_dashboard.dart';
+import '../../../utils/student_group_helper.dart';
 
 class FeesTab extends StatefulWidget {
   const FeesTab({super.key});
@@ -571,20 +572,7 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
       text: dialogBatch.classLevel <= 10 ? '5500' : '6000',
     );
 
-    Set<String> selectedBaseSubjects = {};
-    late String selectedChoiceSubject;
-
-    void resetSubjectsForBatch(FeeBatch batch) {
-      if (batch.classLevel <= 10) {
-        selectedBaseSubjects = {'Phy', 'Chem', 'Math', 'Eng'};
-        selectedChoiceSubject = 'Comp';
-      } else {
-        selectedBaseSubjects = {'Phy', 'Math', 'Eng'};
-        selectedChoiceSubject = 'Chem';
-      }
-    }
-
-    resetSubjectsForBatch(dialogBatch);
+    String? selectedGroupCode;
 
     String? dialogError;
 
@@ -594,59 +582,16 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            const subjectOrder = ['Phy', 'Chem', 'Math', 'Eng', 'Comp', 'Bio'];
+            final groupCodes = studentGroupCodesForClass(
+              dialogBatch.classLevel,
+            );
 
-            final selectedSubjects = <String>{
-              ...selectedBaseSubjects,
-              selectedChoiceSubject,
-            };
-
-            final subjects = subjectOrder
-                .where(selectedSubjects.contains)
-                .toList();
-
-            final baseSubjects = dialogBatch.classLevel <= 10
-                ? const ['Phy', 'Chem', 'Math', 'Eng']
-                : const ['Phy', 'Math', 'Eng'];
-
-            final choiceSubjects = dialogBatch.classLevel <= 10
-                ? const ['Comp', 'Bio']
-                : const ['Chem', 'Comp', 'Bio'];
-
-            Widget subjectCheckbox(String code, {required bool exclusive}) {
-              final checked = exclusive
-                  ? selectedChoiceSubject == code
-                  : selectedBaseSubjects.contains(code);
-
-              return CheckboxListTile(
-                dense: true,
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                value: checked,
-                title: Text(feeSubjectLabel(code)),
-                onChanged: (value) {
-                  if (exclusive) {
-                    if (value == true) {
-                      setDialogState(() {
-                        selectedChoiceSubject = code;
-                        dialogError = null;
-                      });
-                    }
-                    return;
-                  }
-
-                  setDialogState(() {
-                    if (value == true) {
-                      selectedBaseSubjects.add(code);
-                    } else {
-                      selectedBaseSubjects.remove(code);
-                    }
-
-                    dialogError = null;
-                  });
-                },
-              );
-            }
+            final subjects = selectedGroupCode == null
+                ? <String>[]
+                : studentSubjectsForGroup(
+                    dialogBatch.classLevel,
+                    selectedGroupCode!,
+                  );
 
             return AlertDialog(
               title: Row(
@@ -668,7 +613,7 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
                 ],
               ),
               content: SizedBox(
-                width: 470,
+                width: 500,
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -706,13 +651,17 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
                                 ? '5500'
                                 : '6000';
 
-                            resetSubjectsForBatch(newBatch);
+                            // Force user to
+                            // confirm the group.
+                            selectedGroupCode = null;
 
                             dialogError = null;
                           });
                         },
                       ),
+
                       const SizedBox(height: 14),
+
                       TextFormField(
                         controller: nameController,
                         textCapitalization: TextCapitalization.words,
@@ -721,7 +670,9 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
                           prefixIcon: Icon(Icons.person),
                         ),
                       ),
+
                       const SizedBox(height: 14),
+
                       TextFormField(
                         controller: feeController,
                         keyboardType: const TextInputType.numberWithOptions(
@@ -738,96 +689,105 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
                               : 'HSSC suggested fee: Rs 6,000',
                         ),
                       ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Core Subjects',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.fgNavyBlue,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      LayoutBuilder(
-                        builder: (context, constraints) {
-                          final width = constraints.maxWidth >= 440
-                              ? (constraints.maxWidth - 8) / 2
-                              : constraints.maxWidth;
 
-                          return Wrap(
-                            spacing: 8,
-                            runSpacing: 2,
-                            children: baseSubjects
-                                .map(
-                                  (code) => SizedBox(
-                                    width: width,
-                                    child: subjectCheckbox(
-                                      code,
-                                      exclusive: false,
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                          );
-                        },
-                      ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 20),
+
                       Text(
                         dialogBatch.classLevel <= 10
-                            ? 'Choose Biology / Computer'
-                            : 'Choose Group Subject',
+                            ? 'Choose Group'
+                            : 'Choose HSSC Group',
                         style: const TextStyle(
-                          fontWeight: FontWeight.w700,
                           color: AppTheme.fgNavyBlue,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      LayoutBuilder(
-                        builder: (context, constraints) {
-                          final width = constraints.maxWidth >= 440
-                              ? (constraints.maxWidth - 8) / 2
-                              : constraints.maxWidth;
 
-                          return Wrap(
-                            spacing: 8,
-                            runSpacing: 2,
-                            children: choiceSubjects
-                                .map(
-                                  (code) => SizedBox(
-                                    width: width,
-                                    child: subjectCheckbox(
-                                      code,
-                                      exclusive: true,
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                          );
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Subjects',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.fgNavyBlue,
+                      const SizedBox(height: 5),
+
+                      Text(
+                        dialogBatch.classLevel <= 10
+                            ? 'Subjects will be assigned automatically.'
+                            : 'Choose only the group. The correct four subjects will be assigned automatically.',
+                        style: const TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 13,
                         ),
                       ),
-                      const SizedBox(height: 8),
+
+                      const SizedBox(height: 11),
+
                       Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: subjects
-                            .map(
-                              (subject) =>
-                                  Chip(label: Text(feeSubjectLabel(subject))),
-                            )
-                            .toList(),
+                        spacing: 9,
+                        runSpacing: 9,
+                        children: groupCodes.map((code) {
+                          final selected = selectedGroupCode == code;
+
+                          return ChoiceChip(
+                            selected: selected,
+                            avatar: Icon(
+                              selected
+                                  ? Icons.check_circle_rounded
+                                  : Icons.school_outlined,
+                              size: 18,
+                            ),
+                            label: Text(
+                              studentGroupLabel(dialogBatch.classLevel, code),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            onSelected: (value) {
+                              if (!value) {
+                                return;
+                              }
+
+                              setDialogState(() {
+                                selectedGroupCode = code;
+
+                                dialogError = null;
+                              });
+                            },
+                          );
+                        }).toList(),
                       ),
-                      const SizedBox(height: 16),
+
+                      if (subjects.isNotEmpty) ...[
+                        const SizedBox(height: 20),
+
+                        const Text(
+                          'Subjects Added Automatically',
+                          style: TextStyle(
+                            color: AppTheme.fgNavyBlue,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+
+                        const SizedBox(height: 8),
+
+                        Wrap(
+                          spacing: 7,
+                          runSpacing: 7,
+                          children: subjects.map((subject) {
+                            return Chip(
+                              avatar: const Icon(
+                                Icons.check_circle_rounded,
+                                size: 17,
+                                color: AppTheme.success,
+                              ),
+                              label: Text(feeSubjectLabel(subject)),
+                            );
+                          }).toList(),
+                        ),
+                      ],
+
+                      const SizedBox(height: 18),
+
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.green.withValues(alpha: 0.07),
+                          color: AppTheme.success.withValues(alpha: 0.07),
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: const Row(
@@ -835,26 +795,29 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
                           children: [
                             Icon(
                               Icons.info_outline,
-                              color: Colors.green,
+                              color: AppTheme.success,
                               size: 19,
                             ),
                             SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                'On save: student will be created, today\'s attendance will be marked Present, and the selected fee month will start as Unpaid.',
-                                style: TextStyle(fontSize: 12),
+                                'On save: student will be created, '
+                                'today attendance will be Present, '
+                                'and the selected fee month will start as Unpaid.',
+                                style: TextStyle(fontSize: 12.5, height: 1.45),
                               ),
                             ),
                           ],
                         ),
                       ),
+
                       if (dialogError != null) ...[
                         const SizedBox(height: 12),
                         Text(
                           dialogError!,
                           style: const TextStyle(
-                            color: Colors.red,
-                            fontWeight: FontWeight.w600,
+                            color: AppTheme.danger,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ],
@@ -893,6 +856,30 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
                       return;
                     }
 
+                    if (selectedGroupCode == null) {
+                      setDialogState(() {
+                        dialogError = dialogBatch.classLevel <= 10
+                            ? 'Please choose Computer or Biology.'
+                            : 'Please choose FCS, Pre-Engineering or Pre-Medical.';
+                      });
+
+                      return;
+                    }
+
+                    final subjects = studentSubjectsForGroup(
+                      dialogBatch.classLevel,
+                      selectedGroupCode!,
+                    );
+
+                    if (subjects.isEmpty) {
+                      setDialogState(() {
+                        dialogError =
+                            'Unable to determine subjects for this group.';
+                      });
+
+                      return;
+                    }
+
                     Navigator.pop(
                       dialogContext,
                       _NewFeeStudentRequest(
@@ -912,10 +899,11 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
     );
 
     nameController.dispose();
-
     feeController.dispose();
 
-    if (request == null) return;
+    if (request == null) {
+      return;
+    }
 
     await _addStudent(request);
   }

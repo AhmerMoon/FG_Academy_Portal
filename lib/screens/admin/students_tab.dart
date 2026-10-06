@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import '../../utils/student_group_helper.dart';
 import '../../app_theme.dart';
 import '../../utils/dashboard_section_header.dart';
 import '../../utils/error_state_view.dart';
@@ -384,96 +384,44 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
 
     final existingSubjects = _subjects(student['stream']);
 
-    Set<String> selectedBaseSubjects = {};
-    String? selectedChoiceSubject;
+    // XII Girls ke existing special
+    // single-subject records ko preserve karo.
+    final isSingleSubject =
+        widget.classLevel == 12 && existingSubjects.length == 1;
 
-    if (widget.classLevel == 9 || widget.classLevel == 10) {
-      selectedBaseSubjects = existingSubjects
-          .where(
-            (subject) => const {'Phy', 'Chem', 'Math', 'Eng'}.contains(subject),
-          )
-          .toSet();
-
-      if (existingSubjects.contains('Comp')) {
-        selectedChoiceSubject = 'Comp';
-      } else if (existingSubjects.contains('Bio')) {
-        selectedChoiceSubject = 'Bio';
-      }
-    } else {
-      selectedBaseSubjects = existingSubjects
-          .where((subject) => const {'Phy', 'Math', 'Eng'}.contains(subject))
-          .toSet();
-
-      if (existingSubjects.contains('Chem')) {
-        selectedChoiceSubject = 'Chem';
-      } else if (existingSubjects.contains('Comp')) {
-        selectedChoiceSubject = 'Comp';
-      } else if (existingSubjects.contains('Bio')) {
-        selectedChoiceSubject = 'Bio';
-      }
-    }
+    String? selectedGroupCode = isSingleSubject
+        ? null
+        : inferStudentGroupCode(widget.classLevel, existingSubjects);
 
     String status = student['status']?.toString() == 'trial'
         ? 'trial'
         : 'enrolled';
+
     List<String> selectedSubjectsForSave = [];
+
     String? dialogError;
 
     final confirmed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            final baseSubjects = widget.classLevel <= 10
-                ? const ['Phy', 'Chem', 'Math', 'Eng']
-                : const ['Phy', 'Math', 'Eng'];
-            final choiceSubjects = widget.classLevel <= 10
-                ? const ['Comp', 'Bio']
-                : const ['Chem', 'Comp', 'Bio'];
+            final groupCodes = studentGroupCodesForClass(widget.classLevel);
 
-            Widget subjectCheckbox(String code, {required bool exclusive}) {
-              final checked = exclusive
-                  ? selectedChoiceSubject == code
-                  : selectedBaseSubjects.contains(code);
-
-              return CheckboxListTile(
-                dense: true,
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                visualDensity: VisualDensity.compact,
-                value: checked,
-                title: Text(
-                  _subjectLabel(code),
-                  style: const TextStyle(fontSize: 14),
-                ),
-                onChanged: (value) {
-                  if (exclusive) {
-                    if (value == true) {
-                      setDialogState(() {
-                        selectedChoiceSubject = code;
-                        dialogError = null;
-                      });
-                    }
-                    return;
-                  }
-
-                  setDialogState(() {
-                    if (value == true) {
-                      selectedBaseSubjects.add(code);
-                    } else {
-                      selectedBaseSubjects.remove(code);
-                    }
-
-                    dialogError = null;
-                  });
-                },
-              );
-            }
+            final subjects = isSingleSubject
+                ? List<String>.from(existingSubjects)
+                : selectedGroupCode == null
+                ? <String>[]
+                : studentSubjectsForGroup(
+                    widget.classLevel,
+                    selectedGroupCode!,
+                  );
 
             return AlertDialog(
               title: const Text('Edit Student'),
               content: SizedBox(
-                width: 430,
+                width: 500,
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -491,7 +439,6 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                       const SizedBox(height: 14),
 
                       DropdownButtonFormField<String>(
-                        key: ValueKey(status),
                         initialValue: status,
                         decoration: const InputDecoration(
                           labelText: 'Status',
@@ -517,92 +464,143 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                           });
                         },
                       ),
-                      const SizedBox(height: 16),
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: AppTheme.fgNavyBlue.withValues(alpha: 0.04),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: AppTheme.border),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            const Text(
-                              'Core Subjects',
-                              style: TextStyle(
-                                color: AppTheme.fgNavyBlue,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            LayoutBuilder(
-                              builder: (context, constraints) {
-                                final width = constraints.maxWidth >= 520
-                                    ? (constraints.maxWidth - 8) / 2
-                                    : constraints.maxWidth;
 
-                                return Wrap(
-                                  spacing: 8,
-                                  runSpacing: 2,
-                                  children: baseSubjects
-                                      .map(
-                                        (code) => SizedBox(
-                                          width: width,
-                                          child: subjectCheckbox(
-                                            code,
-                                            exclusive: false,
-                                          ),
-                                        ),
-                                      )
-                                      .toList(),
-                                );
-                              },
-                            ),
-                            const SizedBox(height: 10),
-                            Text(
-                              widget.classLevel <= 10
-                                  ? 'Choose Biology / Computer'
-                                  : 'Choose Group Subject',
-                              style: const TextStyle(
-                                color: AppTheme.fgNavyBlue,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            LayoutBuilder(
-                              builder: (context, constraints) {
-                                final width = constraints.maxWidth >= 520
-                                    ? (constraints.maxWidth - 8) / 2
-                                    : constraints.maxWidth;
+                      const SizedBox(height: 20),
 
-                                return Wrap(
-                                  spacing: 8,
-                                  runSpacing: 2,
-                                  children: choiceSubjects
-                                      .map(
-                                        (code) => SizedBox(
-                                          width: width,
-                                          child: subjectCheckbox(
-                                            code,
-                                            exclusive: true,
-                                          ),
-                                        ),
-                                      )
-                                      .toList(),
-                                );
-                              },
+                      if (isSingleSubject) ...[
+                        Container(
+                          padding: const EdgeInsets.all(13),
+                          decoration: BoxDecoration(
+                            color: AppTheme.warning.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(11),
+                            border: Border.all(
+                              color: AppTheme.warning.withValues(alpha: 0.25),
                             ),
-                          ],
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Row(
+                                children: [
+                                  Icon(
+                                    Icons.info_outline_rounded,
+                                    color: AppTheme.warning,
+                                  ),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'Single Subject Student',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Existing subject: '
+                                '${_subjectLabel(existingSubjects.first)}',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 5),
+                              const Text(
+                                'This special XII record will keep its existing single subject.',
+                                style: TextStyle(color: AppTheme.textSecondary),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      if (dialogError != null) ...[
+                      ] else ...[
+                        Text(
+                          widget.classLevel <= 10
+                              ? 'Student Group'
+                              : 'HSSC Group',
+                          style: const TextStyle(
+                            color: AppTheme.fgNavyBlue,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+
+                        const SizedBox(height: 5),
+
+                        Text(
+                          widget.classLevel <= 10
+                              ? 'Choose Computer or Biology. Subjects are fixed automatically.'
+                              : 'Choose FCS, Pre-Engineering or Pre-Medical. Correct subjects are fixed automatically.',
+                          style: const TextStyle(
+                            color: AppTheme.textSecondary,
+                            fontSize: 13,
+                          ),
+                        ),
+
                         const SizedBox(height: 10),
+
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: groupCodes.map((code) {
+                            return ChoiceChip(
+                              selected: selectedGroupCode == code,
+                              label: Text(
+                                studentGroupLabel(widget.classLevel, code),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              onSelected: (selected) {
+                                if (!selected) {
+                                  return;
+                                }
+
+                                setDialogState(() {
+                                  selectedGroupCode = code;
+
+                                  dialogError = null;
+                                });
+                              },
+                            );
+                          }).toList(),
+                        ),
+
+                        if (subjects.isNotEmpty) ...[
+                          const SizedBox(height: 18),
+
+                          const Text(
+                            'Subjects',
+                            style: TextStyle(
+                              color: AppTheme.fgNavyBlue,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+
+                          const SizedBox(height: 8),
+
+                          Wrap(
+                            spacing: 7,
+                            runSpacing: 7,
+                            children: subjects.map((code) {
+                              return Chip(
+                                avatar: const Icon(
+                                  Icons.check_circle_rounded,
+                                  color: AppTheme.success,
+                                  size: 17,
+                                ),
+                                label: Text(_subjectLabel(code)),
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                      ],
+
+                      if (dialogError != null) ...[
+                        const SizedBox(height: 12),
                         Text(
                           dialogError!,
                           style: const TextStyle(
                             color: AppTheme.danger,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ],
@@ -615,41 +613,47 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                   onPressed: () => Navigator.pop(dialogContext, false),
                   child: const Text('Cancel'),
                 ),
+
                 ElevatedButton.icon(
                   onPressed: () {
                     if (controller.text.trim().isEmpty) {
                       setDialogState(() {
                         dialogError = 'Student name is required.';
                       });
+
                       return;
                     }
 
-                    const subjectOrder = [
-                      'Phy',
-                      'Chem',
-                      'Math',
-                      'Eng',
-                      'Comp',
-                      'Bio',
-                    ];
-                    final selectedSubjects = <String>{
-                      ...selectedBaseSubjects,
-                      if (selectedChoiceSubject != null) selectedChoiceSubject!,
-                    };
-                    final subjects = subjectOrder
-                        .where(selectedSubjects.contains)
-                        .toList();
+                    if (isSingleSubject) {
+                      selectedSubjectsForSave = List<String>.from(
+                        existingSubjects,
+                      );
+                    } else {
+                      if (selectedGroupCode == null) {
+                        setDialogState(() {
+                          dialogError = widget.classLevel <= 10
+                              ? 'Please choose Computer or Biology.'
+                              : 'Please choose FCS, Pre-Engineering or Pre-Medical.';
+                        });
 
-                    if (subjects.isEmpty) {
+                        return;
+                      }
+
+                      selectedSubjectsForSave = studentSubjectsForGroup(
+                        widget.classLevel,
+                        selectedGroupCode!,
+                      );
+                    }
+
+                    if (selectedSubjectsForSave.isEmpty) {
                       setDialogState(() {
-                        dialogError = 'Select at least one subject.';
+                        dialogError = 'Unable to determine student subjects.';
                       });
+
                       return;
                     }
 
                     Navigator.pop(dialogContext, true);
-
-                    selectedSubjectsForSave = subjects;
                   },
                   icon: const Icon(Icons.save_outlined),
                   label: const Text('Save'),
@@ -662,7 +666,6 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
     );
 
     final name = controller.text.trim();
-    final subjects = selectedSubjectsForSave;
 
     controller.dispose();
 
@@ -681,7 +684,7 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
           'p_student_id': student['id'].toString(),
           'p_name': name,
           'p_status': status,
-          'p_stream': subjects,
+          'p_stream': selectedSubjectsForSave,
         },
       );
 
@@ -705,8 +708,8 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Could not update student.'),
+        SnackBar(
+          content: Text('Could not update student.\n$e'),
           backgroundColor: AppTheme.danger,
         ),
       );

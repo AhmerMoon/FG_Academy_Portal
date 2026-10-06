@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'teacher_attendance_history_screen.dart';
 import '../app_theme.dart';
 import '../utils/error_state_view.dart';
 import '../utils/list_sorting.dart';
 import '../widgets/academy_background.dart';
+import '../utils/student_group_helper.dart';
 
 class StudentsScreen extends StatefulWidget {
   final String batchId;
@@ -102,22 +102,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
       default:
         return code;
     }
-  }
-
-  List<String> _coreSubjectsForClass(int classLevel) {
-    if (classLevel <= 10) {
-      return const ['Phy', 'Chem', 'Math', 'Eng'];
-    }
-
-    return const ['Phy', 'Math', 'Eng'];
-  }
-
-  List<String> _groupSubjectsForClass(int classLevel) {
-    if (classLevel <= 10) {
-      return const ['Comp', 'Bio'];
-    }
-
-    return const ['Chem', 'Comp', 'Bio'];
   }
 
   int _absenceStreakFor(String studentId) {
@@ -344,17 +328,15 @@ class _StudentsScreenState extends State<StudentsScreen> {
       return;
     }
 
-    final coreSubjects = _coreSubjectsForClass(classLevel);
+    final groupCodes = studentGroupCodesForClass(classLevel);
 
-    final groupSubjects = _groupSubjectsForClass(classLevel);
+    String? selectedGroupCode;
 
-    String? selectedGroup;
-
-    // If this teacher teaches one of the group subjects,
-    // preselect that subject.
+    // Group subject teacher ho to
+    // relevant group automatically select.
     if (_teacherSubjectCode != null &&
-        groupSubjects.contains(_teacherSubjectCode)) {
-      selectedGroup = _teacherSubjectCode;
+        groupCodes.contains(_teacherSubjectCode)) {
+      selectedGroupCode = _teacherSubjectCode;
     }
 
     final nameController = TextEditingController();
@@ -367,6 +349,10 @@ class _StudentsScreenState extends State<StudentsScreen> {
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            final subjects = selectedGroupCode == null
+                ? <String>[]
+                : studentSubjectsForGroup(classLevel, selectedGroupCode!);
+
             return AlertDialog(
               title: const Row(
                 children: [
@@ -380,7 +366,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
               ),
 
               content: SizedBox(
-                width: 470,
+                width: 490,
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -439,58 +425,12 @@ class _StudentsScreenState extends State<StudentsScreen> {
                         ),
                       ),
 
-                      const SizedBox(height: 18),
-
-                      const Text(
-                        'Core Subjects',
-                        style: TextStyle(
-                          color: AppTheme.fgNavyBlue,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-
-                      const SizedBox(height: 5),
-
-                      const Text(
-                        'These are added automatically.',
-                        style: TextStyle(
-                          color: AppTheme.textSecondary,
-                          fontSize: 13,
-                        ),
-                      ),
-
-                      const SizedBox(height: 9),
-
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: coreSubjects
-                            .map(
-                              (code) => Chip(
-                                avatar: const Icon(
-                                  Icons.check_circle_rounded,
-                                  size: 18,
-                                  color: AppTheme.success,
-                                ),
-                                label: Text(
-                                  _subjectLabel(code),
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                            )
-                            .toList(),
-                      ),
-
                       const SizedBox(height: 20),
 
                       Text(
                         classLevel <= 10
-                            ? 'Confirm Group Subject'
-                            : 'Confirm Group Subject',
+                            ? 'Choose Student Group'
+                            : 'Choose HSSC Group',
                         style: const TextStyle(
                           color: AppTheme.fgNavyBlue,
                           fontSize: 16,
@@ -500,45 +440,86 @@ class _StudentsScreenState extends State<StudentsScreen> {
 
                       const SizedBox(height: 5),
 
-                      const Text(
-                        'Please confirm the student’s group before saving.',
-                        style: TextStyle(
+                      Text(
+                        classLevel <= 10
+                            ? 'Choose Computer or Biology. All required subjects will be added automatically.'
+                            : 'Choose FCS, Pre-Engineering or Pre-Medical. All correct subjects will be added automatically.',
+                        style: const TextStyle(
                           color: AppTheme.textSecondary,
                           fontSize: 13,
+                          height: 1.4,
                         ),
                       ),
 
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 11),
 
                       Wrap(
                         spacing: 9,
                         runSpacing: 9,
-                        children: groupSubjects
-                            .map(
-                              (code) => ChoiceChip(
-                                label: Text(
-                                  _subjectLabel(code),
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                selected: selectedGroup == code,
-                                onSelected: (selected) {
-                                  if (!selected) {
-                                    return;
-                                  }
-
-                                  setDialogState(() {
-                                    selectedGroup = code;
-
-                                    dialogError = null;
-                                  });
-                                },
+                        children: groupCodes.map((code) {
+                          return ChoiceChip(
+                            selected: selectedGroupCode == code,
+                            avatar: Icon(
+                              selectedGroupCode == code
+                                  ? Icons.check_circle_rounded
+                                  : Icons.school_outlined,
+                              size: 18,
+                            ),
+                            label: Text(
+                              studentGroupLabel(classLevel, code),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
                               ),
-                            )
-                            .toList(),
+                            ),
+                            onSelected: (selected) {
+                              if (!selected) {
+                                return;
+                              }
+
+                              setDialogState(() {
+                                selectedGroupCode = code;
+
+                                dialogError = null;
+                              });
+                            },
+                          );
+                        }).toList(),
                       ),
+
+                      if (subjects.isNotEmpty) ...[
+                        const SizedBox(height: 20),
+
+                        const Text(
+                          'Subjects Added Automatically',
+                          style: TextStyle(
+                            color: AppTheme.fgNavyBlue,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+
+                        const SizedBox(height: 8),
+
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: subjects.map((code) {
+                            return Chip(
+                              avatar: const Icon(
+                                Icons.check_circle_rounded,
+                                size: 17,
+                                color: AppTheme.success,
+                              ),
+                              label: Text(
+                                _subjectLabel(code),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ],
 
                       const SizedBox(height: 18),
 
@@ -567,7 +548,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                 '• Student will be enrolled\n'
                                 '• Today attendance will be Present\n'
                                 '• Current month fee will be Unpaid\n'
-                                '• Core subjects will be added automatically',
+                                '• Correct group subjects will be added automatically',
                                 style: TextStyle(
                                   fontSize: 13.5,
                                   height: 1.55,
@@ -597,49 +578,45 @@ class _StudentsScreenState extends State<StudentsScreen> {
               ),
 
               actions: [
-                IconButton(
-                  tooltip: 'Attendance History',
-                  onPressed: isSaving || _isAddingStudent
-                      ? null
-                      : () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => TeacherAttendanceHistoryScreen(
-                                batchId: widget.batchId,
-                                batchName: widget.batchName,
-                              ),
-                            ),
-                          );
-                        },
-                  icon: const Icon(Icons.history_rounded),
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                  },
+                  child: const Text('Cancel'),
                 ),
 
-                IconButton(
-                  tooltip: 'Add New Student',
-                  onPressed: isSaving || _isAddingStudent
-                      ? null
-                      : _openAddStudentDialog,
-                  icon: _isAddingStudent
-                      ? const SizedBox(
-                          width: 21,
-                          height: 21,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : const Icon(Icons.person_add_alt_1_rounded),
-                ),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    final name = nameController.text.trim();
 
-                IconButton(
-                  tooltip: 'Refresh',
-                  onPressed: isSaving || _isAddingStudent
-                      ? null
-                      : fetchStudentsAndAttendance,
-                  icon: const Icon(Icons.refresh_rounded),
-                ),
+                    if (name.isEmpty) {
+                      setDialogState(() {
+                        dialogError = 'Student name is required.';
+                      });
 
-                const SizedBox(width: 4),
+                      return;
+                    }
+
+                    if (selectedGroupCode == null) {
+                      setDialogState(() {
+                        dialogError = classLevel <= 10
+                            ? 'Please choose Computer or Biology.'
+                            : 'Please choose FCS, Pre-Engineering or Pre-Medical.';
+                      });
+
+                      return;
+                    }
+
+                    Navigator.of(dialogContext).pop(
+                      _NewAttendanceStudentDraft(
+                        name: name,
+                        groupSubject: selectedGroupCode!,
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.person_add_alt_1_rounded),
+                  label: const Text('Add Student'),
+                ),
               ],
             );
           },

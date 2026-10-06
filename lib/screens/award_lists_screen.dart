@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -7,9 +8,11 @@ import '../app_theme.dart';
 import '../models/fee_models.dart';
 import '../models/portal_user.dart';
 import '../services/auth_service.dart';
+import 'award_list_preview_screen.dart';
 import '../utils/dashboard_section_header.dart';
 import '../utils/error_state_view.dart';
 import '../utils/list_sorting.dart';
+import 'award_history_screen.dart';
 
 class AwardListsScreen extends StatefulWidget {
   final String userRole;
@@ -22,33 +25,27 @@ class AwardListsScreen extends StatefulWidget {
 
 class _AwardListsScreenState extends State<AwardListsScreen> {
   final SupabaseClient _supabase = Supabase.instance.client;
-
   final AuthService _authService = AuthService();
 
   PortalUser? _user;
 
   List<Map<String, dynamic>> _batches = [];
-
   List<Map<String, dynamic>> _tests = [];
-
   List<_AwardStudentRow> _students = [];
 
   final Map<String, String> _draftMarks = {};
+  final Map<String, TextEditingController> _markControllers = {};
+
+  final Map<String, FocusNode> _markFocusNodes = {};
 
   String? _selectedBatchId;
-
   String? _selectedSubject;
-
   String? _selectedTestId;
 
   bool _loading = true;
-
   bool _loadingTests = false;
-
   bool _loadingStudents = false;
-
   bool _creatingTest = false;
-
   bool _saving = false;
 
   String? _error;
@@ -66,7 +63,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
   Map<String, dynamic>? get _selectedBatch {
     final id = _selectedBatchId;
-
     if (id == null) return null;
 
     for (final batch in _batches) {
@@ -80,7 +76,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
   Map<String, dynamic>? get _selectedTest {
     final id = _selectedTestId;
-
     if (id == null) return null;
 
     for (final test in _tests) {
@@ -101,8 +96,20 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
   @override
   void initState() {
     super.initState();
-
     _bootstrap();
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _markControllers.values) {
+      controller.dispose();
+    }
+
+    for (final focusNode in _markFocusNodes.values) {
+      focusNode.dispose();
+    }
+
+    super.dispose();
   }
 
   Future<void> _bootstrap() async {
@@ -126,13 +133,11 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       if (!user.isAdmin) {
         final allowedLevels = user.classLevels.toSet();
 
-        batches = batches
-            .where(
-              (batch) => allowedLevels.contains(
-                (batch['class_level'] as num?)?.toInt(),
-              ),
-            )
-            .toList();
+        batches = batches.where((batch) {
+          return allowedLevels.contains(
+            (batch['class_level'] as num?)?.toInt(),
+          );
+        }).toList();
       }
 
       batches = sortBatches(
@@ -153,15 +158,10 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
       setState(() {
         _user = user;
-
         _batches = batches;
-
         _selectedBatchId = firstBatch?['id']?.toString();
-
         _selectedSubject = firstSubjects.isEmpty ? null : firstSubjects.first;
-
         _loading = false;
-
         _error = null;
       });
 
@@ -173,7 +173,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
       setState(() {
         _loading = false;
-
         _error = 'Unable to load Award Lists.';
       });
     }
@@ -201,17 +200,12 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
   List<String> get _availableSubjects {
     final user = _user;
-
-    if (user == null) {
-      return const [];
-    }
-
+    if (user == null) return const [];
     return _subjectsFor(user: user, classLevel: _selectedClassLevel);
   }
 
   Future<void> _changeBatch(String batchId) async {
     final user = _user;
-
     if (user == null) return;
 
     final batch = _batches.firstWhere(
@@ -224,15 +218,10 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
     setState(() {
       _selectedBatchId = batchId;
-
       _selectedSubject = subjects.isEmpty ? null : subjects.first;
-
       _selectedTestId = null;
-
       _tests = [];
-
       _students = [];
-
       _draftMarks.clear();
     });
 
@@ -242,13 +231,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
   Future<void> _changeSubject(String subject) async {
     setState(() {
       _selectedSubject = subject;
-
       _selectedTestId = null;
-
       _tests = [];
-
       _students = [];
-
       _draftMarks.clear();
     });
 
@@ -257,18 +242,14 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
   Future<void> _loadTests({String? selectTestId}) async {
     final batchId = _selectedBatchId;
-
     final subject = _selectedSubject;
 
     if (batchId == null || subject == null) {
       if (mounted) {
         setState(() {
           _tests = [];
-
           _selectedTestId = null;
-
           _students = [];
-
           _draftMarks.clear();
         });
       }
@@ -284,9 +265,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       final response = await _supabase
           .from('award_tests')
           .select(
-            'id, batch_id, subject_code, '
-            'test_no, test_date, '
-            'max_marks, created_at',
+            'id, batch_id, subject_code, test_no, test_date, max_marks, created_at',
           )
           .eq('batch_id', batchId)
           .eq('subject_code', subject)
@@ -307,9 +286,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
       setState(() {
         _tests = tests;
-
         _selectedTestId = selectedId;
-
         _loadingTests = false;
       });
 
@@ -327,13 +304,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     }
   }
 
-  // ==========================================================
-  // LOAD ALL STUDENTS FOR SELECTED BATCH + SUBJECT
-  //
-  // IMPORTANT:
-  // Attendance is intentionally NOT queried here.
-  // ==========================================================
-
   Future<void> _loadTestStudents() async {
     final test = _selectedTest;
 
@@ -343,10 +313,11 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       if (mounted) {
         setState(() {
           _students = [];
-
           _draftMarks.clear();
         });
       }
+
+      _clearMarkInputs();
 
       return;
     }
@@ -369,7 +340,11 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
         _supabase
             .from('award_marks')
-            .select('student_id, marks')
+            .select(
+              'student_id, '
+              'marks, '
+              'is_absent',
+            )
             .eq('test_id', testId),
       ]);
 
@@ -379,12 +354,20 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
       final marksByStudent = <String, double>{};
 
+      final absentByStudent = <String, bool>{};
+
       for (final row in marks) {
         final studentId = row['student_id']?.toString();
 
+        if (studentId == null) {
+          continue;
+        }
+
+        absentByStudent[studentId] = row['is_absent'] == true;
+
         final value = (row['marks'] as num?)?.toDouble();
 
-        if (studentId != null && value != null) {
+        if (value != null) {
           marksByStudent[studentId] = value;
         }
       }
@@ -402,8 +385,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
             ? rawStream.map((item) => item.toString()).toList()
             : <String>[];
 
-        // Only subject filtering remains.
-        // Attendance is intentionally ignored.
         if (!stream.contains(subject)) {
           continue;
         }
@@ -413,17 +394,12 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
             id: id,
             name: student['name']?.toString() ?? 'Student',
             savedMarks: marksByStudent[id],
+            isAbsent: absentByStudent[id] ?? false,
           ),
         );
       }
 
-      _draftMarks.clear();
-
-      for (final student in eligible) {
-        final saved = student.savedMarks;
-
-        _draftMarks[student.id] = saved == null ? '' : _formatNumber(saved);
-      }
+      _syncMarkInputs(eligible);
 
       if (!mounted) return;
 
@@ -441,7 +417,11 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
         _loadingStudents = false;
       });
 
-      _showMessage('Could not load test students.', error: true);
+      _showMessage(
+        'Could not load '
+        'test students.',
+        error: true,
+      );
     }
   }
 
@@ -453,21 +433,181 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     return value.toStringAsFixed(2);
   }
 
+  void _clearMarkInputs() {
+    for (final controller in _markControllers.values) {
+      controller.dispose();
+    }
+
+    for (final focusNode in _markFocusNodes.values) {
+      focusNode.dispose();
+    }
+
+    _markControllers.clear();
+
+    _markFocusNodes.clear();
+  }
+
+  void _syncMarkInputs(List<_AwardStudentRow> students) {
+    final activeIds = students.map((student) => student.id).toSet();
+
+    final removedControllerIds = _markControllers.keys
+        .where((id) => !activeIds.contains(id))
+        .toList();
+
+    for (final id in removedControllerIds) {
+      _markControllers.remove(id)?.dispose();
+    }
+
+    final removedFocusIds = _markFocusNodes.keys
+        .where((id) => !activeIds.contains(id))
+        .toList();
+
+    for (final id in removedFocusIds) {
+      _markFocusNodes.remove(id)?.dispose();
+    }
+
+    _draftMarks.clear();
+
+    for (final student in students) {
+      final value = student.isAbsent
+          ? 'A'
+          : student.savedMarks == null
+          ? ''
+          : _formatNumber(student.savedMarks!);
+
+      final controller = _markControllers.putIfAbsent(
+        student.id,
+        () => TextEditingController(),
+      );
+
+      controller.value = TextEditingValue(
+        text: value,
+        selection: TextSelection.collapsed(offset: value.length),
+      );
+
+      _markFocusNodes.putIfAbsent(student.id, () => FocusNode());
+
+      _draftMarks[student.id] = value;
+    }
+  }
+
+  void _focusNextStudent(String currentStudentId) {
+    final currentIndex = _students.indexWhere(
+      (student) => student.id == currentStudentId,
+    );
+
+    if (currentIndex < 0) {
+      return;
+    }
+
+    final nextIndex = currentIndex + 1;
+
+    if (nextIndex >= _students.length) {
+      _markFocusNodes[currentStudentId]?.unfocus();
+
+      return;
+    }
+
+    final nextStudent = _students[nextIndex];
+
+    final nextFocus = _markFocusNodes[nextStudent.id];
+
+    if (nextFocus == null) {
+      return;
+    }
+
+    Future<void>.delayed(const Duration(milliseconds: 70), () {
+      if (!mounted) return;
+
+      nextFocus.requestFocus();
+
+      final controller = _markControllers[nextStudent.id];
+
+      if (controller != null) {
+        controller.selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: controller.text.length,
+        );
+      }
+    });
+  }
+
+  bool _shouldAutoAdvance({required String value, required double maxMarks}) {
+    final clean = value.trim();
+
+    if (clean.isEmpty) {
+      return false;
+    }
+
+    // Decimal marks are still supported,
+    // but we do not auto-jump while
+    // someone may still be typing .5.
+    if (clean.contains('.')) {
+      return false;
+    }
+
+    // For a 100+ marks paper we cannot
+    // assume two digits means finished.
+    if (maxMarks >= 100) {
+      return false;
+    }
+
+    if (clean.length != 2) {
+      return false;
+    }
+
+    final marks = double.tryParse(clean);
+
+    if (marks == null) {
+      return false;
+    }
+
+    return marks >= 0 && marks <= maxMarks;
+  }
+
+  void _handleMarkChanged(
+    _AwardStudentRow student,
+    String value,
+    double maxMarks,
+  ) {
+    final clean = value.trim();
+
+    _draftMarks[student.id] = clean;
+
+    if (_shouldAutoAdvance(value: clean, maxMarks: maxMarks)) {
+      _focusNextStudent(student.id);
+    }
+  }
+
+  void _markStudentAbsent(_AwardStudentRow student) {
+    final controller = _markControllers[student.id];
+
+    if (controller == null) {
+      return;
+    }
+
+    controller.value = const TextEditingValue(
+      text: 'A',
+      selection: TextSelection.collapsed(offset: 1),
+    );
+
+    _draftMarks[student.id] = 'A';
+
+    _focusNextStudent(student.id);
+  }
+
   Future<void> _createTest() async {
     final batchId = _selectedBatchId;
-
     final subject = _selectedSubject;
 
     if (batchId == null || subject == null) {
       _showMessage('Select a batch and subject first.', error: true);
-
       return;
     }
 
     DateTime selectedDate = DateTime.now();
 
     final maxMarksController = TextEditingController(text: '20');
-
     String? dialogError;
 
     final request = await showDialog<_NewAwardTest>(
@@ -487,7 +627,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
               if (date != null) {
                 setDialogState(() {
                   selectedDate = date;
-
                   dialogError = null;
                 });
               }
@@ -514,9 +653,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                       trailing: const Icon(Icons.edit_calendar_outlined),
                       onTap: chooseDate,
                     ),
-
                     const SizedBox(height: 12),
-
                     TextFormField(
                       controller: maxMarksController,
                       keyboardType: const TextInputType.numberWithOptions(
@@ -531,9 +668,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                         hintText: '20',
                       ),
                     ),
-
                     const SizedBox(height: 14),
-
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
@@ -547,10 +682,8 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                         style: TextStyle(fontSize: 13.5, height: 1.45),
                       ),
                     ),
-
                     if (dialogError != null) ...[
                       const SizedBox(height: 12),
-
                       Text(
                         dialogError!,
                         style: const TextStyle(
@@ -564,12 +697,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () {
-                    Navigator.pop(dialogContext);
-                  },
+                  onPressed: () => Navigator.pop(dialogContext),
                   child: const Text('Cancel'),
                 ),
-
                 ElevatedButton.icon(
                   onPressed: () {
                     final maxMarks = double.tryParse(
@@ -580,7 +710,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                       setDialogState(() {
                         dialogError = 'Enter valid total marks.';
                       });
-
                       return;
                     }
 
@@ -629,7 +758,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       _showMessage('New test created successfully.');
     } catch (e) {
       debugPrint('Create award test error: $e');
-
       _showMessage(_friendlyError(e), error: true);
     } finally {
       if (mounted) {
@@ -643,45 +771,79 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
   Future<void> _saveMarks() async {
     final test = _selectedTest;
 
-    if (test == null) return;
+    if (test == null) {
+      return;
+    }
 
     final maxMarks = (test['max_marks'] as num).toDouble();
 
     final payload = <Map<String, dynamic>>[];
 
     for (final student in _students) {
-      final value = _draftMarks[student.id]?.trim() ?? '';
+      final controller = _markControllers[student.id];
+
+      final value = (controller?.text ?? _draftMarks[student.id] ?? '')
+          .trim()
+          .toUpperCase();
 
       if (value.isEmpty) {
+        continue;
+      }
+
+      if (value == 'A') {
+        payload.add({
+          'student_id': student.id,
+          'marks': null,
+          'is_absent': true,
+        });
+
         continue;
       }
 
       final marks = double.tryParse(value);
 
       if (marks == null) {
-        _showMessage('Invalid marks for ${student.name}.', error: true);
-
-        return;
-      }
-
-      if (marks < 0 || marks > maxMarks) {
         _showMessage(
-          '${student.name}: marks must be between '
-          '0 and ${_formatNumber(maxMarks)}.',
+          'Invalid marks for '
+          '${student.name}.',
           error: true,
         );
 
         return;
       }
 
-      payload.add({'student_id': student.id, 'marks': marks});
+      if (marks < 0 || marks > maxMarks) {
+        _showMessage(
+          '${student.name}: '
+          'marks must be between '
+          '0 and '
+          '${_formatNumber(maxMarks)}.',
+          error: true,
+        );
+
+        _markFocusNodes[student.id]?.requestFocus();
+
+        return;
+      }
+
+      payload.add({
+        'student_id': student.id,
+        'marks': marks,
+        'is_absent': false,
+      });
     }
 
     if (payload.isEmpty) {
-      _showMessage('Enter at least one student mark.', error: true);
+      _showMessage(
+        'Enter at least one '
+        'student mark.',
+        error: true,
+      );
 
       return;
     }
+
+    FocusScope.of(context).unfocus();
 
     setState(() {
       _saving = true;
@@ -695,7 +857,13 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
       await _loadTestStudents();
 
-      _showMessage('${result ?? payload.length} mark(s) saved.');
+      if (!mounted) {
+        return;
+      }
+
+      await _showSavedSuccessSheet(
+        savedCount: result is num ? result.toInt() : payload.length,
+      );
     } catch (e) {
       debugPrint('Save award marks error: $e');
 
@@ -709,9 +877,131 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     }
   }
 
+  Future<void> _showSavedSuccessSheet({required int savedCount}) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: false,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 54,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.black12,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const CircleAvatar(
+                  radius: 26,
+                  backgroundColor: AppTheme.success,
+                  child: Icon(
+                    Icons.check_rounded,
+                    color: Colors.white,
+                    size: 30,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Award List Saved',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '$savedCount mark(s) saved successfully.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(sheetContext);
+                        },
+                        icon: const Icon(Icons.close_rounded),
+                        label: const Text('Close'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () async {
+                          Navigator.pop(sheetContext);
+
+                          await _previewCurrentTest();
+                        },
+                        icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 16),
+                        label: const Text('Preview & Share'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _previewCurrentTest() async {
+    final batch = _selectedBatch;
+    final test = _selectedTest;
+    final subject = _selectedSubject;
+
+    if (batch == null || test == null || subject == null) {
+      _showMessage('Select a test first.', error: true);
+
+      return;
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AwardListPreviewScreen(
+          supabase: _supabase,
+          user: _user,
+          batch: batch,
+          test: test,
+          subjectCode: subject,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openHistory() async {
+    final batch = _selectedBatch;
+    final subject = _selectedSubject;
+
+    if (batch == null || subject == null) {
+      _showMessage('Select a batch and subject first.', error: true);
+      return;
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AwardHistoryScreen(
+          supabase: _supabase,
+          user: _user,
+          batch: batch,
+          subjectCode: subject,
+          tests: _tests.map((item) => Map<String, dynamic>.from(item)).toList(),
+        ),
+      ),
+    );
+  }
+
   Future<void> _clearMark(_AwardStudentRow student) async {
     final test = _selectedTest;
-
     if (test == null) return;
 
     final confirmed =
@@ -759,19 +1049,17 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
   }
 
   String _friendlyError(Object error) {
-    final message = error.toString();
+    final message = error.toString().toLowerCase();
 
-    final lower = message.toLowerCase();
-
-    if (lower.contains('no students were found')) {
+    if (message.contains('no students were found')) {
       return 'No students were found for this batch and subject.';
     }
 
-    if (lower.contains('not assigned')) {
+    if (message.contains('not assigned')) {
       return 'This teacher is not assigned to that subject/class.';
     }
 
-    if (lower.contains('does not belong')) {
+    if (message.contains('does not belong')) {
       return 'Student does not belong to this batch or subject.';
     }
 
@@ -811,18 +1099,27 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
         DashboardSectionHeader(
           title: 'Award Lists',
           subtitle: _isAdmin
-              ? 'View and edit tests for every batch and subject'
-              : 'Enter marks for your assigned classes and subjects',
-          trailing: IconButton(
-            tooltip: 'Refresh',
-            color: Colors.white,
-            onPressed: _loadingTests ? null : _loadTests,
-            icon: const Icon(Icons.refresh_rounded),
+              ? 'View, edit and share tests for every batch and subject'
+              : 'Enter marks and share award lists for your assigned classes',
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'History',
+                color: Colors.white,
+                onPressed: _tests.isEmpty ? null : _openHistory,
+                icon: const Icon(Icons.history_rounded),
+              ),
+              IconButton(
+                tooltip: 'Refresh',
+                color: Colors.white,
+                onPressed: _loadingTests ? null : _loadTests,
+                icon: const Icon(Icons.refresh_rounded),
+              ),
+            ],
           ),
         ),
-
         _buildFilters(),
-
         Expanded(child: _buildBody()),
       ],
     );
@@ -866,9 +1163,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
             final subject = DropdownButtonFormField<String>(
               key: ValueKey(
-                'award-subject-'
-                '$_selectedBatchId-'
-                '$_selectedSubject',
+                'award-subject-$_selectedBatchId-$_selectedSubject',
               ),
               initialValue: subjects.contains(_selectedSubject)
                   ? _selectedSubject
@@ -917,13 +1212,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   batch,
-
                   const SizedBox(height: 10),
-
                   subject,
-
                   const SizedBox(height: 10),
-
                   addButton,
                 ],
               );
@@ -932,13 +1223,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
             return Row(
               children: [
                 Expanded(child: batch),
-
                 const SizedBox(width: 12),
-
                 Expanded(child: subject),
-
                 const SizedBox(width: 12),
-
                 addButton,
               ],
             );
@@ -975,29 +1262,21 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                     color: AppTheme.fgNavyBlue,
                     size: 54,
                   ),
-
                   const SizedBox(height: 14),
-
                   const Text(
                     'No Tests Yet',
                     style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
                   ),
-
                   const SizedBox(height: 7),
-
                   Text(
-                    'Create the first '
-                    '${feeSubjectLabel(_selectedSubject!)} '
-                    'test for this batch.',
+                    'Create the first ${feeSubjectLabel(_selectedSubject!)} test for this batch.',
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       color: AppTheme.textSecondary,
                       fontSize: 14,
                     ),
                   ),
-
                   const SizedBox(height: 18),
-
                   ElevatedButton.icon(
                     onPressed: _createTest,
                     icon: const Icon(Icons.add_rounded),
@@ -1014,7 +1293,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     return Column(
       children: [
         _buildTestSelector(),
-
         Expanded(
           child: _loadingStudents
               ? const Center(child: CircularProgressIndicator())
@@ -1030,7 +1308,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                 )
               : _buildStudentsList(),
         ),
-
         if (_students.isNotEmpty) _buildSaveBar(),
       ],
     );
@@ -1046,11 +1323,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final selector = DropdownButtonFormField<String>(
-              key: ValueKey(
-                'award-test-'
-                '$_selectedTestId-'
-                '${_tests.length}',
-              ),
+              key: ValueKey('award-test-$_selectedTestId-${_tests.length}'),
               initialValue: _selectedTestId,
               isExpanded: true,
               decoration: const InputDecoration(
@@ -1059,23 +1332,19 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
               ),
               items: _tests.map((item) {
                 final no = (item['test_no'] as num?)?.toInt() ?? 0;
-
                 final date = DateTime.tryParse(item['test_date'].toString());
 
                 return DropdownMenuItem(
                   value: item['id'].toString(),
                   child: Text(
-                    'T$no  •  '
-                    '${date == null ? item['test_date'] : DateFormat('dd MMM yyyy').format(date)}',
+                    'T$no  •  ${date == null ? item['test_date'] : DateFormat('dd MMM yyyy').format(date)}',
                   ),
                 );
               }).toList(),
               onChanged: _loadingStudents
                   ? null
                   : (value) async {
-                      if (value == null) {
-                        return;
-                      }
+                      if (value == null) return;
 
                       setState(() {
                         _selectedTestId = value;
@@ -1090,6 +1359,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                 : Wrap(
                     spacing: 9,
                     runSpacing: 7,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       _TestBadge(
                         icon: Icons.score_outlined,
@@ -1104,6 +1374,15 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                         icon: Icons.menu_book_outlined,
                         text: feeSubjectLabel(_selectedSubject!),
                       ),
+                      OutlinedButton.icon(
+                        onPressed: _previewCurrentTest,
+                        icon: const FaIcon(
+                          FontAwesomeIcons.whatsapp,
+                          size: 15,
+                          color: Color(0xFF25D366),
+                        ),
+                        label: const Text('Preview & Share'),
+                      ),
                     ],
                   );
 
@@ -1117,9 +1396,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
             return Row(
               children: [
                 SizedBox(width: 360, child: selector),
-
                 const SizedBox(width: 14),
-
                 Expanded(child: details),
               ],
             );
@@ -1133,107 +1410,253 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     final maxMarks = _selectedMaxMarks;
 
     return ListView.builder(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+
       padding: const EdgeInsets.fromLTRB(10, 4, 10, 24),
+
       itemCount: _students.length,
+
       itemBuilder: (context, index) {
         final student = _students[index];
 
-        final saved = student.savedMarks;
+        final controller = _markControllers[student.id]!;
+
+        final focusNode = _markFocusNodes[student.id]!;
+
+        final isLast = index == _students.length - 1;
+
+        Widget markField() {
+          return TextFormField(
+            controller: controller,
+
+            focusNode: focusNode,
+
+            enabled: !_saving,
+
+            textAlign: TextAlign.center,
+
+            keyboardType: const TextInputType.numberWithOptions(
+              decimal: true,
+              signed: false,
+            ),
+
+            textInputAction: isLast
+                ? TextInputAction.done
+                : TextInputAction.next,
+
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+            ],
+
+            style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
+
+            decoration: InputDecoration(
+              labelText: 'Marks',
+              hintText: '0',
+              suffixText:
+                  '/ '
+                  '${_formatNumber(maxMarks)}',
+              isDense: true,
+              counterText: '',
+            ),
+
+            maxLength: 6,
+
+            onTap: () {
+              // If this was marked A,
+              // first numeric key should
+              // replace A immediately.
+              if (controller.text.trim().toUpperCase() == 'A') {
+                controller.selection = TextSelection(
+                  baseOffset: 0,
+                  extentOffset: controller.text.length,
+                );
+              }
+            },
+
+            onChanged: (value) {
+              _handleMarkChanged(student, value, maxMarks);
+            },
+
+            onFieldSubmitted: (_) {
+              if (isLast) {
+                focusNode.unfocus();
+              } else {
+                _focusNextStudent(student.id);
+              }
+            },
+          );
+        }
+
+        Widget absentButton() {
+          return ValueListenableBuilder<TextEditingValue>(
+            valueListenable: controller,
+
+            builder: (context, value, child) {
+              final selected = value.text.trim().toUpperCase() == 'A';
+
+              return SizedBox(
+                width: 52,
+                height: 48,
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    padding: EdgeInsets.zero,
+
+                    backgroundColor: selected
+                        ? AppTheme.danger.withValues(alpha: 0.10)
+                        : null,
+
+                    side: BorderSide(
+                      color: selected ? AppTheme.danger : AppTheme.border,
+                      width: selected ? 1.8 : 1,
+                    ),
+                  ),
+
+                  onPressed: _saving
+                      ? null
+                      : () {
+                          _markStudentAbsent(student);
+                        },
+
+                  child: Text(
+                    'A',
+                    style: TextStyle(
+                      color: selected ? AppTheme.danger : AppTheme.fgNavyBlue,
+                      fontSize: 19,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        }
+
+        final savedText = student.isAbsent
+            ? 'Saved: Absent'
+            : student.savedMarks == null
+            ? 'Mark not entered'
+            : 'Saved: '
+                  '${_formatNumber(student.savedMarks!)}'
+                  ' / '
+                  '${_formatNumber(maxMarks)}';
+
+        final savedColor = student.isAbsent
+            ? AppTheme.danger
+            : student.savedMarks == null
+            ? AppTheme.textSecondary
+            : AppTheme.success;
 
         return Card(
           margin: const EdgeInsets.only(bottom: 9),
+
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 20,
-                  backgroundColor: AppTheme.fgNavyBlue.withValues(alpha: 0.08),
-                  foregroundColor: AppTheme.fgNavyBlue,
-                  child: Text(
-                    '${index + 1}',
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                ),
+            padding: const EdgeInsets.all(12),
 
-                const SizedBox(width: 12),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final mobile = constraints.maxWidth < 520;
 
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                final studentInfo = Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 20,
+
+                      backgroundColor: AppTheme.fgNavyBlue.withValues(
+                        alpha: 0.08,
+                      ),
+
+                      foregroundColor: AppTheme.fgNavyBlue,
+
+                      child: Text(
+                        '${index + 1}',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+
+                    const SizedBox(width: 11),
+
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+
+                        children: [
+                          Text(
+                            student.name,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+
+                          const SizedBox(height: 2),
+
+                          Text(
+                            savedText,
+                            style: TextStyle(
+                              color: savedColor,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+
+                final inputRow = Row(
+                  children: [
+                    Expanded(child: markField()),
+
+                    const SizedBox(width: 7),
+
+                    absentButton(),
+
+                    if (student.savedMarks != null || student.isAbsent) ...[
+                      const SizedBox(width: 3),
+
+                      IconButton(
+                        tooltip: 'Clear saved result',
+
+                        onPressed: _saving
+                            ? null
+                            : () {
+                                _clearMark(student);
+                              },
+
+                        color: AppTheme.danger,
+
+                        icon: const Icon(Icons.delete_outline_rounded),
+                      ),
+                    ],
+                  ],
+                );
+
+                if (mobile) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+
                     children: [
-                      Text(
-                        student.name,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
+                      studentInfo,
 
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 10),
 
-                      Text(
-                        saved == null
-                            ? 'Mark not entered'
-                            : 'Saved: '
-                                  '${_formatNumber(saved)} / '
-                                  '${_formatNumber(maxMarks)}',
-                        style: TextStyle(
-                          color: saved == null
-                              ? AppTheme.textSecondary
-                              : AppTheme.success,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+                      inputRow,
                     ],
-                  ),
-                ),
+                  );
+                }
 
-                const SizedBox(width: 10),
+                return Row(
+                  children: [
+                    Expanded(child: studentInfo),
 
-                SizedBox(
-                  width: 110,
-                  child: TextFormField(
-                    key: ValueKey(
-                      '${student.id}-'
-                      '${student.savedMarks}',
-                    ),
-                    initialValue: _draftMarks[student.id] ?? '',
-                    enabled: !_saving,
-                    textAlign: TextAlign.center,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
-                    ],
-                    style: const TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w800,
-                    ),
-                    decoration: InputDecoration(
-                      labelText: 'Marks',
-                      suffixText: '/ ${_formatNumber(maxMarks)}',
-                      isDense: true,
-                    ),
-                    onChanged: (value) {
-                      _draftMarks[student.id] = value;
-                    },
-                  ),
-                ),
+                    const SizedBox(width: 12),
 
-                if (saved != null) ...[
-                  const SizedBox(width: 5),
-
-                  IconButton(
-                    tooltip: 'Clear saved mark',
-                    onPressed: _saving ? null : () => _clearMark(student),
-                    color: AppTheme.danger,
-                    icon: const Icon(Icons.delete_outline_rounded),
-                  ),
-                ],
-              ],
+                    SizedBox(width: 270, child: inputRow),
+                  ],
+                );
+              },
             ),
           ),
         );
@@ -1262,7 +1685,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                 ),
               ),
             ),
-
             ElevatedButton.icon(
               onPressed: _saving ? null : _saveMarks,
               icon: _saving
@@ -1291,16 +1713,18 @@ class _AwardStudentRow {
 
   final double? savedMarks;
 
+  final bool isAbsent;
+
   const _AwardStudentRow({
     required this.id,
     required this.name,
     required this.savedMarks,
+    required this.isAbsent,
   });
 }
 
 class _NewAwardTest {
   final DateTime date;
-
   final double maxMarks;
 
   const _NewAwardTest({required this.date, required this.maxMarks});
@@ -1308,7 +1732,6 @@ class _NewAwardTest {
 
 class _TestBadge extends StatelessWidget {
   final IconData icon;
-
   final String text;
 
   const _TestBadge({required this.icon, required this.text});
@@ -1326,9 +1749,7 @@ class _TestBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 17, color: AppTheme.fgNavyBlue),
-
           const SizedBox(width: 6),
-
           Text(
             text,
             style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
