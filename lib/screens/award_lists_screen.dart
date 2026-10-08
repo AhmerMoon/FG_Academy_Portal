@@ -265,7 +265,8 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       final response = await _supabase
           .from('award_tests')
           .select(
-            'id, batch_id, subject_code, test_no, test_date, max_marks, created_at',
+            'id, batch_id, subject_code, test_no, test_date, '
+            'max_marks, created_by, created_at',
           )
           .eq('batch_id', batchId)
           .eq('subject_code', subject)
@@ -987,7 +988,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       return;
     }
 
-    await Navigator.of(context).push(
+    final changed = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => AwardHistoryScreen(
           supabase: _supabase,
@@ -998,6 +999,10 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
         ),
       ),
     );
+
+    if (changed == true && mounted) {
+      await _loadTests();
+    }
   }
 
   Future<void> _clearMark(_AwardStudentRow student) async {
@@ -1080,6 +1085,95 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     );
   }
 
+  Widget _buildAwardHeader() {
+    return DashboardSectionHeader(
+      title: 'Award Lists',
+      subtitle: _isAdmin
+          ? 'View, edit and share tests for every batch and subject'
+          : 'Enter marks and share award lists for your assigned classes',
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: 'History',
+            color: Colors.white,
+            onPressed: _tests.isEmpty ? null : _openHistory,
+            icon: const Icon(Icons.history_rounded),
+          ),
+          IconButton(
+            tooltip: 'Refresh',
+            color: Colors.white,
+            onPressed: _loadingTests ? null : _loadTests,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPhoneLayout() {
+    // No test yet / loading:
+    // keep normal layout because there is no marks list
+    // to scroll anyway.
+    if (_selectedSubject == null || _loadingTests || _tests.isEmpty) {
+      return Column(
+        children: [
+          _buildAwardHeader(),
+          _buildFilters(),
+          Expanded(child: _buildBody()),
+        ],
+      );
+    }
+
+    return Column(
+      children: [
+        Expanded(
+          child: NestedScrollView(
+            headerSliverBuilder: (context, innerBoxIsScrolled) {
+              return [
+                SliverToBoxAdapter(child: _buildAwardHeader()),
+                SliverToBoxAdapter(child: _buildFilters()),
+                SliverToBoxAdapter(child: _buildTestSelector()),
+              ];
+            },
+            body: _loadingStudents
+                ? ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: const [
+                      SizedBox(
+                        height: 320,
+                        child: Center(child: CircularProgressIndicator()),
+                      ),
+                    ],
+                  )
+                : _students.isEmpty
+                ? ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: const [
+                      SizedBox(
+                        height: 300,
+                        child: Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(24),
+                            child: Text(
+                              'No students found for this subject.',
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
+                : _buildStudentsList(),
+          ),
+        ),
+
+        // Save remains reachable.
+        if (_students.isNotEmpty) _buildSaveBar(),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -1094,31 +1188,15 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       return const Center(child: Text('No assigned batches available.'));
     }
 
+    final isPhone = MediaQuery.sizeOf(context).width < 700;
+
+    if (isPhone) {
+      return _buildPhoneLayout();
+    }
+
     return Column(
       children: [
-        DashboardSectionHeader(
-          title: 'Award Lists',
-          subtitle: _isAdmin
-              ? 'View, edit and share tests for every batch and subject'
-              : 'Enter marks and share award lists for your assigned classes',
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton(
-                tooltip: 'History',
-                color: Colors.white,
-                onPressed: _tests.isEmpty ? null : _openHistory,
-                icon: const Icon(Icons.history_rounded),
-              ),
-              IconButton(
-                tooltip: 'Refresh',
-                color: Colors.white,
-                onPressed: _loadingTests ? null : _loadTests,
-                icon: const Icon(Icons.refresh_rounded),
-              ),
-            ],
-          ),
-        ),
+        _buildAwardHeader(),
         _buildFilters(),
         Expanded(child: _buildBody()),
       ],

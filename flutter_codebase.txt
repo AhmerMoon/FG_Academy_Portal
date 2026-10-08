@@ -1,7 +1,7 @@
 ================================================================================
 FLUTTER PROJECT CODEBASE
 Project Root: D:\academy_portal
-Total Dart Files: 41
+Total Dart Files: 50
 ================================================================================
 
 lib/main.dart:
@@ -5147,12 +5147,878 @@ class _SignatureLine extends StatelessWidget {
 }
 
 
+lib/screens/admin/fees/fee_setup_screen.dart:
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../../../app_theme.dart';
+import '../../../models/fee_models.dart';
+import '../../../utils/error_state_view.dart';
+import '../../../utils/fee_month.dart';
+
+class FeeSetupScreen extends StatefulWidget {
+  final VoidCallback? onDataChanged;
+
+  const FeeSetupScreen({super.key, this.onDataChanged});
+
+  @override
+  State<FeeSetupScreen> createState() => _FeeSetupScreenState();
+}
+
+class _FeeSetupScreenState extends State<FeeSetupScreen> {
+  final SupabaseClient _client = Supabase.instance.client;
+
+  List<String> _months = [];
+  String? _selectedMonth;
+
+  List<_DistributionConfig> _distributions = [];
+  List<_FeeTeacherConfig> _teachers = [];
+
+  final Set<String> _savingKeys = {};
+
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _load();
+  }
+
+  String _number(double value) {
+    if (value == value.roundToDouble()) {
+      return value.toStringAsFixed(0);
+    }
+
+    return value.toStringAsFixed(2);
+  }
+
+  Future<List<String>> _fetchMonths() async {
+    final response = await _client
+        .from('fee_summary_totals')
+        .select('payment_month, month_start')
+        .eq('section', 'collection')
+        .eq('group_name', 'ALL')
+        .order('month_start', ascending: false);
+
+    final raw = response
+        .map((row) => row['payment_month']?.toString())
+        .whereType<String>();
+
+    return FeeMonth.newestFirst(raw);
+  }
+
+  Future<void> _load({String? preferredMonth}) async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+
+    try {
+      final months = await _fetchMonths();
+
+      if (months.isEmpty) {
+        throw StateError('No fee months are available.');
+      }
+
+      var month = preferredMonth ?? _selectedMonth;
+
+      if (month == null || !months.contains(month)) {
+        month = months.first;
+      }
+
+      await _client.rpc(
+        'admin_ensure_fee_month_setup',
+        params: {'p_payment_month': month},
+      );
+
+      final results = await Future.wait<dynamic>([
+        _client
+            .from('fee_month_distribution_settings')
+            .select(
+              'payment_month, level_group, '
+              'teacher_percent, nts_percent, '
+              'building_percent, admin_percent, '
+              'organizer_percent, ecc_percent',
+            )
+            .eq('payment_month', month),
+        _client
+            .from('fee_month_teacher_assignments')
+            .select(
+              'payment_month, level_group, '
+              'subject_code, teacher_name, '
+              'display_order',
+            )
+            .eq('payment_month', month)
+            .order('level_group')
+            .order('display_order'),
+      ]);
+
+      final distributions = (results[0] as List)
+          .map(
+            (row) =>
+                _DistributionConfig.fromJson(Map<String, dynamic>.from(row)),
+          )
+          .toList();
+
+      distributions.sort((a, b) {
+        int rank(String value) {
+          switch (value) {
+            case 'SSC':
+              return 0;
+            case 'HSSC':
+              return 1;
+            default:
+              return 9;
+          }
+        }
+
+        return rank(a.levelGroup).compareTo(rank(b.levelGroup));
+      });
+
+      final teachers = (results[1] as List)
+          .map(
+            (row) => _FeeTeacherConfig.fromJson(Map<String, dynamic>.from(row)),
+          )
+          .toList();
+
+      if (!mounted) return;
+
+      setState(() {
+        _months = months;
+        _selectedMonth = month;
+        _distributions = distributions;
+        _teachers = teachers;
+
+        _loading = false;
+        _error = null;
+      });
+    } catch (e) {
+      debugPrint('Fee setup load error: $e');
+
+      if (!mounted) return;
+
+      setState(() {
+        _loading = false;
+        _error = 'Unable to load fee setup.';
+      });
+    }
+  }
+
+  void _message(String message, {bool error = false}) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: error ? AppTheme.danger : AppTheme.success,
+      ),
+    );
+  }
+
+  Future<void> _editDistribution(_DistributionConfig config) async {
+    final teacher = TextEditingController(text: _number(config.teacher));
+
+    final nts = TextEditingController(text: _number(config.nts));
+
+    final building = TextEditingController(text: _number(config.building));
+
+    final admin = TextEditingController(text: _number(config.admin));
+
+    final organizer = TextEditingController(text: _number(config.organizer));
+
+    final ecc = TextEditingController(text: _number(config.ecc));
+
+    String? dialogError;
+
+    final result = await showDialog<_DistributionDraft>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            double? value(TextEditingController c) {
+              return double.tryParse(c.text.trim().replaceAll(',', ''));
+            }
+
+            void submit() {
+              final teacherValue = value(teacher);
+
+              final ntsValue = value(nts);
+
+              final buildingValue = value(building);
+
+              final adminValue = value(admin);
+
+              final organizerValue = value(organizer);
+
+              final eccValue = value(ecc);
+
+              final values = [
+                teacherValue,
+                ntsValue,
+                buildingValue,
+                adminValue,
+                organizerValue,
+                eccValue,
+              ];
+
+              if (values.any((item) => item == null)) {
+                setDialogState(() {
+                  dialogError = 'Enter valid percentages in every field.';
+                });
+
+                return;
+              }
+
+              final clean = values.whereType<double>().toList();
+
+              if (clean.any((item) => item < 0 || item > 100)) {
+                setDialogState(() {
+                  dialogError = 'Each percentage must be between 0 and 100.';
+                });
+
+                return;
+              }
+
+              final total = clean.fold<double>(
+                0,
+                (previous, item) => previous + item,
+              );
+
+              if ((total - 100).abs() > 0.001) {
+                setDialogState(() {
+                  dialogError =
+                      'Total must be exactly 100%. Current total: ${_number(total)}%';
+                });
+
+                return;
+              }
+
+              Navigator.of(dialogContext).pop(
+                _DistributionDraft(
+                  teacher: teacherValue!,
+                  nts: ntsValue!,
+                  building: buildingValue!,
+                  admin: adminValue!,
+                  organizer: organizerValue!,
+                  ecc: eccValue!,
+                ),
+              );
+            }
+
+            Widget field(String label, TextEditingController controller) {
+              return TextField(
+                controller: controller,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: InputDecoration(labelText: label, suffixText: '%'),
+              );
+            }
+
+            return AlertDialog(
+              title: Text('${config.levelGroup} Distribution'),
+              content: SizedBox(
+                width: 520,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Calculated financial cells remain read-only. '
+                        'Only the distribution inputs are changed here.',
+                        style: TextStyle(color: AppTheme.textSecondary),
+                      ),
+
+                      const SizedBox(height: 16),
+
+                      field('Teacher Share', teacher),
+
+                      const SizedBox(height: 10),
+
+                      field('NTS', nts),
+
+                      const SizedBox(height: 10),
+
+                      field('Building', building),
+
+                      const SizedBox(height: 10),
+
+                      field('Admin', admin),
+
+                      const SizedBox(height: 10),
+
+                      field('Organizer', organizer),
+
+                      const SizedBox(height: 10),
+
+                      field('ECC', ecc),
+
+                      if (dialogError != null) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          dialogError!,
+                          style: const TextStyle(
+                            color: AppTheme.danger,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                  },
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton.icon(
+                  onPressed: submit,
+                  icon: const Icon(Icons.save_outlined),
+                  label: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    teacher.dispose();
+    nts.dispose();
+    building.dispose();
+    admin.dispose();
+    organizer.dispose();
+    ecc.dispose();
+
+    if (result == null || !mounted) {
+      return;
+    }
+
+    final month = _selectedMonth;
+
+    if (month == null) return;
+
+    final key = 'distribution-${config.levelGroup}';
+
+    setState(() {
+      _savingKeys.add(key);
+    });
+
+    try {
+      await _client.rpc(
+        'admin_update_fee_month_distribution',
+        params: {
+          'p_payment_month': month,
+          'p_level_group': config.levelGroup,
+          'p_teacher_percent': result.teacher,
+          'p_nts_percent': result.nts,
+          'p_building_percent': result.building,
+          'p_admin_percent': result.admin,
+          'p_organizer_percent': result.organizer,
+          'p_ecc_percent': result.ecc,
+        },
+      );
+
+      widget.onDataChanged?.call();
+
+      await _load(preferredMonth: month);
+
+      _message('${config.levelGroup} percentages updated for $month.');
+    } catch (e) {
+      debugPrint('Fee distribution save error: $e');
+
+      _message('Unable to update percentages.', error: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _savingKeys.remove(key);
+        });
+      }
+    }
+  }
+
+  Future<void> _editTeacher(_FeeTeacherConfig teacher) async {
+    final controller = TextEditingController(text: teacher.teacherName);
+
+    String? dialogError;
+
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            void submit() {
+              final value = controller.text.trim();
+
+              if (value.isEmpty) {
+                setDialogState(() {
+                  dialogError = 'Teacher name is required.';
+                });
+
+                return;
+              }
+
+              Navigator.of(dialogContext).pop(value);
+            }
+
+            return AlertDialog(
+              title: Text('${feeSubjectLabel(teacher.subjectCode)} Teacher'),
+              content: SizedBox(
+                width: 450,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '${teacher.levelGroup} • ${feeSubjectLabel(teacher.subjectCode)}',
+                      style: const TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+
+                    const SizedBox(height: 14),
+
+                    TextField(
+                      controller: controller,
+                      autofocus: true,
+                      textCapitalization: TextCapitalization.words,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) => submit(),
+                      decoration: const InputDecoration(
+                        labelText: 'Teacher Name',
+                        prefixIcon: Icon(Icons.person_outline_rounded),
+                      ),
+                    ),
+
+                    if (dialogError != null) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        dialogError!,
+                        style: const TextStyle(
+                          color: AppTheme.danger,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(dialogContext).pop();
+                  },
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton.icon(
+                  onPressed: submit,
+                  icon: const Icon(Icons.save_outlined),
+                  label: const Text('Save Name'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    controller.dispose();
+
+    if (name == null || !mounted) {
+      return;
+    }
+
+    final month = _selectedMonth;
+
+    if (month == null) return;
+
+    final key = 'teacher-${teacher.levelGroup}-${teacher.subjectCode}';
+
+    setState(() {
+      _savingKeys.add(key);
+    });
+
+    try {
+      await _client.rpc(
+        'admin_update_fee_month_teacher_name',
+        params: {
+          'p_payment_month': month,
+          'p_level_group': teacher.levelGroup,
+          'p_subject_code': teacher.subjectCode,
+          'p_teacher_name': name,
+        },
+      );
+
+      widget.onDataChanged?.call();
+
+      await _load(preferredMonth: month);
+
+      _message('${feeSubjectLabel(teacher.subjectCode)} teacher updated.');
+    } catch (e) {
+      debugPrint('Fee teacher save error: $e');
+
+      _message('Unable to update teacher name.', error: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _savingKeys.remove(key);
+        });
+      }
+    }
+  }
+
+  Widget _distributionCard(_DistributionConfig config) {
+    final key = 'distribution-${config.levelGroup}';
+
+    final saving = _savingKeys.contains(key);
+
+    Widget value(String label, double number) {
+      return Container(
+        constraints: const BoxConstraints(minWidth: 120),
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceSoft,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppTheme.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              '${_number(number)}%',
+              style: const TextStyle(
+                color: AppTheme.fgNavyBlue,
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(15),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${config.levelGroup} Distribution',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                ElevatedButton.icon(
+                  onPressed: saving ? null : () => _editDistribution(config),
+                  icon: saving
+                      ? const SizedBox(
+                          width: 17,
+                          height: 17,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.edit_outlined),
+                  label: const Text('Edit'),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 13),
+
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                value('Teacher', config.teacher),
+                value('NTS', config.nts),
+                value('Building', config.building),
+                value('Admin', config.admin),
+                value('Organizer', config.organizer),
+                value('ECC', config.ecc),
+              ],
+            ),
+
+            const SizedBox(height: 10),
+
+            const Text(
+              'Total: 100%',
+              style: TextStyle(
+                color: AppTheme.success,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _teachersCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(15),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Financial Report Teacher Names',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+            ),
+
+            const SizedBox(height: 5),
+
+            Text(
+              'These names are stored for ${_selectedMonth ?? ''} only.',
+              style: const TextStyle(color: AppTheme.textSecondary),
+            ),
+
+            const SizedBox(height: 13),
+
+            ..._teachers.map((teacher) {
+              final key =
+                  'teacher-${teacher.levelGroup}-${teacher.subjectCode}';
+
+              final saving = _savingKeys.contains(key);
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceSoft,
+                  borderRadius: BorderRadius.circular(11),
+                  border: Border.all(color: AppTheme.border),
+                ),
+                child: ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: AppTheme.fgNavyBlue.withValues(
+                      alpha: 0.08,
+                    ),
+                    foregroundColor: AppTheme.fgNavyBlue,
+                    child: const Icon(Icons.school_outlined),
+                  ),
+                  title: Text(
+                    teacher.teacherName,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  subtitle: Text(
+                    '${teacher.levelGroup} • '
+                    '${feeSubjectLabel(teacher.subjectCode)}',
+                  ),
+                  trailing: saving
+                      ? const SizedBox(
+                          width: 25,
+                          height: 25,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : IconButton(
+                          tooltip: 'Edit Teacher Name',
+                          onPressed: () => _editTeacher(teacher),
+                          icon: const Icon(Icons.edit_outlined),
+                        ),
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_error != null) {
+      return ErrorStateView(message: _error!, onRetry: _load);
+    }
+
+    return RefreshIndicator(
+      onRefresh: () => _load(preferredMonth: _selectedMonth),
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(10, 4, 10, 30),
+        children: [
+          Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            child: Padding(
+              padding: const EdgeInsets.all(15),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.tune_rounded, color: AppTheme.fgNavyBlue),
+                      SizedBox(width: 9),
+                      Text(
+                        'Fee Setup',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 7),
+
+                  const Text(
+                    'Edit only the input values. '
+                    'Calculated fee breakdown cells remain automatic.',
+                    style: TextStyle(color: AppTheme.textSecondary),
+                  ),
+
+                  const SizedBox(height: 15),
+
+                  DropdownButtonFormField<String>(
+                    initialValue: _selectedMonth,
+                    decoration: const InputDecoration(
+                      labelText: 'Fee Month',
+                      prefixIcon: Icon(Icons.calendar_month_outlined),
+                    ),
+                    items: _months
+                        .map(
+                          (month) => DropdownMenuItem(
+                            value: month,
+                            child: Text(month),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) {
+                      if (value == null) {
+                        return;
+                      }
+
+                      _load(preferredMonth: value);
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          ..._distributions.map(_distributionCard),
+
+          const SizedBox(height: 2),
+
+          _teachersCard(),
+        ],
+      ),
+    );
+  }
+}
+
+class _DistributionConfig {
+  final String levelGroup;
+
+  final double teacher;
+  final double nts;
+  final double building;
+  final double admin;
+  final double organizer;
+  final double ecc;
+
+  const _DistributionConfig({
+    required this.levelGroup,
+    required this.teacher,
+    required this.nts,
+    required this.building,
+    required this.admin,
+    required this.organizer,
+    required this.ecc,
+  });
+
+  factory _DistributionConfig.fromJson(Map<String, dynamic> json) {
+    double n(String key) => (json[key] as num?)?.toDouble() ?? 0;
+
+    return _DistributionConfig(
+      levelGroup: json['level_group']?.toString() ?? '',
+      teacher: n('teacher_percent'),
+      nts: n('nts_percent'),
+      building: n('building_percent'),
+      admin: n('admin_percent'),
+      organizer: n('organizer_percent'),
+      ecc: n('ecc_percent'),
+    );
+  }
+}
+
+class _DistributionDraft {
+  final double teacher;
+  final double nts;
+  final double building;
+  final double admin;
+  final double organizer;
+  final double ecc;
+
+  const _DistributionDraft({
+    required this.teacher,
+    required this.nts,
+    required this.building,
+    required this.admin,
+    required this.organizer,
+    required this.ecc,
+  });
+}
+
+class _FeeTeacherConfig {
+  final String levelGroup;
+  final String subjectCode;
+  final String teacherName;
+  final int displayOrder;
+
+  const _FeeTeacherConfig({
+    required this.levelGroup,
+    required this.subjectCode,
+    required this.teacherName,
+    required this.displayOrder,
+  });
+
+  factory _FeeTeacherConfig.fromJson(Map<String, dynamic> json) {
+    return _FeeTeacherConfig(
+      levelGroup: json['level_group']?.toString() ?? '',
+      subjectCode: json['subject_code']?.toString() ?? '',
+      teacherName: json['teacher_name']?.toString() ?? '',
+      displayOrder: (json['display_order'] as num?)?.toInt() ?? 99,
+    );
+  }
+}
+
+
 lib/screens/admin/fees/fees_tab.dart:
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:printing/printing.dart';
-
+import 'fee_setup_screen.dart';
 import '../../../app_theme.dart';
 import '../../../models/fee_models.dart';
 import '../../../services/fee_service.dart';
@@ -5160,9 +6026,8 @@ import '../../../utils/dashboard_section_header.dart';
 import '../../../utils/error_state_view.dart';
 import '../../../utils/fee_month.dart';
 import '../../../utils/fee_pdf_generator.dart';
-// ignore: unused_import
-import '../../../widgets/academy_background.dart';
 import 'fee_audit_dashboard.dart';
+import '../../../utils/student_group_helper.dart';
 
 class FeesTab extends StatefulWidget {
   const FeesTab({super.key});
@@ -5191,21 +6056,18 @@ class _FeesTabState extends State<FeesTab> {
         if (!isMobile)
           const DashboardSectionHeader(
             title: 'Fee Management',
-            subtitle: 'Fee collection and financial reporting',
+            subtitle: 'Fee collection, reports and financial setup',
           ),
 
         Padding(
           padding: isMobile
               ? const EdgeInsets.fromLTRB(8, 5, 8, 5)
               : const EdgeInsets.fromLTRB(12, 8, 12, 8),
-          child: Align(
-            alignment: Alignment.centerLeft,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
             child: SegmentedButton<int>(
-              style: ButtonStyle(
-                visualDensity: isMobile
-                    ? VisualDensity.compact
-                    : VisualDensity.standard,
-              ),
+              style: const ButtonStyle(visualDensity: VisualDensity.compact),
+              showSelectedIcon: false,
               segments: const [
                 ButtonSegment<int>(
                   value: 0,
@@ -5216,6 +6078,11 @@ class _FeesTabState extends State<FeesTab> {
                   value: 1,
                   icon: Icon(Icons.analytics_outlined),
                   label: Text('Audit Reports'),
+                ),
+                ButtonSegment<int>(
+                  value: 2,
+                  icon: Icon(Icons.tune_rounded),
+                  label: Text('Fee Setup'),
                 ),
               ],
               selected: {_selectedSection},
@@ -5234,6 +6101,7 @@ class _FeesTabState extends State<FeesTab> {
             children: [
               FeeCollectionPanel(onDataChanged: _financialDataChanged),
               FeeAuditDashboard(key: ValueKey(_reportRevision)),
+              FeeSetupScreen(onDataChanged: _financialDataChanged),
             ],
           ),
         ),
@@ -5720,20 +6588,7 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
       text: dialogBatch.classLevel <= 10 ? '5500' : '6000',
     );
 
-    Set<String> selectedBaseSubjects = {};
-    late String selectedChoiceSubject;
-
-    void resetSubjectsForBatch(FeeBatch batch) {
-      if (batch.classLevel <= 10) {
-        selectedBaseSubjects = {'Phy', 'Chem', 'Math', 'Eng'};
-        selectedChoiceSubject = 'Comp';
-      } else {
-        selectedBaseSubjects = {'Phy', 'Math', 'Eng'};
-        selectedChoiceSubject = 'Chem';
-      }
-    }
-
-    resetSubjectsForBatch(dialogBatch);
+    String? selectedGroupCode;
 
     String? dialogError;
 
@@ -5743,59 +6598,16 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            const subjectOrder = ['Phy', 'Chem', 'Math', 'Eng', 'Comp', 'Bio'];
+            final groupCodes = studentGroupCodesForClass(
+              dialogBatch.classLevel,
+            );
 
-            final selectedSubjects = <String>{
-              ...selectedBaseSubjects,
-              selectedChoiceSubject,
-            };
-
-            final subjects = subjectOrder
-                .where(selectedSubjects.contains)
-                .toList();
-
-            final baseSubjects = dialogBatch.classLevel <= 10
-                ? const ['Phy', 'Chem', 'Math', 'Eng']
-                : const ['Phy', 'Math', 'Eng'];
-
-            final choiceSubjects = dialogBatch.classLevel <= 10
-                ? const ['Comp', 'Bio']
-                : const ['Chem', 'Comp', 'Bio'];
-
-            Widget subjectCheckbox(String code, {required bool exclusive}) {
-              final checked = exclusive
-                  ? selectedChoiceSubject == code
-                  : selectedBaseSubjects.contains(code);
-
-              return CheckboxListTile(
-                dense: true,
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                value: checked,
-                title: Text(feeSubjectLabel(code)),
-                onChanged: (value) {
-                  if (exclusive) {
-                    if (value == true) {
-                      setDialogState(() {
-                        selectedChoiceSubject = code;
-                        dialogError = null;
-                      });
-                    }
-                    return;
-                  }
-
-                  setDialogState(() {
-                    if (value == true) {
-                      selectedBaseSubjects.add(code);
-                    } else {
-                      selectedBaseSubjects.remove(code);
-                    }
-
-                    dialogError = null;
-                  });
-                },
-              );
-            }
+            final subjects = selectedGroupCode == null
+                ? <String>[]
+                : studentSubjectsForGroup(
+                    dialogBatch.classLevel,
+                    selectedGroupCode!,
+                  );
 
             return AlertDialog(
               title: Row(
@@ -5817,7 +6629,7 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
                 ],
               ),
               content: SizedBox(
-                width: 470,
+                width: 500,
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -5855,13 +6667,17 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
                                 ? '5500'
                                 : '6000';
 
-                            resetSubjectsForBatch(newBatch);
+                            // Force user to
+                            // confirm the group.
+                            selectedGroupCode = null;
 
                             dialogError = null;
                           });
                         },
                       ),
+
                       const SizedBox(height: 14),
+
                       TextFormField(
                         controller: nameController,
                         textCapitalization: TextCapitalization.words,
@@ -5870,7 +6686,9 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
                           prefixIcon: Icon(Icons.person),
                         ),
                       ),
+
                       const SizedBox(height: 14),
+
                       TextFormField(
                         controller: feeController,
                         keyboardType: const TextInputType.numberWithOptions(
@@ -5887,96 +6705,105 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
                               : 'HSSC suggested fee: Rs 6,000',
                         ),
                       ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Core Subjects',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.fgNavyBlue,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      LayoutBuilder(
-                        builder: (context, constraints) {
-                          final width = constraints.maxWidth >= 440
-                              ? (constraints.maxWidth - 8) / 2
-                              : constraints.maxWidth;
 
-                          return Wrap(
-                            spacing: 8,
-                            runSpacing: 2,
-                            children: baseSubjects
-                                .map(
-                                  (code) => SizedBox(
-                                    width: width,
-                                    child: subjectCheckbox(
-                                      code,
-                                      exclusive: false,
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                          );
-                        },
-                      ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 20),
+
                       Text(
                         dialogBatch.classLevel <= 10
-                            ? 'Choose Biology / Computer'
-                            : 'Choose Group Subject',
+                            ? 'Choose Group'
+                            : 'Choose HSSC Group',
                         style: const TextStyle(
-                          fontWeight: FontWeight.w700,
                           color: AppTheme.fgNavyBlue,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      LayoutBuilder(
-                        builder: (context, constraints) {
-                          final width = constraints.maxWidth >= 440
-                              ? (constraints.maxWidth - 8) / 2
-                              : constraints.maxWidth;
 
-                          return Wrap(
-                            spacing: 8,
-                            runSpacing: 2,
-                            children: choiceSubjects
-                                .map(
-                                  (code) => SizedBox(
-                                    width: width,
-                                    child: subjectCheckbox(
-                                      code,
-                                      exclusive: true,
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                          );
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Subjects',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.fgNavyBlue,
+                      const SizedBox(height: 5),
+
+                      Text(
+                        dialogBatch.classLevel <= 10
+                            ? 'Subjects will be assigned automatically.'
+                            : 'Choose only the group. The correct four subjects will be assigned automatically.',
+                        style: const TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 13,
                         ),
                       ),
-                      const SizedBox(height: 8),
+
+                      const SizedBox(height: 11),
+
                       Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: subjects
-                            .map(
-                              (subject) =>
-                                  Chip(label: Text(feeSubjectLabel(subject))),
-                            )
-                            .toList(),
+                        spacing: 9,
+                        runSpacing: 9,
+                        children: groupCodes.map((code) {
+                          final selected = selectedGroupCode == code;
+
+                          return ChoiceChip(
+                            selected: selected,
+                            avatar: Icon(
+                              selected
+                                  ? Icons.check_circle_rounded
+                                  : Icons.school_outlined,
+                              size: 18,
+                            ),
+                            label: Text(
+                              studentGroupLabel(dialogBatch.classLevel, code),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            onSelected: (value) {
+                              if (!value) {
+                                return;
+                              }
+
+                              setDialogState(() {
+                                selectedGroupCode = code;
+
+                                dialogError = null;
+                              });
+                            },
+                          );
+                        }).toList(),
                       ),
-                      const SizedBox(height: 16),
+
+                      if (subjects.isNotEmpty) ...[
+                        const SizedBox(height: 20),
+
+                        const Text(
+                          'Subjects Added Automatically',
+                          style: TextStyle(
+                            color: AppTheme.fgNavyBlue,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+
+                        const SizedBox(height: 8),
+
+                        Wrap(
+                          spacing: 7,
+                          runSpacing: 7,
+                          children: subjects.map((subject) {
+                            return Chip(
+                              avatar: const Icon(
+                                Icons.check_circle_rounded,
+                                size: 17,
+                                color: AppTheme.success,
+                              ),
+                              label: Text(feeSubjectLabel(subject)),
+                            );
+                          }).toList(),
+                        ),
+                      ],
+
+                      const SizedBox(height: 18),
+
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.green.withValues(alpha: 0.07),
+                          color: AppTheme.success.withValues(alpha: 0.07),
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: const Row(
@@ -5984,26 +6811,29 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
                           children: [
                             Icon(
                               Icons.info_outline,
-                              color: Colors.green,
+                              color: AppTheme.success,
                               size: 19,
                             ),
                             SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                'On save: student will be created, today\'s attendance will be marked Present, and the selected fee month will start as Unpaid.',
-                                style: TextStyle(fontSize: 12),
+                                'On save: student will be created, '
+                                'today attendance will be Present, '
+                                'and the selected fee month will start as Unpaid.',
+                                style: TextStyle(fontSize: 12.5, height: 1.45),
                               ),
                             ),
                           ],
                         ),
                       ),
+
                       if (dialogError != null) ...[
                         const SizedBox(height: 12),
                         Text(
                           dialogError!,
                           style: const TextStyle(
-                            color: Colors.red,
-                            fontWeight: FontWeight.w600,
+                            color: AppTheme.danger,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ],
@@ -6042,6 +6872,30 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
                       return;
                     }
 
+                    if (selectedGroupCode == null) {
+                      setDialogState(() {
+                        dialogError = dialogBatch.classLevel <= 10
+                            ? 'Please choose Computer or Biology.'
+                            : 'Please choose FCS, Pre-Engineering or Pre-Medical.';
+                      });
+
+                      return;
+                    }
+
+                    final subjects = studentSubjectsForGroup(
+                      dialogBatch.classLevel,
+                      selectedGroupCode!,
+                    );
+
+                    if (subjects.isEmpty) {
+                      setDialogState(() {
+                        dialogError =
+                            'Unable to determine subjects for this group.';
+                      });
+
+                      return;
+                    }
+
                     Navigator.pop(
                       dialogContext,
                       _NewFeeStudentRequest(
@@ -6061,10 +6915,11 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
     );
 
     nameController.dispose();
-
     feeController.dispose();
 
-    if (request == null) return;
+    if (request == null) {
+      return;
+    }
 
     await _addStudent(request);
   }
@@ -7610,7 +8465,7 @@ class _FundPayoutCard extends StatelessWidget {
 lib/screens/admin/students_tab.dart:
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import '../../utils/student_group_helper.dart';
 import '../../app_theme.dart';
 import '../../utils/dashboard_section_header.dart';
 import '../../utils/error_state_view.dart';
@@ -7994,96 +8849,44 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
 
     final existingSubjects = _subjects(student['stream']);
 
-    Set<String> selectedBaseSubjects = {};
-    String? selectedChoiceSubject;
+    // XII Girls ke existing special
+    // single-subject records ko preserve karo.
+    final isSingleSubject =
+        widget.classLevel == 12 && existingSubjects.length == 1;
 
-    if (widget.classLevel == 9 || widget.classLevel == 10) {
-      selectedBaseSubjects = existingSubjects
-          .where(
-            (subject) => const {'Phy', 'Chem', 'Math', 'Eng'}.contains(subject),
-          )
-          .toSet();
-
-      if (existingSubjects.contains('Comp')) {
-        selectedChoiceSubject = 'Comp';
-      } else if (existingSubjects.contains('Bio')) {
-        selectedChoiceSubject = 'Bio';
-      }
-    } else {
-      selectedBaseSubjects = existingSubjects
-          .where((subject) => const {'Phy', 'Math', 'Eng'}.contains(subject))
-          .toSet();
-
-      if (existingSubjects.contains('Chem')) {
-        selectedChoiceSubject = 'Chem';
-      } else if (existingSubjects.contains('Comp')) {
-        selectedChoiceSubject = 'Comp';
-      } else if (existingSubjects.contains('Bio')) {
-        selectedChoiceSubject = 'Bio';
-      }
-    }
+    String? selectedGroupCode = isSingleSubject
+        ? null
+        : inferStudentGroupCode(widget.classLevel, existingSubjects);
 
     String status = student['status']?.toString() == 'trial'
         ? 'trial'
         : 'enrolled';
+
     List<String> selectedSubjectsForSave = [];
+
     String? dialogError;
 
     final confirmed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            final baseSubjects = widget.classLevel <= 10
-                ? const ['Phy', 'Chem', 'Math', 'Eng']
-                : const ['Phy', 'Math', 'Eng'];
-            final choiceSubjects = widget.classLevel <= 10
-                ? const ['Comp', 'Bio']
-                : const ['Chem', 'Comp', 'Bio'];
+            final groupCodes = studentGroupCodesForClass(widget.classLevel);
 
-            Widget subjectCheckbox(String code, {required bool exclusive}) {
-              final checked = exclusive
-                  ? selectedChoiceSubject == code
-                  : selectedBaseSubjects.contains(code);
-
-              return CheckboxListTile(
-                dense: true,
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                visualDensity: VisualDensity.compact,
-                value: checked,
-                title: Text(
-                  _subjectLabel(code),
-                  style: const TextStyle(fontSize: 14),
-                ),
-                onChanged: (value) {
-                  if (exclusive) {
-                    if (value == true) {
-                      setDialogState(() {
-                        selectedChoiceSubject = code;
-                        dialogError = null;
-                      });
-                    }
-                    return;
-                  }
-
-                  setDialogState(() {
-                    if (value == true) {
-                      selectedBaseSubjects.add(code);
-                    } else {
-                      selectedBaseSubjects.remove(code);
-                    }
-
-                    dialogError = null;
-                  });
-                },
-              );
-            }
+            final subjects = isSingleSubject
+                ? List<String>.from(existingSubjects)
+                : selectedGroupCode == null
+                ? <String>[]
+                : studentSubjectsForGroup(
+                    widget.classLevel,
+                    selectedGroupCode!,
+                  );
 
             return AlertDialog(
               title: const Text('Edit Student'),
               content: SizedBox(
-                width: 430,
+                width: 500,
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -8101,7 +8904,6 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                       const SizedBox(height: 14),
 
                       DropdownButtonFormField<String>(
-                        key: ValueKey(status),
                         initialValue: status,
                         decoration: const InputDecoration(
                           labelText: 'Status',
@@ -8127,92 +8929,143 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                           });
                         },
                       ),
-                      const SizedBox(height: 16),
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: AppTheme.fgNavyBlue.withValues(alpha: 0.04),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: AppTheme.border),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            const Text(
-                              'Core Subjects',
-                              style: TextStyle(
-                                color: AppTheme.fgNavyBlue,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            LayoutBuilder(
-                              builder: (context, constraints) {
-                                final width = constraints.maxWidth >= 520
-                                    ? (constraints.maxWidth - 8) / 2
-                                    : constraints.maxWidth;
 
-                                return Wrap(
-                                  spacing: 8,
-                                  runSpacing: 2,
-                                  children: baseSubjects
-                                      .map(
-                                        (code) => SizedBox(
-                                          width: width,
-                                          child: subjectCheckbox(
-                                            code,
-                                            exclusive: false,
-                                          ),
-                                        ),
-                                      )
-                                      .toList(),
-                                );
-                              },
-                            ),
-                            const SizedBox(height: 10),
-                            Text(
-                              widget.classLevel <= 10
-                                  ? 'Choose Biology / Computer'
-                                  : 'Choose Group Subject',
-                              style: const TextStyle(
-                                color: AppTheme.fgNavyBlue,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            LayoutBuilder(
-                              builder: (context, constraints) {
-                                final width = constraints.maxWidth >= 520
-                                    ? (constraints.maxWidth - 8) / 2
-                                    : constraints.maxWidth;
+                      const SizedBox(height: 20),
 
-                                return Wrap(
-                                  spacing: 8,
-                                  runSpacing: 2,
-                                  children: choiceSubjects
-                                      .map(
-                                        (code) => SizedBox(
-                                          width: width,
-                                          child: subjectCheckbox(
-                                            code,
-                                            exclusive: true,
-                                          ),
-                                        ),
-                                      )
-                                      .toList(),
-                                );
-                              },
+                      if (isSingleSubject) ...[
+                        Container(
+                          padding: const EdgeInsets.all(13),
+                          decoration: BoxDecoration(
+                            color: AppTheme.warning.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(11),
+                            border: Border.all(
+                              color: AppTheme.warning.withValues(alpha: 0.25),
                             ),
-                          ],
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Row(
+                                children: [
+                                  Icon(
+                                    Icons.info_outline_rounded,
+                                    color: AppTheme.warning,
+                                  ),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'Single Subject Student',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Existing subject: '
+                                '${_subjectLabel(existingSubjects.first)}',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 5),
+                              const Text(
+                                'This special XII record will keep its existing single subject.',
+                                style: TextStyle(color: AppTheme.textSecondary),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      if (dialogError != null) ...[
+                      ] else ...[
+                        Text(
+                          widget.classLevel <= 10
+                              ? 'Student Group'
+                              : 'HSSC Group',
+                          style: const TextStyle(
+                            color: AppTheme.fgNavyBlue,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+
+                        const SizedBox(height: 5),
+
+                        Text(
+                          widget.classLevel <= 10
+                              ? 'Choose Computer or Biology. Subjects are fixed automatically.'
+                              : 'Choose FCS, Pre-Engineering or Pre-Medical. Correct subjects are fixed automatically.',
+                          style: const TextStyle(
+                            color: AppTheme.textSecondary,
+                            fontSize: 13,
+                          ),
+                        ),
+
                         const SizedBox(height: 10),
+
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: groupCodes.map((code) {
+                            return ChoiceChip(
+                              selected: selectedGroupCode == code,
+                              label: Text(
+                                studentGroupLabel(widget.classLevel, code),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              onSelected: (selected) {
+                                if (!selected) {
+                                  return;
+                                }
+
+                                setDialogState(() {
+                                  selectedGroupCode = code;
+
+                                  dialogError = null;
+                                });
+                              },
+                            );
+                          }).toList(),
+                        ),
+
+                        if (subjects.isNotEmpty) ...[
+                          const SizedBox(height: 18),
+
+                          const Text(
+                            'Subjects',
+                            style: TextStyle(
+                              color: AppTheme.fgNavyBlue,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+
+                          const SizedBox(height: 8),
+
+                          Wrap(
+                            spacing: 7,
+                            runSpacing: 7,
+                            children: subjects.map((code) {
+                              return Chip(
+                                avatar: const Icon(
+                                  Icons.check_circle_rounded,
+                                  color: AppTheme.success,
+                                  size: 17,
+                                ),
+                                label: Text(_subjectLabel(code)),
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                      ],
+
+                      if (dialogError != null) ...[
+                        const SizedBox(height: 12),
                         Text(
                           dialogError!,
                           style: const TextStyle(
                             color: AppTheme.danger,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ],
@@ -8225,41 +9078,47 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                   onPressed: () => Navigator.pop(dialogContext, false),
                   child: const Text('Cancel'),
                 ),
+
                 ElevatedButton.icon(
                   onPressed: () {
                     if (controller.text.trim().isEmpty) {
                       setDialogState(() {
                         dialogError = 'Student name is required.';
                       });
+
                       return;
                     }
 
-                    const subjectOrder = [
-                      'Phy',
-                      'Chem',
-                      'Math',
-                      'Eng',
-                      'Comp',
-                      'Bio',
-                    ];
-                    final selectedSubjects = <String>{
-                      ...selectedBaseSubjects,
-                      if (selectedChoiceSubject != null) selectedChoiceSubject!,
-                    };
-                    final subjects = subjectOrder
-                        .where(selectedSubjects.contains)
-                        .toList();
+                    if (isSingleSubject) {
+                      selectedSubjectsForSave = List<String>.from(
+                        existingSubjects,
+                      );
+                    } else {
+                      if (selectedGroupCode == null) {
+                        setDialogState(() {
+                          dialogError = widget.classLevel <= 10
+                              ? 'Please choose Computer or Biology.'
+                              : 'Please choose FCS, Pre-Engineering or Pre-Medical.';
+                        });
 
-                    if (subjects.isEmpty) {
+                        return;
+                      }
+
+                      selectedSubjectsForSave = studentSubjectsForGroup(
+                        widget.classLevel,
+                        selectedGroupCode!,
+                      );
+                    }
+
+                    if (selectedSubjectsForSave.isEmpty) {
                       setDialogState(() {
-                        dialogError = 'Select at least one subject.';
+                        dialogError = 'Unable to determine student subjects.';
                       });
+
                       return;
                     }
 
                     Navigator.pop(dialogContext, true);
-
-                    selectedSubjectsForSave = subjects;
                   },
                   icon: const Icon(Icons.save_outlined),
                   label: const Text('Save'),
@@ -8272,7 +9131,6 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
     );
 
     final name = controller.text.trim();
-    final subjects = selectedSubjectsForSave;
 
     controller.dispose();
 
@@ -8291,7 +9149,7 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
           'p_student_id': student['id'].toString(),
           'p_name': name,
           'p_status': status,
-          'p_stream': subjects,
+          'p_stream': selectedSubjectsForSave,
         },
       );
 
@@ -8315,8 +9173,8 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Could not update student.'),
+        SnackBar(
+          content: Text('Could not update student.\n$e'),
           backgroundColor: AppTheme.danger,
         ),
       );
@@ -9326,9 +10184,573 @@ class _TeachersTabState extends State<TeachersTab> {
 }
 
 
+lib/screens/award_history_screen.dart:
+import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../app_theme.dart';
+import '../models/fee_models.dart';
+import '../models/portal_user.dart';
+import 'award_list_preview_screen.dart';
+import 'award_progress_screen.dart';
+
+class AwardHistoryScreen extends StatelessWidget {
+  final SupabaseClient supabase;
+  final PortalUser? user;
+
+  final Map<String, dynamic> batch;
+
+  final String subjectCode;
+
+  final List<Map<String, dynamic>> tests;
+
+  const AwardHistoryScreen({
+    super.key,
+    required this.supabase,
+    required this.user,
+    required this.batch,
+    required this.subjectCode,
+    required this.tests,
+  });
+
+  String _formatMarks(double value) {
+    if (value == value.roundToDouble()) {
+      return value.toStringAsFixed(0);
+    }
+
+    return value.toStringAsFixed(2);
+  }
+
+  void _openTestPreview(BuildContext context, Map<String, dynamic> test) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AwardListPreviewScreen(
+          supabase: supabase,
+          user: user,
+          batch: batch,
+          test: test,
+          subjectCode: subjectCode,
+        ),
+      ),
+    );
+  }
+
+  void _openProgress(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AwardProgressScreen(
+          supabase: supabase,
+          user: user,
+          batch: batch,
+          subjectCode: subjectCode,
+          tests: tests,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF7F8FA),
+      appBar: AppBar(title: const Text('Award List History')),
+      body: tests.isEmpty
+          ? const Center(child: Text('No previous tests found.'))
+          : ListView(
+              padding: const EdgeInsets.all(12),
+              children: [
+                Card(
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () {
+                      _openProgress(context);
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 52,
+                            height: 52,
+                            decoration: BoxDecoration(
+                              color: AppTheme.fgNavyBlue.withValues(
+                                alpha: 0.08,
+                              ),
+                              borderRadius: BorderRadius.circular(13),
+                            ),
+                            child: const Icon(
+                              Icons.trending_up_rounded,
+                              color: AppTheme.fgNavyBlue,
+                              size: 29,
+                            ),
+                          ),
+                          const SizedBox(width: 13),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'All Tests Progress',
+                                  style: TextStyle(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '${batch['name']} • '
+                                  '${feeSubjectLabel(subjectCode)} • '
+                                  'T1 to T${tests.length}',
+                                  style: const TextStyle(
+                                    color: AppTheme.textSecondary,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Icon(Icons.chevron_right_rounded),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(4, 17, 4, 9),
+                  child: Text(
+                    'Individual Tests',
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w900,
+                      color: AppTheme.fgNavyBlue,
+                    ),
+                  ),
+                ),
+
+                ...tests.map((test) {
+                  final testNo = (test['test_no'] as num?)?.toInt() ?? 0;
+
+                  final maxMarks = (test['max_marks'] as num?)?.toDouble() ?? 0;
+
+                  final date = DateTime.tryParse(
+                    test['test_date']?.toString() ?? '',
+                  );
+
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 23,
+                            backgroundColor: AppTheme.fgNavyBlue.withValues(
+                              alpha: 0.08,
+                            ),
+                            foregroundColor: AppTheme.fgNavyBlue,
+                            child: Text(
+                              'T$testNo',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '${batch['name']} • '
+                                  '${feeSubjectLabel(subjectCode)}',
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 5),
+                                Text(
+                                  '${date == null ? '-' : DateFormat('dd MMM yyyy').format(date)}'
+                                  ' • Total: ${_formatMarks(maxMarks)}',
+                                  style: const TextStyle(
+                                    color: AppTheme.textSecondary,
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Preview & Share',
+                            onPressed: () {
+                              _openTestPreview(context, test);
+                            },
+                            icon: const FaIcon(
+                              FontAwesomeIcons.whatsapp,
+                              color: Color(0xFF25D366),
+                              size: 23,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+              ],
+            ),
+    );
+  }
+}
+
+
+lib/screens/award_list_preview_screen.dart:
+import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../app_theme.dart';
+import '../models/fee_models.dart';
+import '../models/portal_user.dart';
+import '../services/award_share_service.dart';
+
+class AwardListPreviewScreen extends StatefulWidget {
+  final SupabaseClient supabase;
+
+  final PortalUser? user;
+
+  final Map<String, dynamic> batch;
+
+  final Map<String, dynamic> test;
+
+  final String subjectCode;
+
+  const AwardListPreviewScreen({
+    super.key,
+    required this.supabase,
+    required this.user,
+    required this.batch,
+    required this.test,
+    required this.subjectCode,
+  });
+
+  @override
+  State<AwardListPreviewScreen> createState() => _AwardListPreviewScreenState();
+}
+
+class _AwardListPreviewScreenState extends State<AwardListPreviewScreen> {
+  final AwardShareService _shareService = AwardShareService();
+
+  PreparedAwardShare? _prepared;
+
+  bool _loading = true;
+  bool _sharing = false;
+
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _loadPreview();
+  }
+
+  Future<void> _loadPreview() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+
+    try {
+      final result = await _shareService.prepareAwardList(
+        supabase: widget.supabase,
+        user: widget.user,
+        batch: widget.batch,
+        test: widget.test,
+        subjectCode: widget.subjectCode,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _prepared = result;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('Award preview error: $e');
+
+      if (!mounted) return;
+
+      setState(() {
+        _loading = false;
+
+        _error =
+            'Could not generate '
+            'award-list preview.';
+      });
+    }
+  }
+
+  Future<void> _share() async {
+    final prepared = _prepared;
+
+    if (prepared == null) {
+      return;
+    }
+
+    setState(() {
+      _sharing = true;
+    });
+
+    try {
+      await _shareService.sharePreparedAwardList(prepared);
+    } catch (e) {
+      debugPrint('Award sharing error: $e');
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Could not share '
+            'award-list PNG.\n$e',
+          ),
+          backgroundColor: AppTheme.danger,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _sharing = false;
+        });
+      }
+    }
+  }
+
+  String get _testLabel {
+    final number = (widget.test['test_no'] as num?)?.toInt() ?? 0;
+
+    return 'T$number';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF1F3F5),
+
+      appBar: AppBar(
+        title: const Text('Award List Preview'),
+
+        actions: [
+          IconButton(
+            tooltip: 'Regenerate Preview',
+            onPressed: _loading ? null : _loadPreview,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+        ],
+      ),
+
+      body: Column(
+        children: [
+          _buildInfoBar(),
+
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                ? _buildError()
+                : _buildPreview(),
+          ),
+
+          if (!_loading && _error == null && _prepared != null)
+            _buildShareBar(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoBar() {
+    return Container(
+      width: double.infinity,
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
+      child: Wrap(
+        spacing: 7,
+        runSpacing: 7,
+        children: [
+          _PreviewInfoChip(
+            icon: Icons.class_outlined,
+            label: widget.batch['name']?.toString() ?? 'Batch',
+          ),
+
+          _PreviewInfoChip(
+            icon: Icons.menu_book_outlined,
+            label: feeSubjectLabel(widget.subjectCode),
+          ),
+
+          _PreviewInfoChip(icon: Icons.assignment_outlined, label: _testLabel),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPreview() {
+    final prepared = _prepared!;
+
+    return Padding(
+      padding: const EdgeInsets.all(10),
+      child: Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: const Color(0xFFDCE0E4),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppTheme.border),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InteractiveViewer(
+          minScale: 0.4,
+          maxScale: 5,
+          boundaryMargin: const EdgeInsets.all(140),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Image.memory(
+                prepared.pngBytes,
+                fit: BoxFit.contain,
+                gaplessPlayback: true,
+                filterQuality: FilterQuality.high,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildError() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.image_not_supported_outlined,
+              size: 54,
+              color: AppTheme.danger,
+            ),
+
+            const SizedBox(height: 12),
+
+            Text(
+              _error!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+
+            const SizedBox(height: 16),
+
+            ElevatedButton.icon(
+              onPressed: _loadPreview,
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Try Again'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildShareBar() {
+    return SafeArea(
+      top: false,
+      child: Container(
+        width: double.infinity,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          border: Border(top: BorderSide(color: AppTheme.border)),
+        ),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+        child: Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Pinch to zoom. '
+                'This exact PNG '
+                'will be shared.',
+                style: TextStyle(
+                  color: AppTheme.textSecondary,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+
+            const SizedBox(width: 10),
+
+            ElevatedButton.icon(
+              onPressed: _sharing ? null : _share,
+              icon: _sharing
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : const FaIcon(FontAwesomeIcons.whatsapp, size: 17),
+              label: Text(_sharing ? 'Opening...' : 'Share PNG'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PreviewInfoChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _PreviewInfoChip({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceSoft,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: AppTheme.fgNavyBlue),
+
+          const SizedBox(width: 6),
+
+          Text(
+            label,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
 lib/screens/award_lists_screen.dart:
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -9336,9 +10758,11 @@ import '../app_theme.dart';
 import '../models/fee_models.dart';
 import '../models/portal_user.dart';
 import '../services/auth_service.dart';
+import 'award_list_preview_screen.dart';
 import '../utils/dashboard_section_header.dart';
 import '../utils/error_state_view.dart';
 import '../utils/list_sorting.dart';
+import 'award_history_screen.dart';
 
 class AwardListsScreen extends StatefulWidget {
   final String userRole;
@@ -9351,33 +10775,27 @@ class AwardListsScreen extends StatefulWidget {
 
 class _AwardListsScreenState extends State<AwardListsScreen> {
   final SupabaseClient _supabase = Supabase.instance.client;
-
   final AuthService _authService = AuthService();
 
   PortalUser? _user;
 
   List<Map<String, dynamic>> _batches = [];
-
   List<Map<String, dynamic>> _tests = [];
-
   List<_AwardStudentRow> _students = [];
 
   final Map<String, String> _draftMarks = {};
+  final Map<String, TextEditingController> _markControllers = {};
+
+  final Map<String, FocusNode> _markFocusNodes = {};
 
   String? _selectedBatchId;
-
   String? _selectedSubject;
-
   String? _selectedTestId;
 
   bool _loading = true;
-
   bool _loadingTests = false;
-
   bool _loadingStudents = false;
-
   bool _creatingTest = false;
-
   bool _saving = false;
 
   String? _error;
@@ -9395,7 +10813,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
   Map<String, dynamic>? get _selectedBatch {
     final id = _selectedBatchId;
-
     if (id == null) return null;
 
     for (final batch in _batches) {
@@ -9409,7 +10826,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
   Map<String, dynamic>? get _selectedTest {
     final id = _selectedTestId;
-
     if (id == null) return null;
 
     for (final test in _tests) {
@@ -9430,8 +10846,20 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
   @override
   void initState() {
     super.initState();
-
     _bootstrap();
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _markControllers.values) {
+      controller.dispose();
+    }
+
+    for (final focusNode in _markFocusNodes.values) {
+      focusNode.dispose();
+    }
+
+    super.dispose();
   }
 
   Future<void> _bootstrap() async {
@@ -9455,13 +10883,11 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       if (!user.isAdmin) {
         final allowedLevels = user.classLevels.toSet();
 
-        batches = batches
-            .where(
-              (batch) => allowedLevels.contains(
-                (batch['class_level'] as num?)?.toInt(),
-              ),
-            )
-            .toList();
+        batches = batches.where((batch) {
+          return allowedLevels.contains(
+            (batch['class_level'] as num?)?.toInt(),
+          );
+        }).toList();
       }
 
       batches = sortBatches(
@@ -9482,15 +10908,10 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
       setState(() {
         _user = user;
-
         _batches = batches;
-
         _selectedBatchId = firstBatch?['id']?.toString();
-
         _selectedSubject = firstSubjects.isEmpty ? null : firstSubjects.first;
-
         _loading = false;
-
         _error = null;
       });
 
@@ -9502,7 +10923,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
       setState(() {
         _loading = false;
-
         _error = 'Unable to load Award Lists.';
       });
     }
@@ -9530,17 +10950,12 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
   List<String> get _availableSubjects {
     final user = _user;
-
-    if (user == null) {
-      return const [];
-    }
-
+    if (user == null) return const [];
     return _subjectsFor(user: user, classLevel: _selectedClassLevel);
   }
 
   Future<void> _changeBatch(String batchId) async {
     final user = _user;
-
     if (user == null) return;
 
     final batch = _batches.firstWhere(
@@ -9553,15 +10968,10 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
     setState(() {
       _selectedBatchId = batchId;
-
       _selectedSubject = subjects.isEmpty ? null : subjects.first;
-
       _selectedTestId = null;
-
       _tests = [];
-
       _students = [];
-
       _draftMarks.clear();
     });
 
@@ -9571,13 +10981,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
   Future<void> _changeSubject(String subject) async {
     setState(() {
       _selectedSubject = subject;
-
       _selectedTestId = null;
-
       _tests = [];
-
       _students = [];
-
       _draftMarks.clear();
     });
 
@@ -9586,18 +10992,14 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
   Future<void> _loadTests({String? selectTestId}) async {
     final batchId = _selectedBatchId;
-
     final subject = _selectedSubject;
 
     if (batchId == null || subject == null) {
       if (mounted) {
         setState(() {
           _tests = [];
-
           _selectedTestId = null;
-
           _students = [];
-
           _draftMarks.clear();
         });
       }
@@ -9613,9 +11015,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       final response = await _supabase
           .from('award_tests')
           .select(
-            'id, batch_id, subject_code, '
-            'test_no, test_date, '
-            'max_marks, created_at',
+            'id, batch_id, subject_code, test_no, test_date, max_marks, created_at',
           )
           .eq('batch_id', batchId)
           .eq('subject_code', subject)
@@ -9636,9 +11036,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
       setState(() {
         _tests = tests;
-
         _selectedTestId = selectedId;
-
         _loadingTests = false;
       });
 
@@ -9656,13 +11054,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     }
   }
 
-  // ==========================================================
-  // LOAD ALL STUDENTS FOR SELECTED BATCH + SUBJECT
-  //
-  // IMPORTANT:
-  // Attendance is intentionally NOT queried here.
-  // ==========================================================
-
   Future<void> _loadTestStudents() async {
     final test = _selectedTest;
 
@@ -9672,10 +11063,11 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       if (mounted) {
         setState(() {
           _students = [];
-
           _draftMarks.clear();
         });
       }
+
+      _clearMarkInputs();
 
       return;
     }
@@ -9698,7 +11090,11 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
         _supabase
             .from('award_marks')
-            .select('student_id, marks')
+            .select(
+              'student_id, '
+              'marks, '
+              'is_absent',
+            )
             .eq('test_id', testId),
       ]);
 
@@ -9708,12 +11104,20 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
       final marksByStudent = <String, double>{};
 
+      final absentByStudent = <String, bool>{};
+
       for (final row in marks) {
         final studentId = row['student_id']?.toString();
 
+        if (studentId == null) {
+          continue;
+        }
+
+        absentByStudent[studentId] = row['is_absent'] == true;
+
         final value = (row['marks'] as num?)?.toDouble();
 
-        if (studentId != null && value != null) {
+        if (value != null) {
           marksByStudent[studentId] = value;
         }
       }
@@ -9731,8 +11135,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
             ? rawStream.map((item) => item.toString()).toList()
             : <String>[];
 
-        // Only subject filtering remains.
-        // Attendance is intentionally ignored.
         if (!stream.contains(subject)) {
           continue;
         }
@@ -9742,17 +11144,12 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
             id: id,
             name: student['name']?.toString() ?? 'Student',
             savedMarks: marksByStudent[id],
+            isAbsent: absentByStudent[id] ?? false,
           ),
         );
       }
 
-      _draftMarks.clear();
-
-      for (final student in eligible) {
-        final saved = student.savedMarks;
-
-        _draftMarks[student.id] = saved == null ? '' : _formatNumber(saved);
-      }
+      _syncMarkInputs(eligible);
 
       if (!mounted) return;
 
@@ -9770,7 +11167,11 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
         _loadingStudents = false;
       });
 
-      _showMessage('Could not load test students.', error: true);
+      _showMessage(
+        'Could not load '
+        'test students.',
+        error: true,
+      );
     }
   }
 
@@ -9782,21 +11183,181 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     return value.toStringAsFixed(2);
   }
 
+  void _clearMarkInputs() {
+    for (final controller in _markControllers.values) {
+      controller.dispose();
+    }
+
+    for (final focusNode in _markFocusNodes.values) {
+      focusNode.dispose();
+    }
+
+    _markControllers.clear();
+
+    _markFocusNodes.clear();
+  }
+
+  void _syncMarkInputs(List<_AwardStudentRow> students) {
+    final activeIds = students.map((student) => student.id).toSet();
+
+    final removedControllerIds = _markControllers.keys
+        .where((id) => !activeIds.contains(id))
+        .toList();
+
+    for (final id in removedControllerIds) {
+      _markControllers.remove(id)?.dispose();
+    }
+
+    final removedFocusIds = _markFocusNodes.keys
+        .where((id) => !activeIds.contains(id))
+        .toList();
+
+    for (final id in removedFocusIds) {
+      _markFocusNodes.remove(id)?.dispose();
+    }
+
+    _draftMarks.clear();
+
+    for (final student in students) {
+      final value = student.isAbsent
+          ? 'A'
+          : student.savedMarks == null
+          ? ''
+          : _formatNumber(student.savedMarks!);
+
+      final controller = _markControllers.putIfAbsent(
+        student.id,
+        () => TextEditingController(),
+      );
+
+      controller.value = TextEditingValue(
+        text: value,
+        selection: TextSelection.collapsed(offset: value.length),
+      );
+
+      _markFocusNodes.putIfAbsent(student.id, () => FocusNode());
+
+      _draftMarks[student.id] = value;
+    }
+  }
+
+  void _focusNextStudent(String currentStudentId) {
+    final currentIndex = _students.indexWhere(
+      (student) => student.id == currentStudentId,
+    );
+
+    if (currentIndex < 0) {
+      return;
+    }
+
+    final nextIndex = currentIndex + 1;
+
+    if (nextIndex >= _students.length) {
+      _markFocusNodes[currentStudentId]?.unfocus();
+
+      return;
+    }
+
+    final nextStudent = _students[nextIndex];
+
+    final nextFocus = _markFocusNodes[nextStudent.id];
+
+    if (nextFocus == null) {
+      return;
+    }
+
+    Future<void>.delayed(const Duration(milliseconds: 70), () {
+      if (!mounted) return;
+
+      nextFocus.requestFocus();
+
+      final controller = _markControllers[nextStudent.id];
+
+      if (controller != null) {
+        controller.selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: controller.text.length,
+        );
+      }
+    });
+  }
+
+  bool _shouldAutoAdvance({required String value, required double maxMarks}) {
+    final clean = value.trim();
+
+    if (clean.isEmpty) {
+      return false;
+    }
+
+    // Decimal marks are still supported,
+    // but we do not auto-jump while
+    // someone may still be typing .5.
+    if (clean.contains('.')) {
+      return false;
+    }
+
+    // For a 100+ marks paper we cannot
+    // assume two digits means finished.
+    if (maxMarks >= 100) {
+      return false;
+    }
+
+    if (clean.length != 2) {
+      return false;
+    }
+
+    final marks = double.tryParse(clean);
+
+    if (marks == null) {
+      return false;
+    }
+
+    return marks >= 0 && marks <= maxMarks;
+  }
+
+  void _handleMarkChanged(
+    _AwardStudentRow student,
+    String value,
+    double maxMarks,
+  ) {
+    final clean = value.trim();
+
+    _draftMarks[student.id] = clean;
+
+    if (_shouldAutoAdvance(value: clean, maxMarks: maxMarks)) {
+      _focusNextStudent(student.id);
+    }
+  }
+
+  void _markStudentAbsent(_AwardStudentRow student) {
+    final controller = _markControllers[student.id];
+
+    if (controller == null) {
+      return;
+    }
+
+    controller.value = const TextEditingValue(
+      text: 'A',
+      selection: TextSelection.collapsed(offset: 1),
+    );
+
+    _draftMarks[student.id] = 'A';
+
+    _focusNextStudent(student.id);
+  }
+
   Future<void> _createTest() async {
     final batchId = _selectedBatchId;
-
     final subject = _selectedSubject;
 
     if (batchId == null || subject == null) {
       _showMessage('Select a batch and subject first.', error: true);
-
       return;
     }
 
     DateTime selectedDate = DateTime.now();
 
     final maxMarksController = TextEditingController(text: '20');
-
     String? dialogError;
 
     final request = await showDialog<_NewAwardTest>(
@@ -9816,7 +11377,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
               if (date != null) {
                 setDialogState(() {
                   selectedDate = date;
-
                   dialogError = null;
                 });
               }
@@ -9843,9 +11403,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                       trailing: const Icon(Icons.edit_calendar_outlined),
                       onTap: chooseDate,
                     ),
-
                     const SizedBox(height: 12),
-
                     TextFormField(
                       controller: maxMarksController,
                       keyboardType: const TextInputType.numberWithOptions(
@@ -9860,9 +11418,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                         hintText: '20',
                       ),
                     ),
-
                     const SizedBox(height: 14),
-
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
@@ -9876,10 +11432,8 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                         style: TextStyle(fontSize: 13.5, height: 1.45),
                       ),
                     ),
-
                     if (dialogError != null) ...[
                       const SizedBox(height: 12),
-
                       Text(
                         dialogError!,
                         style: const TextStyle(
@@ -9893,12 +11447,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () {
-                    Navigator.pop(dialogContext);
-                  },
+                  onPressed: () => Navigator.pop(dialogContext),
                   child: const Text('Cancel'),
                 ),
-
                 ElevatedButton.icon(
                   onPressed: () {
                     final maxMarks = double.tryParse(
@@ -9909,7 +11460,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                       setDialogState(() {
                         dialogError = 'Enter valid total marks.';
                       });
-
                       return;
                     }
 
@@ -9958,7 +11508,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       _showMessage('New test created successfully.');
     } catch (e) {
       debugPrint('Create award test error: $e');
-
       _showMessage(_friendlyError(e), error: true);
     } finally {
       if (mounted) {
@@ -9972,45 +11521,79 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
   Future<void> _saveMarks() async {
     final test = _selectedTest;
 
-    if (test == null) return;
+    if (test == null) {
+      return;
+    }
 
     final maxMarks = (test['max_marks'] as num).toDouble();
 
     final payload = <Map<String, dynamic>>[];
 
     for (final student in _students) {
-      final value = _draftMarks[student.id]?.trim() ?? '';
+      final controller = _markControllers[student.id];
+
+      final value = (controller?.text ?? _draftMarks[student.id] ?? '')
+          .trim()
+          .toUpperCase();
 
       if (value.isEmpty) {
+        continue;
+      }
+
+      if (value == 'A') {
+        payload.add({
+          'student_id': student.id,
+          'marks': null,
+          'is_absent': true,
+        });
+
         continue;
       }
 
       final marks = double.tryParse(value);
 
       if (marks == null) {
-        _showMessage('Invalid marks for ${student.name}.', error: true);
-
-        return;
-      }
-
-      if (marks < 0 || marks > maxMarks) {
         _showMessage(
-          '${student.name}: marks must be between '
-          '0 and ${_formatNumber(maxMarks)}.',
+          'Invalid marks for '
+          '${student.name}.',
           error: true,
         );
 
         return;
       }
 
-      payload.add({'student_id': student.id, 'marks': marks});
+      if (marks < 0 || marks > maxMarks) {
+        _showMessage(
+          '${student.name}: '
+          'marks must be between '
+          '0 and '
+          '${_formatNumber(maxMarks)}.',
+          error: true,
+        );
+
+        _markFocusNodes[student.id]?.requestFocus();
+
+        return;
+      }
+
+      payload.add({
+        'student_id': student.id,
+        'marks': marks,
+        'is_absent': false,
+      });
     }
 
     if (payload.isEmpty) {
-      _showMessage('Enter at least one student mark.', error: true);
+      _showMessage(
+        'Enter at least one '
+        'student mark.',
+        error: true,
+      );
 
       return;
     }
+
+    FocusScope.of(context).unfocus();
 
     setState(() {
       _saving = true;
@@ -10024,7 +11607,13 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
       await _loadTestStudents();
 
-      _showMessage('${result ?? payload.length} mark(s) saved.');
+      if (!mounted) {
+        return;
+      }
+
+      await _showSavedSuccessSheet(
+        savedCount: result is num ? result.toInt() : payload.length,
+      );
     } catch (e) {
       debugPrint('Save award marks error: $e');
 
@@ -10038,9 +11627,131 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     }
   }
 
+  Future<void> _showSavedSuccessSheet({required int savedCount}) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: false,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 54,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.black12,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const CircleAvatar(
+                  radius: 26,
+                  backgroundColor: AppTheme.success,
+                  child: Icon(
+                    Icons.check_rounded,
+                    color: Colors.white,
+                    size: 30,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Award List Saved',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '$savedCount mark(s) saved successfully.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: AppTheme.textSecondary,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          Navigator.pop(sheetContext);
+                        },
+                        icon: const Icon(Icons.close_rounded),
+                        label: const Text('Close'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () async {
+                          Navigator.pop(sheetContext);
+
+                          await _previewCurrentTest();
+                        },
+                        icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 16),
+                        label: const Text('Preview & Share'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _previewCurrentTest() async {
+    final batch = _selectedBatch;
+    final test = _selectedTest;
+    final subject = _selectedSubject;
+
+    if (batch == null || test == null || subject == null) {
+      _showMessage('Select a test first.', error: true);
+
+      return;
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AwardListPreviewScreen(
+          supabase: _supabase,
+          user: _user,
+          batch: batch,
+          test: test,
+          subjectCode: subject,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openHistory() async {
+    final batch = _selectedBatch;
+    final subject = _selectedSubject;
+
+    if (batch == null || subject == null) {
+      _showMessage('Select a batch and subject first.', error: true);
+      return;
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AwardHistoryScreen(
+          supabase: _supabase,
+          user: _user,
+          batch: batch,
+          subjectCode: subject,
+          tests: _tests.map((item) => Map<String, dynamic>.from(item)).toList(),
+        ),
+      ),
+    );
+  }
+
   Future<void> _clearMark(_AwardStudentRow student) async {
     final test = _selectedTest;
-
     if (test == null) return;
 
     final confirmed =
@@ -10088,19 +11799,17 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
   }
 
   String _friendlyError(Object error) {
-    final message = error.toString();
+    final message = error.toString().toLowerCase();
 
-    final lower = message.toLowerCase();
-
-    if (lower.contains('no students were found')) {
+    if (message.contains('no students were found')) {
       return 'No students were found for this batch and subject.';
     }
 
-    if (lower.contains('not assigned')) {
+    if (message.contains('not assigned')) {
       return 'This teacher is not assigned to that subject/class.';
     }
 
-    if (lower.contains('does not belong')) {
+    if (message.contains('does not belong')) {
       return 'Student does not belong to this batch or subject.';
     }
 
@@ -10121,6 +11830,96 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     );
   }
 
+  Widget _buildAwardHeader() {
+    return DashboardSectionHeader(
+      title: 'Award Lists',
+      subtitle: _isAdmin
+          ? 'View, edit and share tests for every batch and subject'
+          : 'Enter marks and share award lists for your assigned classes',
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: 'History',
+            color: Colors.white,
+            onPressed: _tests.isEmpty ? null : _openHistory,
+            icon: const Icon(Icons.history_rounded),
+          ),
+          IconButton(
+            tooltip: 'Refresh',
+            color: Colors.white,
+            onPressed: _loadingTests ? null : _loadTests,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPhoneLayout() {
+    // No test yet / loading:
+    // keep normal layout because there is no marks list
+    // to scroll anyway.
+    if (_selectedSubject == null || _loadingTests || _tests.isEmpty) {
+      return Column(
+        children: [
+          _buildAwardHeader(),
+          _buildFilters(),
+          Expanded(child: _buildBody()),
+        ],
+      );
+    }
+
+    return Column(
+      children: [
+        Expanded(
+          child: NestedScrollView(
+            headerSliverBuilder: (context, innerBoxIsScrolled) {
+              return [
+                SliverToBoxAdapter(child: _buildAwardHeader()),
+                SliverToBoxAdapter(child: _buildFilters()),
+                SliverToBoxAdapter(child: _buildTestSelector()),
+              ];
+            },
+            body: _loadingStudents
+                ? ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: const [
+                      SizedBox(
+                        height: 320,
+                        child: Center(child: CircularProgressIndicator()),
+                      ),
+                    ],
+                  )
+                : _students.isEmpty
+                ? ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: const [
+                      SizedBox(
+                        height: 300,
+                        child: Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(24),
+                            child: Text(
+                              'No students found for this subject.',
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
+                : _buildStudentsList(),
+          ),
+        ),
+
+        // Save remains reachable.
+        if (_students.isNotEmpty) _buildSaveBar(),
+      ],
+    );
+  }
+
+  @override
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -10135,23 +11934,16 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       return const Center(child: Text('No assigned batches available.'));
     }
 
+    final isPhone = MediaQuery.sizeOf(context).width < 700;
+
+    if (isPhone) {
+      return _buildPhoneLayout();
+    }
+
     return Column(
       children: [
-        DashboardSectionHeader(
-          title: 'Award Lists',
-          subtitle: _isAdmin
-              ? 'View and edit tests for every batch and subject'
-              : 'Enter marks for your assigned classes and subjects',
-          trailing: IconButton(
-            tooltip: 'Refresh',
-            color: Colors.white,
-            onPressed: _loadingTests ? null : _loadTests,
-            icon: const Icon(Icons.refresh_rounded),
-          ),
-        ),
-
+        _buildAwardHeader(),
         _buildFilters(),
-
         Expanded(child: _buildBody()),
       ],
     );
@@ -10195,9 +11987,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
             final subject = DropdownButtonFormField<String>(
               key: ValueKey(
-                'award-subject-'
-                '$_selectedBatchId-'
-                '$_selectedSubject',
+                'award-subject-$_selectedBatchId-$_selectedSubject',
               ),
               initialValue: subjects.contains(_selectedSubject)
                   ? _selectedSubject
@@ -10246,13 +12036,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   batch,
-
                   const SizedBox(height: 10),
-
                   subject,
-
                   const SizedBox(height: 10),
-
                   addButton,
                 ],
               );
@@ -10261,13 +12047,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
             return Row(
               children: [
                 Expanded(child: batch),
-
                 const SizedBox(width: 12),
-
                 Expanded(child: subject),
-
                 const SizedBox(width: 12),
-
                 addButton,
               ],
             );
@@ -10304,29 +12086,21 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                     color: AppTheme.fgNavyBlue,
                     size: 54,
                   ),
-
                   const SizedBox(height: 14),
-
                   const Text(
                     'No Tests Yet',
                     style: TextStyle(fontSize: 21, fontWeight: FontWeight.w800),
                   ),
-
                   const SizedBox(height: 7),
-
                   Text(
-                    'Create the first '
-                    '${feeSubjectLabel(_selectedSubject!)} '
-                    'test for this batch.',
+                    'Create the first ${feeSubjectLabel(_selectedSubject!)} test for this batch.',
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       color: AppTheme.textSecondary,
                       fontSize: 14,
                     ),
                   ),
-
                   const SizedBox(height: 18),
-
                   ElevatedButton.icon(
                     onPressed: _createTest,
                     icon: const Icon(Icons.add_rounded),
@@ -10343,7 +12117,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     return Column(
       children: [
         _buildTestSelector(),
-
         Expanded(
           child: _loadingStudents
               ? const Center(child: CircularProgressIndicator())
@@ -10359,7 +12132,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                 )
               : _buildStudentsList(),
         ),
-
         if (_students.isNotEmpty) _buildSaveBar(),
       ],
     );
@@ -10375,11 +12147,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final selector = DropdownButtonFormField<String>(
-              key: ValueKey(
-                'award-test-'
-                '$_selectedTestId-'
-                '${_tests.length}',
-              ),
+              key: ValueKey('award-test-$_selectedTestId-${_tests.length}'),
               initialValue: _selectedTestId,
               isExpanded: true,
               decoration: const InputDecoration(
@@ -10388,23 +12156,19 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
               ),
               items: _tests.map((item) {
                 final no = (item['test_no'] as num?)?.toInt() ?? 0;
-
                 final date = DateTime.tryParse(item['test_date'].toString());
 
                 return DropdownMenuItem(
                   value: item['id'].toString(),
                   child: Text(
-                    'T$no  •  '
-                    '${date == null ? item['test_date'] : DateFormat('dd MMM yyyy').format(date)}',
+                    'T$no  •  ${date == null ? item['test_date'] : DateFormat('dd MMM yyyy').format(date)}',
                   ),
                 );
               }).toList(),
               onChanged: _loadingStudents
                   ? null
                   : (value) async {
-                      if (value == null) {
-                        return;
-                      }
+                      if (value == null) return;
 
                       setState(() {
                         _selectedTestId = value;
@@ -10419,6 +12183,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                 : Wrap(
                     spacing: 9,
                     runSpacing: 7,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       _TestBadge(
                         icon: Icons.score_outlined,
@@ -10433,6 +12198,15 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                         icon: Icons.menu_book_outlined,
                         text: feeSubjectLabel(_selectedSubject!),
                       ),
+                      OutlinedButton.icon(
+                        onPressed: _previewCurrentTest,
+                        icon: const FaIcon(
+                          FontAwesomeIcons.whatsapp,
+                          size: 15,
+                          color: Color(0xFF25D366),
+                        ),
+                        label: const Text('Preview & Share'),
+                      ),
                     ],
                   );
 
@@ -10446,9 +12220,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
             return Row(
               children: [
                 SizedBox(width: 360, child: selector),
-
                 const SizedBox(width: 14),
-
                 Expanded(child: details),
               ],
             );
@@ -10462,107 +12234,253 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     final maxMarks = _selectedMaxMarks;
 
     return ListView.builder(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+
       padding: const EdgeInsets.fromLTRB(10, 4, 10, 24),
+
       itemCount: _students.length,
+
       itemBuilder: (context, index) {
         final student = _students[index];
 
-        final saved = student.savedMarks;
+        final controller = _markControllers[student.id]!;
+
+        final focusNode = _markFocusNodes[student.id]!;
+
+        final isLast = index == _students.length - 1;
+
+        Widget markField() {
+          return TextFormField(
+            controller: controller,
+
+            focusNode: focusNode,
+
+            enabled: !_saving,
+
+            textAlign: TextAlign.center,
+
+            keyboardType: const TextInputType.numberWithOptions(
+              decimal: true,
+              signed: false,
+            ),
+
+            textInputAction: isLast
+                ? TextInputAction.done
+                : TextInputAction.next,
+
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+            ],
+
+            style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
+
+            decoration: InputDecoration(
+              labelText: 'Marks',
+              hintText: '0',
+              suffixText:
+                  '/ '
+                  '${_formatNumber(maxMarks)}',
+              isDense: true,
+              counterText: '',
+            ),
+
+            maxLength: 6,
+
+            onTap: () {
+              // If this was marked A,
+              // first numeric key should
+              // replace A immediately.
+              if (controller.text.trim().toUpperCase() == 'A') {
+                controller.selection = TextSelection(
+                  baseOffset: 0,
+                  extentOffset: controller.text.length,
+                );
+              }
+            },
+
+            onChanged: (value) {
+              _handleMarkChanged(student, value, maxMarks);
+            },
+
+            onFieldSubmitted: (_) {
+              if (isLast) {
+                focusNode.unfocus();
+              } else {
+                _focusNextStudent(student.id);
+              }
+            },
+          );
+        }
+
+        Widget absentButton() {
+          return ValueListenableBuilder<TextEditingValue>(
+            valueListenable: controller,
+
+            builder: (context, value, child) {
+              final selected = value.text.trim().toUpperCase() == 'A';
+
+              return SizedBox(
+                width: 52,
+                height: 48,
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    padding: EdgeInsets.zero,
+
+                    backgroundColor: selected
+                        ? AppTheme.danger.withValues(alpha: 0.10)
+                        : null,
+
+                    side: BorderSide(
+                      color: selected ? AppTheme.danger : AppTheme.border,
+                      width: selected ? 1.8 : 1,
+                    ),
+                  ),
+
+                  onPressed: _saving
+                      ? null
+                      : () {
+                          _markStudentAbsent(student);
+                        },
+
+                  child: Text(
+                    'A',
+                    style: TextStyle(
+                      color: selected ? AppTheme.danger : AppTheme.fgNavyBlue,
+                      fontSize: 19,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        }
+
+        final savedText = student.isAbsent
+            ? 'Saved: Absent'
+            : student.savedMarks == null
+            ? 'Mark not entered'
+            : 'Saved: '
+                  '${_formatNumber(student.savedMarks!)}'
+                  ' / '
+                  '${_formatNumber(maxMarks)}';
+
+        final savedColor = student.isAbsent
+            ? AppTheme.danger
+            : student.savedMarks == null
+            ? AppTheme.textSecondary
+            : AppTheme.success;
 
         return Card(
           margin: const EdgeInsets.only(bottom: 9),
+
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 20,
-                  backgroundColor: AppTheme.fgNavyBlue.withValues(alpha: 0.08),
-                  foregroundColor: AppTheme.fgNavyBlue,
-                  child: Text(
-                    '${index + 1}',
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                ),
+            padding: const EdgeInsets.all(12),
 
-                const SizedBox(width: 12),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final mobile = constraints.maxWidth < 520;
 
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                final studentInfo = Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 20,
+
+                      backgroundColor: AppTheme.fgNavyBlue.withValues(
+                        alpha: 0.08,
+                      ),
+
+                      foregroundColor: AppTheme.fgNavyBlue,
+
+                      child: Text(
+                        '${index + 1}',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+
+                    const SizedBox(width: 11),
+
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+
+                        children: [
+                          Text(
+                            student.name,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+
+                          const SizedBox(height: 2),
+
+                          Text(
+                            savedText,
+                            style: TextStyle(
+                              color: savedColor,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+
+                final inputRow = Row(
+                  children: [
+                    Expanded(child: markField()),
+
+                    const SizedBox(width: 7),
+
+                    absentButton(),
+
+                    if (student.savedMarks != null || student.isAbsent) ...[
+                      const SizedBox(width: 3),
+
+                      IconButton(
+                        tooltip: 'Clear saved result',
+
+                        onPressed: _saving
+                            ? null
+                            : () {
+                                _clearMark(student);
+                              },
+
+                        color: AppTheme.danger,
+
+                        icon: const Icon(Icons.delete_outline_rounded),
+                      ),
+                    ],
+                  ],
+                );
+
+                if (mobile) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+
                     children: [
-                      Text(
-                        student.name,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
+                      studentInfo,
 
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 10),
 
-                      Text(
-                        saved == null
-                            ? 'Mark not entered'
-                            : 'Saved: '
-                                  '${_formatNumber(saved)} / '
-                                  '${_formatNumber(maxMarks)}',
-                        style: TextStyle(
-                          color: saved == null
-                              ? AppTheme.textSecondary
-                              : AppTheme.success,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+                      inputRow,
                     ],
-                  ),
-                ),
+                  );
+                }
 
-                const SizedBox(width: 10),
+                return Row(
+                  children: [
+                    Expanded(child: studentInfo),
 
-                SizedBox(
-                  width: 110,
-                  child: TextFormField(
-                    key: ValueKey(
-                      '${student.id}-'
-                      '${student.savedMarks}',
-                    ),
-                    initialValue: _draftMarks[student.id] ?? '',
-                    enabled: !_saving,
-                    textAlign: TextAlign.center,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
-                    ],
-                    style: const TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w800,
-                    ),
-                    decoration: InputDecoration(
-                      labelText: 'Marks',
-                      suffixText: '/ ${_formatNumber(maxMarks)}',
-                      isDense: true,
-                    ),
-                    onChanged: (value) {
-                      _draftMarks[student.id] = value;
-                    },
-                  ),
-                ),
+                    const SizedBox(width: 12),
 
-                if (saved != null) ...[
-                  const SizedBox(width: 5),
-
-                  IconButton(
-                    tooltip: 'Clear saved mark',
-                    onPressed: _saving ? null : () => _clearMark(student),
-                    color: AppTheme.danger,
-                    icon: const Icon(Icons.delete_outline_rounded),
-                  ),
-                ],
-              ],
+                    SizedBox(width: 270, child: inputRow),
+                  ],
+                );
+              },
             ),
           ),
         );
@@ -10591,7 +12509,6 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                 ),
               ),
             ),
-
             ElevatedButton.icon(
               onPressed: _saving ? null : _saveMarks,
               icon: _saving
@@ -10620,16 +12537,18 @@ class _AwardStudentRow {
 
   final double? savedMarks;
 
+  final bool isAbsent;
+
   const _AwardStudentRow({
     required this.id,
     required this.name,
     required this.savedMarks,
+    required this.isAbsent,
   });
 }
 
 class _NewAwardTest {
   final DateTime date;
-
   final double maxMarks;
 
   const _NewAwardTest({required this.date, required this.maxMarks});
@@ -10637,7 +12556,6 @@ class _NewAwardTest {
 
 class _TestBadge extends StatelessWidget {
   final IconData icon;
-
   final String text;
 
   const _TestBadge({required this.icon, required this.text});
@@ -10655,15 +12573,280 @@ class _TestBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 17, color: AppTheme.fgNavyBlue),
-
           const SizedBox(width: 6),
-
           Text(
             text,
             style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
           ),
         ],
       ),
+    );
+  }
+}
+
+
+lib/screens/award_progress_screen.dart:
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../app_theme.dart';
+import '../models/portal_user.dart';
+import '../services/award_progress_service.dart';
+import '../utils/award_progress_image_generator.dart';
+
+class AwardProgressScreen extends StatefulWidget {
+  final SupabaseClient supabase;
+  final PortalUser? user;
+
+  final Map<String, dynamic> batch;
+
+  final String subjectCode;
+
+  final List<Map<String, dynamic>> tests;
+
+  const AwardProgressScreen({
+    super.key,
+    required this.supabase,
+    required this.user,
+    required this.batch,
+    required this.subjectCode,
+    required this.tests,
+  });
+
+  @override
+  State<AwardProgressScreen> createState() => _AwardProgressScreenState();
+}
+
+class _AwardProgressScreenState extends State<AwardProgressScreen> {
+  final AwardProgressService _service = AwardProgressService();
+
+  AwardProgressBundle? _bundle;
+
+  Uint8List? _pngBytes;
+
+  bool _loading = true;
+  bool _sharing = false;
+
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final bundle = await _service.load(
+        supabase: widget.supabase,
+        user: widget.user,
+        batch: widget.batch,
+        subjectCode: widget.subjectCode,
+        tests: widget.tests,
+      );
+
+      final png = await AwardProgressImageGenerator.generate(bundle);
+
+      if (!mounted) return;
+
+      setState(() {
+        _bundle = bundle;
+        _pngBytes = png;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('Award progress error: $e');
+
+      if (!mounted) return;
+
+      setState(() {
+        _loading = false;
+        _error = 'Could not generate the progress sheet.';
+      });
+    }
+  }
+
+  Future<void> _share() async {
+    final bytes = _pngBytes;
+
+    final bundle = _bundle;
+
+    if (bytes == null || bundle == null) {
+      return;
+    }
+
+    setState(() {
+      _sharing = true;
+    });
+
+    try {
+      final directory = await getTemporaryDirectory();
+
+      final batchName = bundle.batchName.replaceAll(
+        RegExp(r'[^a-zA-Z0-9]+'),
+        '_',
+      );
+
+      final file = File(
+        '${directory.path}/'
+        'FG_Progress_'
+        '${batchName}_'
+        '${bundle.subjectCode}.png',
+      );
+
+      await file.writeAsBytes(bytes, flush: true);
+
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path)],
+          text:
+              '${bundle.batchName} • '
+              '${bundle.subjectName} '
+              'Progress Sheet',
+          subject:
+              '${bundle.batchName} '
+              'Progress Sheet',
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not share progress PNG.\n$e'),
+          backgroundColor: AppTheme.danger,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _sharing = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF0F2F4),
+      appBar: AppBar(
+        title: const Text('All Tests Progress'),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh',
+            onPressed: _loading ? null : _load,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(_error!, textAlign: TextAlign.center),
+                    const SizedBox(height: 15),
+                    ElevatedButton.icon(
+                      onPressed: _load,
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('Try Again'),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : Column(
+              children: [
+                if (_bundle != null)
+                  Container(
+                    width: double.infinity,
+                    color: Colors.white,
+                    padding: const EdgeInsets.all(10),
+                    child: Text(
+                      '${_bundle!.batchName} • '
+                      '${_bundle!.subjectName} • '
+                      '${_bundle!.tests.length} tests',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.fgNavyBlue,
+                      ),
+                    ),
+                  ),
+
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Container(
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFDDE1E5),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppTheme.border),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: InteractiveViewer(
+                        minScale: 0.25,
+                        maxScale: 5,
+                        boundaryMargin: const EdgeInsets.all(200),
+                        child: Center(
+                          child: Image.memory(
+                            _pngBytes!,
+                            fit: BoxFit.contain,
+                            filterQuality: FilterQuality.high,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+                SafeArea(
+                  top: false,
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(12, 9, 12, 12),
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      border: Border(top: BorderSide(color: AppTheme.border)),
+                    ),
+                    child: ElevatedButton.icon(
+                      onPressed: _sharing ? null : _share,
+                      icon: _sharing
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const FaIcon(FontAwesomeIcons.whatsapp, size: 17),
+                      label: Text(
+                        _sharing ? 'Opening...' : 'Share Progress PNG',
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
     );
   }
 }
@@ -14070,11 +16253,11 @@ lib/screens/student_screen.dart:
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'teacher_attendance_history_screen.dart';
 import '../app_theme.dart';
 import '../utils/error_state_view.dart';
 import '../utils/list_sorting.dart';
 import '../widgets/academy_background.dart';
+import '../utils/student_group_helper.dart';
 
 class StudentsScreen extends StatefulWidget {
   final String batchId;
@@ -14173,20 +16356,20 @@ class _StudentsScreenState extends State<StudentsScreen> {
     }
   }
 
-  List<String> _coreSubjectsForClass(int classLevel) {
-    if (classLevel <= 10) {
-      return const ['Phy', 'Chem', 'Math', 'Eng'];
+  bool _shouldFilterAttendanceBySubject(int classLevel, String? subjectCode) {
+    if (subjectCode == null) {
+      return false;
     }
 
-    return const ['Phy', 'Math', 'Eng'];
-  }
-
-  List<String> _groupSubjectsForClass(int classLevel) {
-    if (classLevel <= 10) {
-      return const ['Comp', 'Bio'];
+    if (classLevel == 9 || classLevel == 10) {
+      return const {'Comp', 'Bio'}.contains(subjectCode);
     }
 
-    return const ['Chem', 'Comp', 'Bio'];
+    if (classLevel == 11 || classLevel == 12) {
+      return const {'Comp', 'Bio', 'Chem'}.contains(subjectCode);
+    }
+
+    return false;
   }
 
   int _absenceStreakFor(String studentId) {
@@ -14218,9 +16401,9 @@ class _StudentsScreenState extends State<StudentsScreen> {
     }
 
     try {
-      // -------------------------------------------------------
+      // ========================================================
       // CLASS CONTEXT
-      // -------------------------------------------------------
+      // ========================================================
 
       final batchRow = await supabase
           .from('batches')
@@ -14234,9 +16417,9 @@ class _StudentsScreenState extends State<StudentsScreen> {
         throw StateError('Batch class level is unavailable.');
       }
 
-      // -------------------------------------------------------
-      // CURRENT TEACHER SUBJECT FOR THIS CLASS
-      // -------------------------------------------------------
+      // ========================================================
+      // TEACHER SUBJECT
+      // ========================================================
 
       String? teacherSubject;
 
@@ -14255,9 +16438,14 @@ class _StudentsScreenState extends State<StudentsScreen> {
         }
       }
 
-      // -------------------------------------------------------
-      // STUDENTS + TODAY ATTENDANCE + RECENT HISTORY
-      // -------------------------------------------------------
+      final filterBySubject = _shouldFilterAttendanceBySubject(
+        classLevel,
+        teacherSubject,
+      );
+
+      // ========================================================
+      // STUDENTS + ATTENDANCE
+      // ========================================================
 
       final today = DateTime.parse(todayDate);
 
@@ -14266,7 +16454,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
       final results = await Future.wait<dynamic>([
         supabase
             .from('students')
-            .select('id, name')
+            .select('id, name, stream')
             .eq('batch_id', widget.batchId)
             .order('name', ascending: true),
 
@@ -14285,16 +16473,34 @@ class _StudentsScreenState extends State<StudentsScreen> {
             .order('date', ascending: false),
       ]);
 
-      final studentRows = sortStudents(results[0] as List);
+      final rawStudents = results[0] as List;
+
+      final filteredStudents = rawStudents.where((raw) {
+        if (!filterBySubject) {
+          return true;
+        }
+
+        final stream = raw['stream'];
+
+        if (stream is! List) {
+          return false;
+        }
+
+        return stream.map((item) => item.toString()).contains(teacherSubject);
+      }).toList();
+
+      final studentRows = sortStudents(filteredStudents);
+
+      final visibleIds = studentRows
+          .map((student) => student['id'].toString())
+          .toSet();
 
       final attendanceRows = results[1] as List;
 
       final historyRows = results[2] as List;
 
       attendanceStatus.clear();
-
       _priorAbsenceStreak.clear();
-
       modifiedStudents.clear();
 
       for (final student in studentRows) {
@@ -14306,8 +16512,13 @@ class _StudentsScreenState extends State<StudentsScreen> {
       }
 
       for (final row in attendanceRows) {
-        attendanceStatus[row['student_id'].toString()] = row['status']
-            ?.toString();
+        final studentId = row['student_id'].toString();
+
+        if (!visibleIds.contains(studentId)) {
+          continue;
+        }
+
+        attendanceStatus[studentId] = row['status']?.toString();
       }
 
       final historyByStudent = <String, List<Map<String, dynamic>>>{};
@@ -14317,7 +16528,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
 
         final studentId = row['student_id']?.toString();
 
-        if (studentId == null) {
+        if (studentId == null || !visibleIds.contains(studentId)) {
           continue;
         }
 
@@ -14413,17 +16624,15 @@ class _StudentsScreenState extends State<StudentsScreen> {
       return;
     }
 
-    final coreSubjects = _coreSubjectsForClass(classLevel);
+    final groupCodes = studentGroupCodesForClass(classLevel);
 
-    final groupSubjects = _groupSubjectsForClass(classLevel);
+    String? selectedGroupCode;
 
-    String? selectedGroup;
-
-    // If this teacher teaches one of the group subjects,
-    // preselect that subject.
+    // Group subject teacher ho to
+    // relevant group automatically select.
     if (_teacherSubjectCode != null &&
-        groupSubjects.contains(_teacherSubjectCode)) {
-      selectedGroup = _teacherSubjectCode;
+        groupCodes.contains(_teacherSubjectCode)) {
+      selectedGroupCode = _teacherSubjectCode;
     }
 
     final nameController = TextEditingController();
@@ -14436,6 +16645,10 @@ class _StudentsScreenState extends State<StudentsScreen> {
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            final subjects = selectedGroupCode == null
+                ? <String>[]
+                : studentSubjectsForGroup(classLevel, selectedGroupCode!);
+
             return AlertDialog(
               title: const Row(
                 children: [
@@ -14449,7 +16662,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
               ),
 
               content: SizedBox(
-                width: 470,
+                width: 490,
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -14508,58 +16721,12 @@ class _StudentsScreenState extends State<StudentsScreen> {
                         ),
                       ),
 
-                      const SizedBox(height: 18),
-
-                      const Text(
-                        'Core Subjects',
-                        style: TextStyle(
-                          color: AppTheme.fgNavyBlue,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-
-                      const SizedBox(height: 5),
-
-                      const Text(
-                        'These are added automatically.',
-                        style: TextStyle(
-                          color: AppTheme.textSecondary,
-                          fontSize: 13,
-                        ),
-                      ),
-
-                      const SizedBox(height: 9),
-
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: coreSubjects
-                            .map(
-                              (code) => Chip(
-                                avatar: const Icon(
-                                  Icons.check_circle_rounded,
-                                  size: 18,
-                                  color: AppTheme.success,
-                                ),
-                                label: Text(
-                                  _subjectLabel(code),
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                            )
-                            .toList(),
-                      ),
-
                       const SizedBox(height: 20),
 
                       Text(
                         classLevel <= 10
-                            ? 'Confirm Group Subject'
-                            : 'Confirm Group Subject',
+                            ? 'Choose Student Group'
+                            : 'Choose HSSC Group',
                         style: const TextStyle(
                           color: AppTheme.fgNavyBlue,
                           fontSize: 16,
@@ -14569,45 +16736,86 @@ class _StudentsScreenState extends State<StudentsScreen> {
 
                       const SizedBox(height: 5),
 
-                      const Text(
-                        'Please confirm the student’s group before saving.',
-                        style: TextStyle(
+                      Text(
+                        classLevel <= 10
+                            ? 'Choose Computer or Biology. All required subjects will be added automatically.'
+                            : 'Choose FCS, Pre-Engineering or Pre-Medical. All correct subjects will be added automatically.',
+                        style: const TextStyle(
                           color: AppTheme.textSecondary,
                           fontSize: 13,
+                          height: 1.4,
                         ),
                       ),
 
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 11),
 
                       Wrap(
                         spacing: 9,
                         runSpacing: 9,
-                        children: groupSubjects
-                            .map(
-                              (code) => ChoiceChip(
-                                label: Text(
-                                  _subjectLabel(code),
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                selected: selectedGroup == code,
-                                onSelected: (selected) {
-                                  if (!selected) {
-                                    return;
-                                  }
-
-                                  setDialogState(() {
-                                    selectedGroup = code;
-
-                                    dialogError = null;
-                                  });
-                                },
+                        children: groupCodes.map((code) {
+                          return ChoiceChip(
+                            selected: selectedGroupCode == code,
+                            avatar: Icon(
+                              selectedGroupCode == code
+                                  ? Icons.check_circle_rounded
+                                  : Icons.school_outlined,
+                              size: 18,
+                            ),
+                            label: Text(
+                              studentGroupLabel(classLevel, code),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
                               ),
-                            )
-                            .toList(),
+                            ),
+                            onSelected: (selected) {
+                              if (!selected) {
+                                return;
+                              }
+
+                              setDialogState(() {
+                                selectedGroupCode = code;
+
+                                dialogError = null;
+                              });
+                            },
+                          );
+                        }).toList(),
                       ),
+
+                      if (subjects.isNotEmpty) ...[
+                        const SizedBox(height: 20),
+
+                        const Text(
+                          'Subjects Added Automatically',
+                          style: TextStyle(
+                            color: AppTheme.fgNavyBlue,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+
+                        const SizedBox(height: 8),
+
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: subjects.map((code) {
+                            return Chip(
+                              avatar: const Icon(
+                                Icons.check_circle_rounded,
+                                size: 17,
+                                color: AppTheme.success,
+                              ),
+                              label: Text(
+                                _subjectLabel(code),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ],
 
                       const SizedBox(height: 18),
 
@@ -14636,7 +16844,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                 '• Student will be enrolled\n'
                                 '• Today attendance will be Present\n'
                                 '• Current month fee will be Unpaid\n'
-                                '• Core subjects will be added automatically',
+                                '• Correct group subjects will be added automatically',
                                 style: TextStyle(
                                   fontSize: 13.5,
                                   height: 1.55,
@@ -14685,9 +16893,11 @@ class _StudentsScreenState extends State<StudentsScreen> {
                       return;
                     }
 
-                    if (selectedGroup == null) {
+                    if (selectedGroupCode == null) {
                       setDialogState(() {
-                        dialogError = 'Please confirm the group subject.';
+                        dialogError = classLevel <= 10
+                            ? 'Please choose Computer or Biology.'
+                            : 'Please choose FCS, Pre-Engineering or Pre-Medical.';
                       });
 
                       return;
@@ -14696,7 +16906,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
                     Navigator.of(dialogContext).pop(
                       _NewAttendanceStudentDraft(
                         name: name,
-                        groupSubject: selectedGroup!,
+                        groupSubject: selectedGroupCode!,
                       ),
                     );
                   },
@@ -15485,10 +17695,15 @@ class TeacherAttendanceHistoryScreen extends StatefulWidget {
   final String batchId;
   final String batchName;
 
+  final int? classLevel;
+  final String? teacherSubjectCode;
+
   const TeacherAttendanceHistoryScreen({
     super.key,
     required this.batchId,
     required this.batchName,
+    this.classLevel,
+    this.teacherSubjectCode,
   });
 
   @override
@@ -15526,7 +17741,28 @@ class _TeacherAttendanceHistoryScreenState
   @override
   void initState() {
     super.initState();
+
     _load();
+  }
+
+  bool get _filterBySubject {
+    final classLevel = widget.classLevel;
+
+    final subject = widget.teacherSubjectCode;
+
+    if (classLevel == null || subject == null) {
+      return false;
+    }
+
+    if (classLevel == 9 || classLevel == 10) {
+      return const {'Comp', 'Bio'}.contains(subject);
+    }
+
+    if (classLevel == 11 || classLevel == 12) {
+      return const {'Comp', 'Bio', 'Chem'}.contains(subject);
+    }
+
+    return false;
   }
 
   Future<void> _load() async {
@@ -15541,9 +17777,10 @@ class _TeacherAttendanceHistoryScreenState
       final results = await Future.wait<dynamic>([
         _supabase
             .from('students')
-            .select('id, name')
+            .select('id, name, stream')
             .eq('batch_id', widget.batchId)
             .order('name', ascending: true),
+
         _supabase
             .from('attendance')
             .select('student_id, status')
@@ -15551,7 +17788,29 @@ class _TeacherAttendanceHistoryScreenState
             .eq('date', _dateString),
       ]);
 
-      final students = sortStudents(results[0] as List);
+      final rawStudents = results[0] as List;
+
+      final subject = widget.teacherSubjectCode;
+
+      final filteredStudents = rawStudents.where((raw) {
+        if (!_filterBySubject) {
+          return true;
+        }
+
+        final stream = raw['stream'];
+
+        if (stream is! List) {
+          return false;
+        }
+
+        return stream.map((item) => item.toString()).contains(subject);
+      }).toList();
+
+      final students = sortStudents(filteredStudents);
+
+      final visibleIds = students
+          .map((student) => student['id'].toString())
+          .toSet();
 
       final rows = results[1] as List;
 
@@ -15562,9 +17821,11 @@ class _TeacherAttendanceHistoryScreenState
 
         final status = row['status']?.toString();
 
-        if (id != null && status != null) {
-          attendance[id] = status;
+        if (id == null || status == null || !visibleIds.contains(id)) {
+          continue;
         }
+
+        attendance[id] = status;
       }
 
       if (!mounted) return;
@@ -15777,19 +18038,19 @@ class _TeacherAttendanceHistoryScreenState
                               ? 'Absent'
                               : 'Unmarked';
 
-                          final icon = present
-                              ? Icons.check_circle_rounded
-                              : absent
-                              ? Icons.cancel_rounded
-                              : Icons.help_outline_rounded;
-
                           return Card(
                             margin: const EdgeInsets.only(bottom: 8),
                             child: ListTile(
                               leading: CircleAvatar(
                                 backgroundColor: color.withValues(alpha: 0.10),
                                 foregroundColor: color,
-                                child: Icon(icon),
+                                child: Icon(
+                                  present
+                                      ? Icons.check_circle_rounded
+                                      : absent
+                                      ? Icons.cancel_rounded
+                                      : Icons.help_outline_rounded,
+                                ),
                               ),
                               title: Text(
                                 name,
@@ -16510,6 +18771,392 @@ class AuthService {
 }
 
 
+lib/services/award_progress_service.dart:
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../models/fee_models.dart';
+import '../models/portal_user.dart';
+
+class AwardProgressTest {
+  final String id;
+  final int testNo;
+  final DateTime? testDate;
+  final double maxMarks;
+
+  const AwardProgressTest({
+    required this.id,
+    required this.testNo,
+    required this.testDate,
+    required this.maxMarks,
+  });
+
+  String get label => 'T$testNo';
+}
+
+class AwardProgressResult {
+  final double? marks;
+  final bool isAbsent;
+
+  const AwardProgressResult({required this.marks, required this.isAbsent});
+}
+
+class AwardProgressStudent {
+  final String id;
+  final String name;
+
+  final Map<String, AwardProgressResult> results;
+
+  const AwardProgressStudent({
+    required this.id,
+    required this.name,
+    required this.results,
+  });
+}
+
+class AwardProgressBundle {
+  final String batchName;
+  final String subjectCode;
+  final String subjectName;
+  final String preparedBy;
+
+  final List<AwardProgressTest> tests;
+
+  final List<AwardProgressStudent> students;
+
+  const AwardProgressBundle({
+    required this.batchName,
+    required this.subjectCode,
+    required this.subjectName,
+    required this.preparedBy,
+    required this.tests,
+    required this.students,
+  });
+}
+
+class AwardProgressService {
+  Future<AwardProgressBundle> load({
+    required SupabaseClient supabase,
+    required PortalUser? user,
+    required Map<String, dynamic> batch,
+    required String subjectCode,
+    required List<Map<String, dynamic>> tests,
+  }) async {
+    if (tests.isEmpty) {
+      throw StateError('No tests are available.');
+    }
+
+    final parsedTests = tests.map((test) {
+      return AwardProgressTest(
+        id: test['id'].toString(),
+        testNo: (test['test_no'] as num?)?.toInt() ?? 0,
+        testDate: DateTime.tryParse(test['test_date']?.toString() ?? ''),
+        maxMarks: (test['max_marks'] as num?)?.toDouble() ?? 0,
+      );
+    }).toList()..sort((a, b) => a.testNo.compareTo(b.testNo));
+
+    final testIds = parsedTests.map((test) => test.id).toList();
+
+    final batchId = batch['id'].toString();
+
+    final results = await Future.wait<dynamic>([
+      supabase
+          .from('students')
+          .select('id, name, stream')
+          .eq('batch_id', batchId)
+          .order('name', ascending: true),
+
+      supabase
+          .from('award_marks')
+          .select(
+            'test_id, '
+            'student_id, '
+            'marks, '
+            'is_absent',
+          )
+          .inFilter('test_id', testIds),
+    ]);
+
+    final rawStudents = results[0] as List;
+
+    final rawMarks = results[1] as List;
+
+    final resultsByStudent = <String, Map<String, AwardProgressResult>>{};
+
+    for (final raw in rawMarks) {
+      final row = Map<String, dynamic>.from(raw);
+
+      final studentId = row['student_id']?.toString();
+
+      final testId = row['test_id']?.toString();
+
+      if (studentId == null || testId == null) {
+        continue;
+      }
+
+      resultsByStudent.putIfAbsent(
+        studentId,
+        () => {},
+      )[testId] = AwardProgressResult(
+        marks: (row['marks'] as num?)?.toDouble(),
+        isAbsent: row['is_absent'] == true,
+      );
+    }
+
+    final students = <AwardProgressStudent>[];
+
+    for (final raw in rawStudents) {
+      final row = Map<String, dynamic>.from(raw);
+
+      final stream = row['stream'] is List
+          ? (row['stream'] as List).map((item) => item.toString()).toList()
+          : <String>[];
+
+      if (!stream.contains(subjectCode)) {
+        continue;
+      }
+
+      final id = row['id'].toString();
+
+      students.add(
+        AwardProgressStudent(
+          id: id,
+          name: row['name']?.toString() ?? 'Student',
+          results: resultsByStudent[id] ?? const {},
+        ),
+      );
+    }
+
+    students.sort(
+      (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+    );
+
+    final teacherName = user?.fullName.trim();
+
+    return AwardProgressBundle(
+      batchName: batch['name']?.toString() ?? 'Batch',
+      subjectCode: subjectCode,
+      subjectName: feeSubjectLabel(subjectCode),
+      preparedBy: teacherName != null && teacherName.isNotEmpty
+          ? teacherName
+          : 'FG Academy',
+      tests: parsedTests,
+      students: students,
+    );
+  }
+}
+
+
+lib/services/award_share_service.dart:
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../models/fee_models.dart';
+import '../models/portal_user.dart';
+import '../utils/award_list_image_generator.dart';
+
+class PreparedAwardShare {
+  final Uint8List pngBytes;
+  final String fileName;
+  final String shareText;
+
+  const PreparedAwardShare({
+    required this.pngBytes,
+    required this.fileName,
+    required this.shareText,
+  });
+}
+
+class AwardShareService {
+  Future<PreparedAwardShare> prepareAwardList({
+    required SupabaseClient supabase,
+    required PortalUser? user,
+    required Map<String, dynamic> batch,
+    required Map<String, dynamic> test,
+    required String subjectCode,
+  }) async {
+    final batchId = batch['id'].toString();
+
+    final testId = test['id'].toString();
+
+    final results = await Future.wait<dynamic>([
+      supabase
+          .from('students')
+          .select('id, name, stream')
+          .eq('batch_id', batchId)
+          .order('name', ascending: true),
+
+      supabase
+          .from('award_marks')
+          .select(
+            'student_id, '
+            'marks, '
+            'is_absent',
+          )
+          .eq('test_id', testId),
+    ]);
+
+    final rawStudents = results[0] as List;
+
+    final rawMarks = results[1] as List;
+
+    final marksByStudent = <String, double>{};
+
+    final absentByStudent = <String, bool>{};
+
+    for (final raw in rawMarks) {
+      final row = Map<String, dynamic>.from(raw);
+
+      final studentId = row['student_id']?.toString();
+
+      if (studentId == null) {
+        continue;
+      }
+
+      final isAbsent = row['is_absent'] == true;
+
+      absentByStudent[studentId] = isAbsent;
+
+      final marks = (row['marks'] as num?)?.toDouble();
+
+      if (marks != null) {
+        marksByStudent[studentId] = marks;
+      }
+    }
+
+    final students = <AwardListShareStudent>[];
+
+    var serialNo = 1;
+
+    for (final raw in rawStudents) {
+      final row = Map<String, dynamic>.from(raw);
+
+      final studentId = row['id'].toString();
+
+      final studentName = row['name']?.toString() ?? 'Student';
+
+      final rawStream = row['stream'];
+
+      final stream = rawStream is List
+          ? rawStream.map((item) => item.toString()).toList()
+          : <String>[];
+
+      if (!stream.contains(subjectCode)) {
+        continue;
+      }
+
+      students.add(
+        AwardListShareStudent(
+          serialNo: serialNo,
+          name: studentName,
+          marks: marksByStudent[studentId],
+          isAbsent: absentByStudent[studentId] ?? false,
+        ),
+      );
+
+      serialNo++;
+    }
+
+    if (students.isEmpty) {
+      throw StateError(
+        'No students were found '
+        'for this award list.',
+      );
+    }
+
+    final testNo = (test['test_no'] as num?)?.toInt() ?? 0;
+
+    final maxMarks = (test['max_marks'] as num?)?.toDouble() ?? 0;
+
+    final testDate = DateTime.tryParse(test['test_date']?.toString() ?? '');
+
+    final teacherName = user?.fullName.trim();
+
+    final data = AwardListShareData(
+      academyName: 'FGEIs ECC Wah',
+      batchName: batch['name']?.toString() ?? 'Batch',
+      subjectName: feeSubjectLabel(subjectCode),
+      testLabel: 'T$testNo',
+      testDate: testDate,
+      maxMarks: maxMarks,
+      preparedBy: teacherName != null && teacherName.isNotEmpty
+          ? teacherName
+          : 'FG Academy',
+      students: students,
+    );
+
+    final pngBytes = await AwardListImageGenerator.generate(data);
+
+    final fileName =
+        'FG_Award_'
+        '${_safeFileName(data.batchName)}_'
+        '${_safeFileName(subjectCode)}_'
+        'T$testNo.png';
+
+    final shareText =
+        'Award List\n'
+        '${data.batchName} • '
+        '${data.subjectName} • '
+        '${data.testLabel}';
+
+    return PreparedAwardShare(
+      pngBytes: pngBytes,
+      fileName: fileName,
+      shareText: shareText,
+    );
+  }
+
+  Future<void> sharePreparedAwardList(PreparedAwardShare prepared) async {
+    final tempDirectory = await getTemporaryDirectory();
+
+    final file = File(
+      '${tempDirectory.path}/'
+      '${prepared.fileName}',
+    );
+
+    await file.writeAsBytes(prepared.pngBytes, flush: true);
+
+    await SharePlus.instance.share(
+      ShareParams(
+        files: [XFile(file.path)],
+        text: prepared.shareText,
+        subject: prepared.shareText,
+      ),
+    );
+  }
+
+  Future<void> shareAwardList({
+    required SupabaseClient supabase,
+    required PortalUser? user,
+    required Map<String, dynamic> batch,
+    required Map<String, dynamic> test,
+    required String subjectCode,
+  }) async {
+    final prepared = await prepareAwardList(
+      supabase: supabase,
+      user: user,
+      batch: batch,
+      test: test,
+      subjectCode: subjectCode,
+    );
+
+    await sharePreparedAwardList(prepared);
+  }
+
+  String _safeFileName(String value) {
+    final cleaned = value
+        .trim()
+        .replaceAll(RegExp(r'[^a-zA-Z0-9_-]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_');
+
+    return cleaned.isEmpty ? 'award' : cleaned;
+  }
+}
+
+
 lib/services/excel_fee_service.dart:
 import 'dart:convert';
 
@@ -17139,6 +19786,1132 @@ lib/utils/automation_launcher_stub.dart:
 bool get isWindowsPlatform => false;
 
 Future<bool> launchAutomation() async => false;
+
+
+lib/utils/award_list_image_generator.dart:
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+
+class AwardListShareStudent {
+  final int serialNo;
+  final String name;
+  final double? marks;
+  final bool isAbsent;
+
+  const AwardListShareStudent({
+    required this.serialNo,
+    required this.name,
+    required this.marks,
+    required this.isAbsent,
+  });
+}
+
+class AwardListShareData {
+  final String academyName;
+  final String batchName;
+  final String subjectName;
+  final String testLabel;
+  final DateTime? testDate;
+  final double maxMarks;
+  final String preparedBy;
+
+  final List<AwardListShareStudent> students;
+
+  const AwardListShareData({
+    required this.academyName,
+    required this.batchName,
+    required this.subjectName,
+    required this.testLabel,
+    required this.testDate,
+    required this.maxMarks,
+    required this.preparedBy,
+    required this.students,
+  });
+}
+
+class AwardListImageGenerator {
+  static const double _pageWidth = 1240;
+
+  static Future<Uint8List> generate(AwardListShareData data) async {
+    const double margin = 28;
+
+    const double titleHeight = 116;
+
+    const double metaHeight = 118;
+
+    const double tableHeaderHeight = 62;
+
+    const double studentRowHeight = 50;
+
+    const double footerHeight = 60;
+
+    final double pageHeight =
+        margin +
+        titleHeight +
+        metaHeight +
+        tableHeaderHeight +
+        (data.students.length * studentRowHeight) +
+        footerHeight +
+        margin;
+
+    final recorder = ui.PictureRecorder();
+
+    final canvas = Canvas(
+      recorder,
+      Rect.fromLTWH(0, 0, _pageWidth, pageHeight),
+    );
+
+    final backgroundPaint = Paint()..color = Colors.white;
+
+    final outerBorderPaint = Paint()
+      ..color = Colors.black
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke;
+
+    final borderPaint = Paint()
+      ..color = Colors.black
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, _pageWidth, pageHeight),
+      backgroundPaint,
+    );
+
+    final contentLeft = margin;
+
+    final contentTop = margin;
+
+    final contentWidth = _pageWidth - (margin * 2);
+
+    final contentHeight = pageHeight - (margin * 2);
+
+    canvas.drawRect(
+      Rect.fromLTWH(contentLeft, contentTop, contentWidth, contentHeight),
+      outerBorderPaint,
+    );
+
+    double y = contentTop;
+
+    // ========================================================
+    // TITLE
+    // ========================================================
+
+    canvas.drawRect(
+      Rect.fromLTWH(contentLeft, y, contentWidth, titleHeight),
+      borderPaint,
+    );
+
+    _drawCenteredText(
+      canvas,
+      text: data.academyName,
+      rect: Rect.fromLTWH(contentLeft + 10, y + 8, contentWidth - 20, 42),
+      fontSize: 30,
+      fontWeight: FontWeight.w900,
+    );
+
+    _drawCenteredText(
+      canvas,
+      text:
+          'Class: '
+          '${data.batchName} '
+          'Award Sheet',
+      rect: Rect.fromLTWH(contentLeft + 10, y + 54, contentWidth - 20, 44),
+      fontSize: 25,
+      fontWeight: FontWeight.w900,
+    );
+
+    y += titleHeight;
+
+    // ========================================================
+    // META
+    // ========================================================
+
+    canvas.drawRect(
+      Rect.fromLTWH(contentLeft, y, contentWidth, metaHeight),
+      borderPaint,
+    );
+
+    const firstMetaRowHeight = 56.0;
+
+    final splitX = contentLeft + (contentWidth * 0.62);
+
+    canvas.drawLine(
+      Offset(contentLeft, y + firstMetaRowHeight),
+      Offset(contentLeft + contentWidth, y + firstMetaRowHeight),
+      borderPaint,
+    );
+
+    canvas.drawLine(
+      Offset(splitX, y + firstMetaRowHeight),
+      Offset(splitX, y + metaHeight),
+      borderPaint,
+    );
+
+    _drawLabelValue(
+      canvas,
+      left: contentLeft + 16,
+      top: y + 9,
+      label: 'SUBJECT:',
+      value: data.subjectName,
+      labelWidth: 175,
+      availableWidth: contentWidth - 450,
+      valueFontSize: 23,
+    );
+
+    _drawLabelValue(
+      canvas,
+      left: contentLeft + contentWidth - 300,
+      top: y + 9,
+      label: 'Test:',
+      value: data.testLabel,
+      labelWidth: 90,
+      availableWidth: 180,
+      valueFontSize: 23,
+    );
+
+    _drawLabelValue(
+      canvas,
+      left: contentLeft + 16,
+      top: y + firstMetaRowHeight + 9,
+      label: 'Date:',
+      value: data.testDate == null
+          ? '-'
+          : DateFormat('dd/MM/yy').format(data.testDate!),
+      labelWidth: 110,
+      availableWidth: (splitX - contentLeft) - 150,
+      valueFontSize: 22,
+    );
+
+    _drawLabelValue(
+      canvas,
+      left: splitX + 16,
+      top: y + firstMetaRowHeight + 9,
+      label: 'Total Marks:',
+      value: _formatMarks(data.maxMarks),
+      labelWidth: 180,
+      availableWidth: (contentLeft + contentWidth - splitX) - 215,
+      valueFontSize: 22,
+    );
+
+    y += metaHeight;
+
+    // ========================================================
+    // TABLE
+    // ========================================================
+
+    const serialWidth = 90.0;
+
+    const marksWidth = 200.0;
+
+    final nameWidth = contentWidth - serialWidth - marksWidth;
+
+    final tableTop = y;
+
+    final tableHeight =
+        tableHeaderHeight + (data.students.length * studentRowHeight);
+
+    canvas.drawRect(
+      Rect.fromLTWH(contentLeft, tableTop, contentWidth, tableHeight),
+      borderPaint,
+    );
+
+    final serialDivider = contentLeft + serialWidth;
+
+    final marksDivider = serialDivider + nameWidth;
+
+    canvas.drawLine(
+      Offset(serialDivider, tableTop),
+      Offset(serialDivider, tableTop + tableHeight),
+      borderPaint,
+    );
+
+    canvas.drawLine(
+      Offset(marksDivider, tableTop),
+      Offset(marksDivider, tableTop + tableHeight),
+      borderPaint,
+    );
+
+    _drawCenteredText(
+      canvas,
+      text: '#',
+      rect: Rect.fromLTWH(
+        contentLeft,
+        tableTop,
+        serialWidth,
+        tableHeaderHeight,
+      ),
+      fontSize: 21,
+      fontWeight: FontWeight.w900,
+    );
+
+    _drawCenteredText(
+      canvas,
+      text: 'NAME OF STUDENTS',
+      rect: Rect.fromLTWH(
+        serialDivider,
+        tableTop,
+        nameWidth,
+        tableHeaderHeight,
+      ),
+      fontSize: 23,
+      fontWeight: FontWeight.w900,
+    );
+
+    _drawCenteredText(
+      canvas,
+      text: 'Obt Marks',
+      rect: Rect.fromLTWH(
+        marksDivider,
+        tableTop,
+        marksWidth,
+        tableHeaderHeight,
+      ),
+      fontSize: 21,
+      fontWeight: FontWeight.w900,
+    );
+
+    canvas.drawLine(
+      Offset(contentLeft, tableTop + tableHeaderHeight),
+      Offset(contentLeft + contentWidth, tableTop + tableHeaderHeight),
+      borderPaint,
+    );
+
+    y = tableTop + tableHeaderHeight;
+
+    for (final student in data.students) {
+      _drawCenteredText(
+        canvas,
+        text: student.serialNo.toString(),
+        rect: Rect.fromLTWH(contentLeft, y, serialWidth, studentRowHeight),
+        fontSize: 19,
+        fontWeight: FontWeight.w700,
+      );
+
+      _drawLeftText(
+        canvas,
+        text: student.name,
+        rect: Rect.fromLTWH(
+          serialDivider + 13,
+          y,
+          nameWidth - 26,
+          studentRowHeight,
+        ),
+        fontSize: 19,
+        fontWeight: FontWeight.w600,
+      );
+
+      final resultText = student.isAbsent
+          ? 'A'
+          : student.marks == null
+          ? ''
+          : _formatMarks(student.marks!);
+
+      final resultBackground = _awardResultColor(
+        marks: student.marks,
+        isAbsent: student.isAbsent,
+        maxMarks: data.maxMarks,
+      );
+
+      if (resultBackground != null) {
+        canvas.drawRect(
+          Rect.fromLTWH(
+            marksDivider + 2,
+            y + 2,
+            marksWidth - 4,
+            studentRowHeight - 4,
+          ),
+          Paint()..color = resultBackground,
+        );
+      }
+
+      _drawCenteredText(
+        canvas,
+        text: resultText,
+        rect: Rect.fromLTWH(marksDivider, y, marksWidth, studentRowHeight),
+        fontSize: student.isAbsent ? 22 : 21,
+        fontWeight: FontWeight.w900,
+      );
+
+      y += studentRowHeight;
+
+      canvas.drawLine(
+        Offset(contentLeft, y),
+        Offset(contentLeft + contentWidth, y),
+        borderPaint,
+      );
+    }
+
+    // ========================================================
+    // FOOTER
+    // ========================================================
+
+    canvas.drawRect(
+      Rect.fromLTWH(contentLeft, y, contentWidth, footerHeight),
+      borderPaint,
+    );
+
+    _drawLeftText(
+      canvas,
+      text:
+          'Prepared By: '
+          '${data.preparedBy}',
+      rect: Rect.fromLTWH(
+        contentLeft + 14,
+        y,
+        contentWidth * 0.56,
+        footerHeight,
+      ),
+      fontSize: 15,
+      fontWeight: FontWeight.w700,
+    );
+
+    _drawRightText(
+      canvas,
+      text:
+          'Generated from '
+          'FG Academy Portal',
+      rect: Rect.fromLTWH(
+        contentLeft + (contentWidth * 0.52),
+        y,
+        (contentWidth * 0.48) - 14,
+        footerHeight,
+      ),
+      fontSize: 14,
+      fontWeight: FontWeight.w600,
+    );
+
+    final picture = recorder.endRecording();
+
+    final image = await picture.toImage(_pageWidth.toInt(), pageHeight.ceil());
+
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+
+    image.dispose();
+    picture.dispose();
+
+    if (byteData == null) {
+      throw StateError(
+        'Could not generate '
+        'award list PNG.',
+      );
+    }
+
+    return byteData.buffer.asUint8List(
+      byteData.offsetInBytes,
+      byteData.lengthInBytes,
+    );
+  }
+
+  static String _formatMarks(double value) {
+    if (value == value.roundToDouble()) {
+      return value.toStringAsFixed(0);
+    }
+
+    return value.toStringAsFixed(2);
+  }
+
+  static void _drawLabelValue(
+    Canvas canvas, {
+    required double left,
+    required double top,
+    required String label,
+    required String value,
+    required double labelWidth,
+    required double availableWidth,
+    required double valueFontSize,
+  }) {
+    _drawLeftText(
+      canvas,
+      text: label,
+      rect: Rect.fromLTWH(left, top, labelWidth, 38),
+      fontSize: 20,
+      fontWeight: FontWeight.w900,
+    );
+
+    _drawLeftText(
+      canvas,
+      text: value,
+      rect: Rect.fromLTWH(left + labelWidth, top, availableWidth, 38),
+      fontSize: valueFontSize,
+      fontWeight: FontWeight.w700,
+    );
+  }
+
+  static void _drawCenteredText(
+    Canvas canvas, {
+    required String text,
+    required Rect rect,
+    required double fontSize,
+    required FontWeight fontWeight,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          color: Colors.black,
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+          height: 1.15,
+        ),
+      ),
+      textDirection: ui.TextDirection.ltr,
+      textAlign: TextAlign.center,
+      maxLines: 2,
+      ellipsis: '…',
+    );
+
+    painter.layout(maxWidth: rect.width);
+
+    final dx = rect.left + ((rect.width - painter.width) / 2);
+
+    final dy = rect.top + ((rect.height - painter.height) / 2);
+
+    painter.paint(canvas, Offset(dx, dy));
+  }
+
+  static void _drawLeftText(
+    Canvas canvas, {
+    required String text,
+    required Rect rect,
+    required double fontSize,
+    required FontWeight fontWeight,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          color: Colors.black,
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+          height: 1.15,
+        ),
+      ),
+      textDirection: ui.TextDirection.ltr,
+      textAlign: TextAlign.left,
+      maxLines: 2,
+      ellipsis: '…',
+    );
+
+    painter.layout(maxWidth: rect.width);
+
+    final dy = rect.top + ((rect.height - painter.height) / 2);
+
+    painter.paint(canvas, Offset(rect.left, dy));
+  }
+
+  static void _drawRightText(
+    Canvas canvas, {
+    required String text,
+    required Rect rect,
+    required double fontSize,
+    required FontWeight fontWeight,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          color: Colors.black87,
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+          height: 1.15,
+        ),
+      ),
+      textDirection: ui.TextDirection.ltr,
+      textAlign: TextAlign.right,
+      maxLines: 1,
+      ellipsis: '…',
+    );
+
+    painter.layout(maxWidth: rect.width);
+
+    final dx = rect.left + rect.width - painter.width;
+
+    final dy = rect.top + ((rect.height - painter.height) / 2);
+
+    painter.paint(canvas, Offset(dx, dy));
+  }
+
+  static Color? _awardResultColor({
+    required double? marks,
+    required bool isAbsent,
+    required double maxMarks,
+  }) {
+    if (isAbsent) {
+      return const Color(0xFFE7E6E6);
+    }
+
+    if (marks == null || maxMarks <= 0) {
+      return null;
+    }
+
+    final percentage = marks / maxMarks;
+
+    if (percentage >= 0.70) {
+      return const Color(0xFFD9EAD3);
+    }
+
+    if (percentage >= 0.50) {
+      return const Color(0xFFFFF2CC);
+    }
+
+    return const Color(0xFFF4CCCC);
+  }
+}
+
+
+lib/utils/award_progress_image_generator.dart:
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+
+import '../services/award_progress_service.dart';
+
+class AwardProgressImageGenerator {
+  static Future<Uint8List> generate(AwardProgressBundle data) async {
+    const margin = 28.0;
+    const serialWidth = 64.0;
+    const testWidth = 118.0;
+
+    const titleHeight = 105.0;
+    const infoHeight = 58.0;
+    const headerHeight = 78.0;
+    const rowHeight = 50.0;
+    const footerHeight = 78.0;
+
+    final nameWidth = _calculateNameWidth(data.students);
+
+    final tableWidth =
+        serialWidth + nameWidth + (data.tests.length * testWidth);
+
+    final pageWidth = tableWidth + (margin * 2);
+
+    final pageHeight =
+        margin +
+        titleHeight +
+        infoHeight +
+        headerHeight +
+        (data.students.length * rowHeight) +
+        footerHeight +
+        margin;
+
+    final recorder = ui.PictureRecorder();
+
+    final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, pageWidth, pageHeight));
+
+    final blackBorder = Paint()
+      ..color = Colors.black
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+
+    final outerBorder = Paint()
+      ..color = Colors.black
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke;
+
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, pageWidth, pageHeight),
+      Paint()..color = Colors.white,
+    );
+
+    final left = margin;
+
+    var y = margin;
+
+    canvas.drawRect(
+      Rect.fromLTWH(left, y, tableWidth, pageHeight - (margin * 2)),
+      outerBorder,
+    );
+
+    // ========================================================
+    // TITLE
+    // ========================================================
+
+    _centerText(
+      canvas,
+      'FGEIs ECC Wah',
+      Rect.fromLTWH(left, y + 8, tableWidth, 36),
+      fontSize: 27,
+      weight: FontWeight.w900,
+    );
+
+    _centerText(
+      canvas,
+      '${data.batchName} • '
+      '${data.subjectName} '
+      'Progress Sheet',
+      Rect.fromLTWH(left + 10, y + 49, tableWidth - 20, 38),
+      fontSize: 23,
+      weight: FontWeight.w900,
+    );
+
+    y += titleHeight;
+
+    canvas.drawLine(Offset(left, y), Offset(left + tableWidth, y), blackBorder);
+
+    // ========================================================
+    // INFO
+    // ========================================================
+
+    _leftText(
+      canvas,
+      'Tests: ${data.tests.length}',
+      Rect.fromLTWH(left + 14, y, tableWidth * 0.30, infoHeight),
+      fontSize: 16,
+      weight: FontWeight.w700,
+    );
+
+    _centerText(
+      canvas,
+      'Students: ${data.students.length}',
+      Rect.fromLTWH(
+        left + (tableWidth * 0.30),
+        y,
+        tableWidth * 0.30,
+        infoHeight,
+      ),
+      fontSize: 16,
+      weight: FontWeight.w700,
+    );
+
+    _rightText(
+      canvas,
+      'Prepared By: '
+      '${data.preparedBy}',
+      Rect.fromLTWH(
+        left + (tableWidth * 0.58),
+        y,
+        (tableWidth * 0.42) - 14,
+        infoHeight,
+      ),
+      fontSize: 15,
+      weight: FontWeight.w700,
+    );
+
+    y += infoHeight;
+
+    // ========================================================
+    // TABLE HEADER
+    // ========================================================
+
+    final tableTop = y;
+
+    final tableHeight = headerHeight + (data.students.length * rowHeight);
+
+    // Header labels
+    _centerText(
+      canvas,
+      '#',
+      Rect.fromLTWH(left, y, serialWidth, headerHeight),
+      fontSize: 19,
+      weight: FontWeight.w900,
+    );
+
+    _centerText(
+      canvas,
+      'STUDENT',
+      Rect.fromLTWH(left + serialWidth, y, nameWidth, headerHeight),
+      fontSize: 20,
+      weight: FontWeight.w900,
+    );
+
+    for (var i = 0; i < data.tests.length; i++) {
+      final test = data.tests[i];
+
+      final x = left + serialWidth + nameWidth + (i * testWidth);
+
+      _centerText(
+        canvas,
+        test.label,
+        Rect.fromLTWH(x, y + 5, testWidth, 25),
+        fontSize: 18,
+        weight: FontWeight.w900,
+      );
+
+      _centerText(
+        canvas,
+        test.testDate == null ? '' : DateFormat('dd/MM').format(test.testDate!),
+        Rect.fromLTWH(x, y + 30, testWidth, 20),
+        fontSize: 12,
+        weight: FontWeight.w600,
+      );
+
+      _centerText(
+        canvas,
+        '/${_number(test.maxMarks)}',
+        Rect.fromLTWH(x, y + 50, testWidth, 21),
+        fontSize: 13,
+        weight: FontWeight.w700,
+      );
+    }
+
+    y += headerHeight;
+
+    // ========================================================
+    // STUDENT ROWS
+    // ========================================================
+
+    for (var rowIndex = 0; rowIndex < data.students.length; rowIndex++) {
+      final student = data.students[rowIndex];
+
+      _centerText(
+        canvas,
+        '${rowIndex + 1}',
+        Rect.fromLTWH(left, y, serialWidth, rowHeight),
+        fontSize: 17,
+        weight: FontWeight.w700,
+      );
+
+      _leftText(
+        canvas,
+        student.name,
+        Rect.fromLTWH(left + serialWidth + 10, y, nameWidth - 20, rowHeight),
+        fontSize: 18,
+        weight: FontWeight.w600,
+      );
+
+      for (var testIndex = 0; testIndex < data.tests.length; testIndex++) {
+        final test = data.tests[testIndex];
+
+        final result = student.results[test.id];
+
+        final x = left + serialWidth + nameWidth + (testIndex * testWidth);
+
+        final cellRect = Rect.fromLTWH(
+          x + 1.5,
+          y + 1.5,
+          testWidth - 3,
+          rowHeight - 3,
+        );
+
+        final fill = _resultColor(result, test.maxMarks);
+
+        if (fill != null) {
+          canvas.drawRect(cellRect, Paint()..color = fill);
+        }
+
+        final text = result == null
+            ? '—'
+            : result.isAbsent
+            ? 'A'
+            : result.marks == null
+            ? '—'
+            : _number(result.marks!);
+
+        _centerText(
+          canvas,
+          text,
+          Rect.fromLTWH(x, y, testWidth, rowHeight),
+          fontSize: result?.isAbsent == true ? 19 : 17,
+          weight: FontWeight.w800,
+        );
+      }
+
+      y += rowHeight;
+    }
+
+    // ========================================================
+    // GRID
+    // ========================================================
+
+    final serialX = left + serialWidth;
+
+    final nameX = serialX + nameWidth;
+
+    canvas.drawRect(
+      Rect.fromLTWH(left, tableTop, tableWidth, tableHeight),
+      blackBorder,
+    );
+
+    canvas.drawLine(
+      Offset(serialX, tableTop),
+      Offset(serialX, tableTop + tableHeight),
+      blackBorder,
+    );
+
+    canvas.drawLine(
+      Offset(nameX, tableTop),
+      Offset(nameX, tableTop + tableHeight),
+      blackBorder,
+    );
+
+    for (var i = 1; i < data.tests.length; i++) {
+      final x = nameX + (i * testWidth);
+
+      canvas.drawLine(
+        Offset(x, tableTop),
+        Offset(x, tableTop + tableHeight),
+        blackBorder,
+      );
+    }
+
+    canvas.drawLine(
+      Offset(left, tableTop + headerHeight),
+      Offset(left + tableWidth, tableTop + headerHeight),
+      blackBorder,
+    );
+
+    for (var i = 1; i <= data.students.length; i++) {
+      final lineY = tableTop + headerHeight + (i * rowHeight);
+
+      canvas.drawLine(
+        Offset(left, lineY),
+        Offset(left + tableWidth, lineY),
+        blackBorder,
+      );
+    }
+
+    // ========================================================
+    // LEGEND
+    // ========================================================
+
+    final footerY = tableTop + tableHeight;
+
+    _legendItem(
+      canvas,
+      x: left + 14,
+      y: footerY + 17,
+      color: const Color(0xFFD9EAD3),
+      text: '70%+',
+    );
+
+    _legendItem(
+      canvas,
+      x: left + 130,
+      y: footerY + 17,
+      color: const Color(0xFFFFF2CC),
+      text: '50–69%',
+    );
+
+    _legendItem(
+      canvas,
+      x: left + 270,
+      y: footerY + 17,
+      color: const Color(0xFFF4CCCC),
+      text: '<50%',
+    );
+
+    _legendItem(
+      canvas,
+      x: left + 390,
+      y: footerY + 17,
+      color: const Color(0xFFE7E6E6),
+      text: 'A = Absent',
+    );
+
+    _rightText(
+      canvas,
+      'Generated from '
+      'FG Academy Portal',
+      Rect.fromLTWH(left + tableWidth - 320, footerY + 13, 300, 36),
+      fontSize: 12,
+      weight: FontWeight.w600,
+    );
+
+    final picture = recorder.endRecording();
+
+    final image = await picture.toImage(pageWidth.ceil(), pageHeight.ceil());
+
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+
+    image.dispose();
+    picture.dispose();
+
+    if (bytes == null) {
+      throw StateError(
+        'Could not generate '
+        'progress PNG.',
+      );
+    }
+
+    return bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes);
+  }
+
+  static double _calculateNameWidth(List<AwardProgressStudent> students) {
+    double longest = 0;
+
+    for (final student in students) {
+      final painter = TextPainter(
+        text: TextSpan(
+          text: student.name,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+        ),
+        textDirection: ui.TextDirection.ltr,
+        maxLines: 1,
+      );
+
+      painter.layout();
+
+      if (painter.width > longest) {
+        longest = painter.width;
+      }
+    }
+
+    return (longest + 34).clamp(210.0, 430.0).toDouble();
+  }
+
+  static Color? _resultColor(AwardProgressResult? result, double maxMarks) {
+    if (result == null) {
+      return null;
+    }
+
+    if (result.isAbsent) {
+      return const Color(0xFFE7E6E6);
+    }
+
+    final marks = result.marks;
+
+    if (marks == null || maxMarks <= 0) {
+      return null;
+    }
+
+    final ratio = marks / maxMarks;
+
+    if (ratio >= 0.70) {
+      return const Color(0xFFD9EAD3);
+    }
+
+    if (ratio >= 0.50) {
+      return const Color(0xFFFFF2CC);
+    }
+
+    return const Color(0xFFF4CCCC);
+  }
+
+  static String _number(double value) {
+    if (value == value.roundToDouble()) {
+      return value.toStringAsFixed(0);
+    }
+
+    return value.toStringAsFixed(1);
+  }
+
+  static void _legendItem(
+    Canvas canvas, {
+    required double x,
+    required double y,
+    required Color color,
+    required String text,
+  }) {
+    canvas.drawRect(Rect.fromLTWH(x, y, 24, 24), Paint()..color = color);
+
+    canvas.drawRect(
+      Rect.fromLTWH(x, y, 24, 24),
+      Paint()
+        ..color = Colors.black54
+        ..strokeWidth = 1
+        ..style = PaintingStyle.stroke,
+    );
+
+    _leftText(
+      canvas,
+      text,
+      Rect.fromLTWH(x + 31, y - 3, 95, 30),
+      fontSize: 12,
+      weight: FontWeight.w700,
+    );
+  }
+
+  static void _centerText(
+    Canvas canvas,
+    String text,
+    Rect rect, {
+    required double fontSize,
+    required FontWeight weight,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          color: Colors.black,
+          fontSize: fontSize,
+          fontWeight: weight,
+          height: 1.1,
+        ),
+      ),
+      textDirection: ui.TextDirection.ltr,
+      textAlign: TextAlign.center,
+      maxLines: 2,
+      ellipsis: '…',
+    );
+
+    painter.layout(maxWidth: rect.width);
+
+    painter.paint(
+      canvas,
+      Offset(
+        rect.left + (rect.width - painter.width) / 2,
+        rect.top + (rect.height - painter.height) / 2,
+      ),
+    );
+  }
+
+  static void _leftText(
+    Canvas canvas,
+    String text,
+    Rect rect, {
+    required double fontSize,
+    required FontWeight weight,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          color: Colors.black,
+          fontSize: fontSize,
+          fontWeight: weight,
+        ),
+      ),
+      textDirection: ui.TextDirection.ltr,
+      maxLines: 1,
+      ellipsis: '…',
+    );
+
+    painter.layout(maxWidth: rect.width);
+
+    painter.paint(
+      canvas,
+      Offset(rect.left, rect.top + (rect.height - painter.height) / 2),
+    );
+  }
+
+  static void _rightText(
+    Canvas canvas,
+    String text,
+    Rect rect, {
+    required double fontSize,
+    required FontWeight weight,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          color: Colors.black87,
+          fontSize: fontSize,
+          fontWeight: weight,
+        ),
+      ),
+      textDirection: ui.TextDirection.ltr,
+      maxLines: 1,
+      ellipsis: '…',
+    );
+
+    painter.layout(maxWidth: rect.width);
+
+    painter.paint(
+      canvas,
+      Offset(
+        rect.right - painter.width,
+        rect.top + (rect.height - painter.height) / 2,
+      ),
+    );
+  }
+}
 
 
 lib/utils/dashboard_section_header.dart:
@@ -18657,6 +22430,110 @@ List<dynamic> sortStudents(List<dynamic> students) {
 }
 
 
+lib/utils/student_group_helper.dart:
+List<String> studentGroupCodesForClass(int classLevel) {
+  if (classLevel <= 10) {
+    return const ['Comp', 'Bio'];
+  }
+
+  return const ['Comp', 'Chem', 'Bio'];
+}
+
+String studentGroupLabel(int classLevel, String groupCode) {
+  if (classLevel <= 10) {
+    switch (groupCode) {
+      case 'Comp':
+        return 'Computer';
+
+      case 'Bio':
+        return 'Biology';
+
+      default:
+        return groupCode;
+    }
+  }
+
+  switch (groupCode) {
+    case 'Comp':
+      return 'FCS';
+
+    case 'Chem':
+      return 'Pre-Engineering';
+
+    case 'Bio':
+      return 'Pre-Medical';
+
+    default:
+      return groupCode;
+  }
+}
+
+List<String> studentSubjectsForGroup(int classLevel, String groupCode) {
+  if (classLevel <= 10) {
+    switch (groupCode) {
+      case 'Comp':
+        return const ['Phy', 'Chem', 'Math', 'Eng', 'Comp'];
+
+      case 'Bio':
+        return const ['Phy', 'Chem', 'Math', 'Eng', 'Bio'];
+
+      default:
+        return const [];
+    }
+  }
+
+  switch (groupCode) {
+    // FCS
+    case 'Comp':
+      return const ['Phy', 'Math', 'Eng', 'Comp'];
+
+    // Pre-Engineering
+    case 'Chem':
+      return const ['Phy', 'Chem', 'Math', 'Eng'];
+
+    // Pre-Medical
+    case 'Bio':
+      return const ['Phy', 'Chem', 'Eng', 'Bio'];
+
+    default:
+      return const [];
+  }
+}
+
+String? inferStudentGroupCode(int classLevel, Iterable<String> subjects) {
+  final values = subjects.toSet();
+
+  if (classLevel <= 10) {
+    if (values.contains('Comp')) {
+      return 'Comp';
+    }
+
+    if (values.contains('Bio')) {
+      return 'Bio';
+    }
+
+    return null;
+  }
+
+  // Important order:
+  // Pre-Med contains both Biology AND Chemistry,
+  // so Biology must be checked before Chemistry.
+  if (values.contains('Comp')) {
+    return 'Comp';
+  }
+
+  if (values.contains('Bio')) {
+    return 'Bio';
+  }
+
+  if (values.contains('Chem')) {
+    return 'Chem';
+  }
+
+  return null;
+}
+
+
 lib/widgets/academy_background.dart:
 import 'package:flutter/material.dart';
 
@@ -18790,6 +22667,7 @@ dependencies:
   pdf: ^3.12.0
   printing: ^5.14.3
   intl: ^0.20.3
+  share_plus: ^13.3.1
 
 dev_dependencies:
   flutter_test:

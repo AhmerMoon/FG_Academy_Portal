@@ -104,6 +104,22 @@ class _StudentsScreenState extends State<StudentsScreen> {
     }
   }
 
+  bool _shouldFilterAttendanceBySubject(int classLevel, String? subjectCode) {
+    if (subjectCode == null) {
+      return false;
+    }
+
+    if (classLevel == 9 || classLevel == 10) {
+      return const {'Comp', 'Bio'}.contains(subjectCode);
+    }
+
+    if (classLevel == 11 || classLevel == 12) {
+      return const {'Comp', 'Bio', 'Chem'}.contains(subjectCode);
+    }
+
+    return false;
+  }
+
   int _absenceStreakFor(String studentId) {
     final previous = _priorAbsenceStreak[studentId] ?? 0;
 
@@ -133,9 +149,9 @@ class _StudentsScreenState extends State<StudentsScreen> {
     }
 
     try {
-      // -------------------------------------------------------
+      // ========================================================
       // CLASS CONTEXT
-      // -------------------------------------------------------
+      // ========================================================
 
       final batchRow = await supabase
           .from('batches')
@@ -149,9 +165,9 @@ class _StudentsScreenState extends State<StudentsScreen> {
         throw StateError('Batch class level is unavailable.');
       }
 
-      // -------------------------------------------------------
-      // CURRENT TEACHER SUBJECT FOR THIS CLASS
-      // -------------------------------------------------------
+      // ========================================================
+      // TEACHER SUBJECT
+      // ========================================================
 
       String? teacherSubject;
 
@@ -170,9 +186,14 @@ class _StudentsScreenState extends State<StudentsScreen> {
         }
       }
 
-      // -------------------------------------------------------
-      // STUDENTS + TODAY ATTENDANCE + RECENT HISTORY
-      // -------------------------------------------------------
+      final filterBySubject = _shouldFilterAttendanceBySubject(
+        classLevel,
+        teacherSubject,
+      );
+
+      // ========================================================
+      // STUDENTS + ATTENDANCE
+      // ========================================================
 
       final today = DateTime.parse(todayDate);
 
@@ -181,7 +202,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
       final results = await Future.wait<dynamic>([
         supabase
             .from('students')
-            .select('id, name')
+            .select('id, name, stream')
             .eq('batch_id', widget.batchId)
             .order('name', ascending: true),
 
@@ -200,16 +221,34 @@ class _StudentsScreenState extends State<StudentsScreen> {
             .order('date', ascending: false),
       ]);
 
-      final studentRows = sortStudents(results[0] as List);
+      final rawStudents = results[0] as List;
+
+      final filteredStudents = rawStudents.where((raw) {
+        if (!filterBySubject) {
+          return true;
+        }
+
+        final stream = raw['stream'];
+
+        if (stream is! List) {
+          return false;
+        }
+
+        return stream.map((item) => item.toString()).contains(teacherSubject);
+      }).toList();
+
+      final studentRows = sortStudents(filteredStudents);
+
+      final visibleIds = studentRows
+          .map((student) => student['id'].toString())
+          .toSet();
 
       final attendanceRows = results[1] as List;
 
       final historyRows = results[2] as List;
 
       attendanceStatus.clear();
-
       _priorAbsenceStreak.clear();
-
       modifiedStudents.clear();
 
       for (final student in studentRows) {
@@ -221,8 +260,13 @@ class _StudentsScreenState extends State<StudentsScreen> {
       }
 
       for (final row in attendanceRows) {
-        attendanceStatus[row['student_id'].toString()] = row['status']
-            ?.toString();
+        final studentId = row['student_id'].toString();
+
+        if (!visibleIds.contains(studentId)) {
+          continue;
+        }
+
+        attendanceStatus[studentId] = row['status']?.toString();
       }
 
       final historyByStudent = <String, List<Map<String, dynamic>>>{};
@@ -232,7 +276,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
 
         final studentId = row['student_id']?.toString();
 
-        if (studentId == null) {
+        if (studentId == null || !visibleIds.contains(studentId)) {
           continue;
         }
 

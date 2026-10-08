@@ -319,6 +319,24 @@ class AwardListImageGenerator {
           ? ''
           : _formatMarks(student.marks!);
 
+      final resultBackground = _awardResultColor(
+        marks: student.marks,
+        isAbsent: student.isAbsent,
+        maxMarks: data.maxMarks,
+      );
+
+      if (resultBackground != null) {
+        canvas.drawRect(
+          Rect.fromLTWH(
+            marksDivider + 2,
+            y + 2,
+            marksWidth - 4,
+            studentRowHeight - 4,
+          ),
+          Paint()..color = resultBackground,
+        );
+      }
+
       _drawCenteredText(
         canvas,
         text: resultText,
@@ -524,5 +542,31 @@ class AwardListImageGenerator {
     final dy = rect.top + ((rect.height - painter.height) / 2);
 
     painter.paint(canvas, Offset(dx, dy));
+  }
+
+  static Color? _awardResultColor({
+    required double? marks,
+    required bool isAbsent,
+    required double maxMarks,
+  }) {
+    if (isAbsent) {
+      return const Color(0xFFE7E6E6);
+    }
+
+    if (marks == null || maxMarks <= 0) {
+      return null;
+    }
+
+    final percentage = marks / maxMarks;
+
+    if (percentage >= 0.70) {
+      return const Color(0xFFD9EAD3);
+    }
+
+    if (percentage >= 0.50) {
+      return const Color(0xFFFFF2CC);
+    }
+
+    return const Color(0xFFF4CCCC);
   }
 }

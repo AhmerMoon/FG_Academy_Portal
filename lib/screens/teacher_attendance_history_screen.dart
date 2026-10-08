@@ -11,10 +11,15 @@ class TeacherAttendanceHistoryScreen extends StatefulWidget {
   final String batchId;
   final String batchName;
 
+  final int? classLevel;
+  final String? teacherSubjectCode;
+
   const TeacherAttendanceHistoryScreen({
     super.key,
     required this.batchId,
     required this.batchName,
+    this.classLevel,
+    this.teacherSubjectCode,
   });
 
   @override
@@ -52,7 +57,28 @@ class _TeacherAttendanceHistoryScreenState
   @override
   void initState() {
     super.initState();
+
     _load();
+  }
+
+  bool get _filterBySubject {
+    final classLevel = widget.classLevel;
+
+    final subject = widget.teacherSubjectCode;
+
+    if (classLevel == null || subject == null) {
+      return false;
+    }
+
+    if (classLevel == 9 || classLevel == 10) {
+      return const {'Comp', 'Bio'}.contains(subject);
+    }
+
+    if (classLevel == 11 || classLevel == 12) {
+      return const {'Comp', 'Bio', 'Chem'}.contains(subject);
+    }
+
+    return false;
   }
 
   Future<void> _load() async {
@@ -67,9 +93,10 @@ class _TeacherAttendanceHistoryScreenState
       final results = await Future.wait<dynamic>([
         _supabase
             .from('students')
-            .select('id, name')
+            .select('id, name, stream')
             .eq('batch_id', widget.batchId)
             .order('name', ascending: true),
+
         _supabase
             .from('attendance')
             .select('student_id, status')
@@ -77,7 +104,29 @@ class _TeacherAttendanceHistoryScreenState
             .eq('date', _dateString),
       ]);
 
-      final students = sortStudents(results[0] as List);
+      final rawStudents = results[0] as List;
+
+      final subject = widget.teacherSubjectCode;
+
+      final filteredStudents = rawStudents.where((raw) {
+        if (!_filterBySubject) {
+          return true;
+        }
+
+        final stream = raw['stream'];
+
+        if (stream is! List) {
+          return false;
+        }
+
+        return stream.map((item) => item.toString()).contains(subject);
+      }).toList();
+
+      final students = sortStudents(filteredStudents);
+
+      final visibleIds = students
+          .map((student) => student['id'].toString())
+          .toSet();
 
       final rows = results[1] as List;
 
@@ -88,9 +137,11 @@ class _TeacherAttendanceHistoryScreenState
 
         final status = row['status']?.toString();
 
-        if (id != null && status != null) {
-          attendance[id] = status;
+        if (id == null || status == null || !visibleIds.contains(id)) {
+          continue;
         }
+
+        attendance[id] = status;
       }
 
       if (!mounted) return;
@@ -303,19 +354,19 @@ class _TeacherAttendanceHistoryScreenState
                               ? 'Absent'
                               : 'Unmarked';
 
-                          final icon = present
-                              ? Icons.check_circle_rounded
-                              : absent
-                              ? Icons.cancel_rounded
-                              : Icons.help_outline_rounded;
-
                           return Card(
                             margin: const EdgeInsets.only(bottom: 8),
                             child: ListTile(
                               leading: CircleAvatar(
                                 backgroundColor: color.withValues(alpha: 0.10),
                                 foregroundColor: color,
-                                child: Icon(icon),
+                                child: Icon(
+                                  present
+                                      ? Icons.check_circle_rounded
+                                      : absent
+                                      ? Icons.cancel_rounded
+                                      : Icons.help_outline_rounded,
+                                ),
                               ),
                               title: Text(
                                 name,
