@@ -6,6 +6,11 @@ import '../../utils/dashboard_section_header.dart';
 import '../../utils/error_state_view.dart';
 import '../../utils/list_sorting.dart';
 import '../../widgets/academy_background.dart';
+import '../../widgets/student_subject_selector.dart';
+import '../../models/fee_models.dart';
+import '../../services/fee_service.dart';
+import '../../utils/fee_month.dart';
+import '../../widgets/add_student_dialog.dart';
 
 class StudentsTab extends StatefulWidget {
   final Function(Widget screen)? onNavigate;
@@ -257,6 +262,16 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
 
   String selectedFilter = 'All';
 
+  final FeeService _feeService = FeeService();
+
+  final TextEditingController _searchController = TextEditingController();
+
+  String _searchQuery = '';
+
+  bool _showSearch = false;
+
+  bool _addingStudent = false;
+
   @override
   void initState() {
     super.initState();
@@ -264,17 +279,25 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
     fetchStudents();
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   List<String> get filters {
     if (widget.classLevel == 9 || widget.classLevel == 10) {
-      return const ['All', 'Computer', 'Biology'];
+      return const ['All', 'Computer', 'Biology', 'Single Subject'];
     }
 
-    if (widget.classLevel == 11) {
-      return const ['All', 'FCS', 'Pre-Med', 'Pre-Eng'];
-    }
-
-    if (widget.classLevel == 12) {
-      return const ['All', 'FCS', 'Pre-Med', 'Pre-Eng', 'Single Subject'];
+    if (widget.classLevel == 11 || widget.classLevel == 12) {
+      return const [
+        'All',
+        'Computer',
+        'Biology',
+        'Chemistry',
+        'Single Subject',
+      ];
     }
 
     return const ['All'];
@@ -320,32 +343,42 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
 
     final subjects = _subjects(student['stream']);
 
-    if (selectedFilter == 'Single Subject') {
-      return subjects.length == 1;
-    }
-
-    if (subjects.length == 1) {
-      return false;
-    }
-
     switch (selectedFilter) {
       case 'Computer':
-      case 'FCS':
         return subjects.contains('Comp');
 
       case 'Biology':
-      case 'Pre-Med':
         return subjects.contains('Bio');
 
-      case 'Pre-Eng':
+      case 'Chemistry':
         return subjects.contains('Chem');
+
+      case 'Single Subject':
+        return subjects.length == 1;
 
       default:
         return true;
     }
   }
 
-  List<dynamic> get visibleStudents => students.where(_matchesFilter).toList();
+  List<dynamic> get visibleStudents {
+    final query = _searchQuery.trim().toLowerCase();
+
+    return students.where((student) {
+      if (!_matchesFilter(student)) {
+        return false;
+      }
+
+      if (query.isEmpty) {
+        return true;
+      }
+
+      final studentName =
+          student['name']?.toString().trim().toLowerCase() ?? '';
+
+      return studentName.contains(query);
+    }).toList();
+  }
 
   Future<void> fetchStudents() async {
     try {
@@ -377,27 +410,97 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
     }
   }
 
+  Future<void> _addStudentFromStudentsTab() async {
+    if (_addingStudent) return;
+
+    final batch = FeeBatch(
+      id: widget.batchId,
+      name: widget.batchName,
+      classLevel: widget.classLevel,
+    );
+
+    final paymentMonth = FeeMonth.fromDate(DateTime.now());
+
+    final request = await showAcademyAddStudentDialog(
+      context: context,
+      batches: [batch],
+      initialBatch: batch,
+      paymentMonth: paymentMonth,
+      lockBatch: true,
+    );
+
+    if (!mounted || request == null) return;
+
+    setState(() {
+      _addingStudent = true;
+    });
+
+    try {
+      await _feeService.addStudent(
+        name: request.name,
+        batchId: request.batch.id,
+        defaultFee: request.defaultFee,
+        subjects: request.subjects,
+        paymentMonth: paymentMonth,
+      );
+
+      if (!mounted) return;
+
+      _searchController.clear();
+
+      setState(() {
+        _searchQuery = '';
+        _showSearch = false;
+        selectedFilter = 'All';
+      });
+
+      await fetchStudents();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${request.name} added successfully.\n'
+            'Today attendance: Present\n'
+            '$paymentMonth fee: Unpaid',
+          ),
+          backgroundColor: AppTheme.success,
+        ),
+      );
+    } catch (e) {
+      debugPrint('Students tab add student error: $e');
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Unable to add student.\n$e'),
+          backgroundColor: AppTheme.danger,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _addingStudent = false;
+        });
+      }
+    }
+  }
+
   Future<void> _editStudent(Map<String, dynamic> student) async {
     final controller = TextEditingController(
       text: student['name']?.toString() ?? '',
     );
 
-    final existingSubjects = _subjects(student['stream']);
-
-    // XII Girls ke existing special
-    // single-subject records ko preserve karo.
-    final isSingleSubject =
-        widget.classLevel == 12 && existingSubjects.length == 1;
-
-    String? selectedGroupCode = isSingleSubject
-        ? null
-        : inferStudentGroupCode(widget.classLevel, existingSubjects);
+    var selectedSubjects = normalizeStudentSubjects(
+      widget.classLevel,
+      _subjects(student['stream']),
+    );
 
     String status = student['status']?.toString() == 'trial'
         ? 'trial'
         : 'enrolled';
-
-    List<String> selectedSubjectsForSave = [];
 
     String? dialogError;
 
@@ -407,21 +510,10 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            final groupCodes = studentGroupCodesForClass(widget.classLevel);
-
-            final subjects = isSingleSubject
-                ? List<String>.from(existingSubjects)
-                : selectedGroupCode == null
-                ? <String>[]
-                : studentSubjectsForGroup(
-                    widget.classLevel,
-                    selectedGroupCode!,
-                  );
-
             return AlertDialog(
               title: const Text('Edit Student'),
               content: SizedBox(
-                width: 500,
+                width: 520,
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -467,132 +559,22 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
 
                       const SizedBox(height: 20),
 
-                      if (isSingleSubject) ...[
-                        Container(
-                          padding: const EdgeInsets.all(13),
-                          decoration: BoxDecoration(
-                            color: AppTheme.warning.withValues(alpha: 0.08),
-                            borderRadius: BorderRadius.circular(11),
-                            border: Border.all(
-                              color: AppTheme.warning.withValues(alpha: 0.25),
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Row(
-                                children: [
-                                  Icon(
-                                    Icons.info_outline_rounded,
-                                    color: AppTheme.warning,
-                                  ),
-                                  SizedBox(width: 8),
-                                  Text(
-                                    'Single Subject Student',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Existing subject: '
-                                '${_subjectLabel(existingSubjects.first)}',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              const SizedBox(height: 5),
-                              const Text(
-                                'This special XII record will keep its existing single subject.',
-                                style: TextStyle(color: AppTheme.textSecondary),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ] else ...[
-                        Text(
-                          widget.classLevel <= 10
-                              ? 'Student Group'
-                              : 'HSSC Group',
-                          style: const TextStyle(
-                            color: AppTheme.fgNavyBlue,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
+                      StudentSubjectSelector(
+                        classLevel: widget.classLevel,
+                        selectedSubjects: selectedSubjects,
+                        onChanged: (subjects) {
+                          setDialogState(() {
+                            selectedSubjects = subjects;
 
-                        const SizedBox(height: 5),
-
-                        Text(
-                          widget.classLevel <= 10
-                              ? 'Choose Computer or Biology. Subjects are fixed automatically.'
-                              : 'Choose FCS, Pre-Engineering or Pre-Medical. Correct subjects are fixed automatically.',
-                          style: const TextStyle(
-                            color: AppTheme.textSecondary,
-                            fontSize: 13,
-                          ),
-                        ),
-
-                        const SizedBox(height: 10),
-
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: groupCodes.map((code) {
-                            return ChoiceChip(
-                              selected: selectedGroupCode == code,
-                              label: Text(
-                                studentGroupLabel(widget.classLevel, code),
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              onSelected: (selected) {
-                                if (!selected) {
-                                  return;
-                                }
-
-                                setDialogState(() {
-                                  selectedGroupCode = code;
-
-                                  dialogError = null;
-                                });
-                              },
-                            );
-                          }).toList(),
-                        ),
-
-                        if (subjects.isNotEmpty) ...[
-                          const SizedBox(height: 18),
-
-                          const Text(
-                            'Subjects',
-                            style: TextStyle(
-                              color: AppTheme.fgNavyBlue,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-
-                          const SizedBox(height: 8),
-
-                          Wrap(
-                            spacing: 7,
-                            runSpacing: 7,
-                            children: subjects.map((code) {
-                              return Chip(
-                                avatar: const Icon(
-                                  Icons.check_circle_rounded,
-                                  color: AppTheme.success,
-                                  size: 17,
-                                ),
-                                label: Text(_subjectLabel(code)),
-                              );
-                            }).toList(),
-                          ),
-                        ],
-                      ],
+                            dialogError = null;
+                          });
+                        },
+                        onValidationError: (message) {
+                          setDialogState(() {
+                            dialogError = message;
+                          });
+                        },
+                      ),
 
                       if (dialogError != null) ...[
                         const SizedBox(height: 12),
@@ -608,48 +590,30 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                   ),
                 ),
               ),
+
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(dialogContext, false),
                   child: const Text('Cancel'),
                 ),
-
                 ElevatedButton.icon(
                   onPressed: () {
                     if (controller.text.trim().isEmpty) {
                       setDialogState(() {
                         dialogError = 'Student name is required.';
                       });
-
                       return;
                     }
 
-                    if (isSingleSubject) {
-                      selectedSubjectsForSave = List<String>.from(
-                        existingSubjects,
-                      );
-                    } else {
-                      if (selectedGroupCode == null) {
-                        setDialogState(() {
-                          dialogError = widget.classLevel <= 10
-                              ? 'Please choose Computer or Biology.'
-                              : 'Please choose FCS, Pre-Engineering or Pre-Medical.';
-                        });
+                    final validation = studentSubjectSelectionError(
+                      widget.classLevel,
+                      selectedSubjects,
+                    );
 
-                        return;
-                      }
-
-                      selectedSubjectsForSave = studentSubjectsForGroup(
-                        widget.classLevel,
-                        selectedGroupCode!,
-                      );
-                    }
-
-                    if (selectedSubjectsForSave.isEmpty) {
+                    if (validation != null) {
                       setDialogState(() {
-                        dialogError = 'Unable to determine student subjects.';
+                        dialogError = validation;
                       });
-
                       return;
                     }
 
@@ -684,7 +648,7 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
           'p_student_id': student['id'].toString(),
           'p_name': name,
           'p_status': status,
-          'p_stream': selectedSubjectsForSave,
+          'p_stream': selectedSubjects,
         },
       );
 
@@ -787,13 +751,51 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
           },
           icon: const Icon(Icons.arrow_back_rounded),
         ),
-        title: Text(widget.batchName),
+
+        title: Text(
+          widget.batchName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
           IconButton(
-            tooltip: 'Refresh',
-            onPressed: fetchStudents,
-            icon: const Icon(Icons.refresh_rounded),
+            tooltip: _showSearch
+                ? 'Close student search'
+                : 'Search student by name',
+            onPressed: () {
+              setState(() {
+                _showSearch = !_showSearch;
+
+                if (!_showSearch) {
+                  _searchController.clear();
+                  _searchQuery = '';
+                }
+              });
+            },
+            icon: Icon(
+              _showSearch ? Icons.close_rounded : Icons.search_rounded,
+            ),
           ),
+          IconButton(
+            tooltip: 'Add Student',
+            onPressed: _addingStudent ? null : _addStudentFromStudentsTab,
+            icon: _addingStudent
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.person_add_alt_1_rounded),
+          ),
+          if (!narrow)
+            IconButton(
+              tooltip: 'Refresh Students',
+              onPressed: fetchStudents,
+              icon: const Icon(Icons.refresh_rounded),
+            ),
         ],
       ),
 
@@ -804,9 +806,53 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
             ? ErrorStateView(message: errorMessage!, onRetry: fetchStudents)
             : RefreshIndicator(
                 onRefresh: fetchStudents,
+
                 child: CustomScrollView(
                   physics: const AlwaysScrollableScrollPhysics(),
                   slivers: [
+                    if (_showSearch)
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(9, 8, 9, 0),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 480),
+                              child: TextField(
+                                controller: _searchController,
+                                autofocus: true,
+                                textInputAction: TextInputAction.search,
+                                decoration: InputDecoration(
+                                  hintText: 'Search student by name',
+                                  isDense: true,
+                                  prefixIcon: const Icon(Icons.search_rounded),
+                                  suffixIcon: _searchQuery.isEmpty
+                                      ? null
+                                      : IconButton(
+                                          tooltip: 'Clear search',
+                                          onPressed: () {
+                                            _searchController.clear();
+
+                                            setState(() {
+                                              _searchQuery = '';
+                                            });
+                                          },
+                                          icon: const Icon(Icons.close_rounded),
+                                        ),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                onChanged: (value) {
+                                  setState(() {
+                                    _searchQuery = value;
+                                  });
+                                },
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                     SliverToBoxAdapter(
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(9, 8, 9, 5),
@@ -928,12 +974,21 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                     ),
 
                     if (visible.isEmpty)
-                      const SliverFillRemaining(
+                      SliverFillRemaining(
                         hasScrollBody: false,
                         child: Center(
-                          child: Text(
-                            'No students match this filter.',
-                            style: TextStyle(fontSize: 15),
+                          child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Text(
+                              _searchQuery.trim().isNotEmpty
+                                  ? 'No matching student found in ${widget.batchName}.'
+                                  : 'No students match this filter.',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                color: AppTheme.textSecondary,
+                              ),
+                            ),
                           ),
                         ),
                       )

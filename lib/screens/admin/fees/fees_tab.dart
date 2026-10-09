@@ -11,7 +11,7 @@ import '../../../utils/error_state_view.dart';
 import '../../../utils/fee_month.dart';
 import '../../../utils/fee_pdf_generator.dart';
 import 'fee_audit_dashboard.dart';
-import '../../../utils/student_group_helper.dart';
+import '../../../widgets/add_student_dialog.dart';
 
 class FeesTab extends StatefulWidget {
   const FeesTab({super.key});
@@ -139,6 +139,12 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
   bool _addingStudent = false;
 
   bool _mobileFiltersExpanded = false;
+  bool _mobileSearchExpanded = false;
+
+  final TextEditingController _studentSearchController =
+      TextEditingController();
+
+  String _studentSearchQuery = '';
 
   String? _errorMessage;
 
@@ -149,8 +155,59 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
     _bootstrap();
   }
 
+  @override
+  void dispose() {
+    _studentSearchController.dispose();
+    super.dispose();
+  }
+
   String _money(double value) {
     return 'Rs ${_moneyFormat.format(value)}';
+  }
+
+  void _clearStudentSearch() {
+    _studentSearchController.clear();
+    _studentSearchQuery = '';
+  }
+
+  List<FeeStudentEntry> get _visibleEntries {
+    final query = _studentSearchQuery.trim().toLowerCase();
+
+    if (query.isEmpty) {
+      return _entries;
+    }
+
+    return _entries.where((entry) {
+      return entry.name.toLowerCase().contains(query);
+    }).toList();
+  }
+
+  Widget _buildStudentSearchField() {
+    return TextField(
+      controller: _studentSearchController,
+      textInputAction: TextInputAction.search,
+      decoration: InputDecoration(
+        hintText: 'Search student in selected batch',
+        isDense: true,
+        prefixIcon: const Icon(Icons.search_rounded),
+        suffixIcon: _studentSearchQuery.isEmpty
+            ? null
+            : IconButton(
+                tooltip: 'Clear search',
+                onPressed: () {
+                  setState(() {
+                    _clearStudentSearch();
+                  });
+                },
+                icon: const Icon(Icons.close_rounded),
+              ),
+      ),
+      onChanged: (value) {
+        setState(() {
+          _studentSearchQuery = value;
+        });
+      },
+    );
   }
 
   Future<void> _bootstrap() async {
@@ -555,360 +612,26 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
 
   Future<void> _showAddStudentDialog() async {
     final currentBatch = _selectedBatch;
-
     final paymentMonth = _selectedMonth;
 
     if (currentBatch == null || paymentMonth == null) {
       _showMessage('Select a batch and fee month first.', error: true);
-
       return;
     }
 
-    FeeBatch dialogBatch = currentBatch;
-
-    final nameController = TextEditingController();
-
-    final feeController = TextEditingController(
-      text: dialogBatch.classLevel <= 10 ? '5500' : '6000',
-    );
-
-    String? selectedGroupCode;
-
-    String? dialogError;
-
-    final request = await showDialog<_NewFeeStudentRequest>(
+    final request = await showAcademyAddStudentDialog(
       context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            final groupCodes = studentGroupCodesForClass(
-              dialogBatch.classLevel,
-            );
-
-            final subjects = selectedGroupCode == null
-                ? <String>[]
-                : studentSubjectsForGroup(
-                    dialogBatch.classLevel,
-                    selectedGroupCode!,
-                  );
-
-            return AlertDialog(
-              title: Row(
-                children: [
-                  Container(
-                    width: 42,
-                    height: 42,
-                    decoration: BoxDecoration(
-                      color: AppTheme.fgNavyBlue.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(11),
-                    ),
-                    child: const Icon(
-                      Icons.person_add_alt_1,
-                      color: AppTheme.fgNavyBlue,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  const Expanded(child: Text('Add New Student')),
-                ],
-              ),
-              content: SizedBox(
-                width: 500,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      DropdownButtonFormField<String>(
-                        key: ValueKey(dialogBatch.id),
-                        initialValue: dialogBatch.id,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Batch',
-                          prefixIcon: Icon(Icons.class_outlined),
-                        ),
-                        items: _batches
-                            .map(
-                              (batch) => DropdownMenuItem(
-                                value: batch.id,
-                                child: Text(batch.name),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (value) {
-                          if (value == null) {
-                            return;
-                          }
-
-                          final newBatch = _batches.firstWhere(
-                            (batch) => batch.id == value,
-                          );
-
-                          setDialogState(() {
-                            dialogBatch = newBatch;
-
-                            feeController.text = newBatch.classLevel <= 10
-                                ? '5500'
-                                : '6000';
-
-                            // Force user to
-                            // confirm the group.
-                            selectedGroupCode = null;
-
-                            dialogError = null;
-                          });
-                        },
-                      ),
-
-                      const SizedBox(height: 14),
-
-                      TextFormField(
-                        controller: nameController,
-                        textCapitalization: TextCapitalization.words,
-                        decoration: const InputDecoration(
-                          labelText: 'Student Name',
-                          prefixIcon: Icon(Icons.person),
-                        ),
-                      ),
-
-                      const SizedBox(height: 14),
-
-                      TextFormField(
-                        controller: feeController,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        inputFormatters: [
-                          FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
-                        ],
-                        decoration: InputDecoration(
-                          labelText: 'Default Monthly Fee',
-                          prefixText: 'Rs ',
-                          helperText: dialogBatch.classLevel <= 10
-                              ? 'SSC suggested fee: Rs 5,500'
-                              : 'HSSC suggested fee: Rs 6,000',
-                        ),
-                      ),
-
-                      const SizedBox(height: 20),
-
-                      Text(
-                        dialogBatch.classLevel <= 10
-                            ? 'Choose Group'
-                            : 'Choose HSSC Group',
-                        style: const TextStyle(
-                          color: AppTheme.fgNavyBlue,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-
-                      const SizedBox(height: 5),
-
-                      Text(
-                        dialogBatch.classLevel <= 10
-                            ? 'Subjects will be assigned automatically.'
-                            : 'Choose only the group. The correct four subjects will be assigned automatically.',
-                        style: const TextStyle(
-                          color: AppTheme.textSecondary,
-                          fontSize: 13,
-                        ),
-                      ),
-
-                      const SizedBox(height: 11),
-
-                      Wrap(
-                        spacing: 9,
-                        runSpacing: 9,
-                        children: groupCodes.map((code) {
-                          final selected = selectedGroupCode == code;
-
-                          return ChoiceChip(
-                            selected: selected,
-                            avatar: Icon(
-                              selected
-                                  ? Icons.check_circle_rounded
-                                  : Icons.school_outlined,
-                              size: 18,
-                            ),
-                            label: Text(
-                              studentGroupLabel(dialogBatch.classLevel, code),
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            onSelected: (value) {
-                              if (!value) {
-                                return;
-                              }
-
-                              setDialogState(() {
-                                selectedGroupCode = code;
-
-                                dialogError = null;
-                              });
-                            },
-                          );
-                        }).toList(),
-                      ),
-
-                      if (subjects.isNotEmpty) ...[
-                        const SizedBox(height: 20),
-
-                        const Text(
-                          'Subjects Added Automatically',
-                          style: TextStyle(
-                            color: AppTheme.fgNavyBlue,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-
-                        const SizedBox(height: 8),
-
-                        Wrap(
-                          spacing: 7,
-                          runSpacing: 7,
-                          children: subjects.map((subject) {
-                            return Chip(
-                              avatar: const Icon(
-                                Icons.check_circle_rounded,
-                                size: 17,
-                                color: AppTheme.success,
-                              ),
-                              label: Text(feeSubjectLabel(subject)),
-                            );
-                          }).toList(),
-                        ),
-                      ],
-
-                      const SizedBox(height: 18),
-
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: AppTheme.success.withValues(alpha: 0.07),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Icon(
-                              Icons.info_outline,
-                              color: AppTheme.success,
-                              size: 19,
-                            ),
-                            SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'On save: student will be created, '
-                                'today attendance will be Present, '
-                                'and the selected fee month will start as Unpaid.',
-                                style: TextStyle(fontSize: 12.5, height: 1.45),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      if (dialogError != null) ...[
-                        const SizedBox(height: 12),
-                        Text(
-                          dialogError!,
-                          style: const TextStyle(
-                            color: AppTheme.danger,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(dialogContext);
-                  },
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.person_add),
-                  label: const Text('Add Student'),
-                  onPressed: () {
-                    final name = nameController.text.trim();
-
-                    final fee = double.tryParse(feeController.text.trim());
-
-                    if (name.isEmpty) {
-                      setDialogState(() {
-                        dialogError = 'Student name is required.';
-                      });
-
-                      return;
-                    }
-
-                    if (fee == null || fee <= 0) {
-                      setDialogState(() {
-                        dialogError = 'Enter a valid default fee.';
-                      });
-
-                      return;
-                    }
-
-                    if (selectedGroupCode == null) {
-                      setDialogState(() {
-                        dialogError = dialogBatch.classLevel <= 10
-                            ? 'Please choose Computer or Biology.'
-                            : 'Please choose FCS, Pre-Engineering or Pre-Medical.';
-                      });
-
-                      return;
-                    }
-
-                    final subjects = studentSubjectsForGroup(
-                      dialogBatch.classLevel,
-                      selectedGroupCode!,
-                    );
-
-                    if (subjects.isEmpty) {
-                      setDialogState(() {
-                        dialogError =
-                            'Unable to determine subjects for this group.';
-                      });
-
-                      return;
-                    }
-
-                    Navigator.pop(
-                      dialogContext,
-                      _NewFeeStudentRequest(
-                        name: name,
-                        batch: dialogBatch,
-                        defaultFee: fee,
-                        subjects: subjects,
-                      ),
-                    );
-                  },
-                ),
-              ],
-            );
-          },
-        );
-      },
+      batches: _batches,
+      initialBatch: currentBatch,
+      paymentMonth: paymentMonth,
     );
 
-    nameController.dispose();
-    feeController.dispose();
-
-    if (request == null) {
-      return;
-    }
+    if (!mounted || request == null) return;
 
     await _addStudent(request);
   }
 
-  Future<void> _addStudent(_NewFeeStudentRequest request) async {
+  Future<void> _addStudent(NewStudentRequest request) async {
     final month = _selectedMonth;
 
     if (month == null) return;
@@ -930,6 +653,7 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
 
       setState(() {
         _selectedBatchId = request.batch.id;
+        _clearStudentSearch();
       });
 
       await _loadEntries();
@@ -1185,12 +909,42 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+
                 IconButton(
-                  tooltip: 'Show fee filters',
+                  tooltip: _mobileSearchExpanded
+                      ? 'Close student search'
+                      : 'Search students',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () {
+                    setState(() {
+                      _mobileSearchExpanded = !_mobileSearchExpanded;
+
+                      if (_mobileSearchExpanded) {
+                        _mobileFiltersExpanded = false;
+                      } else {
+                        _clearStudentSearch();
+                      }
+                    });
+                  },
+                  icon: Icon(
+                    _mobileSearchExpanded
+                        ? Icons.close_rounded
+                        : Icons.search_rounded,
+                  ),
+                ),
+                IconButton(
+                  tooltip: _mobileFiltersExpanded
+                      ? 'Hide fee filters'
+                      : 'Show fee filters',
                   visualDensity: VisualDensity.compact,
                   onPressed: () {
                     setState(() {
                       _mobileFiltersExpanded = !_mobileFiltersExpanded;
+
+                      if (_mobileFiltersExpanded) {
+                        _mobileSearchExpanded = false;
+                        _clearStudentSearch();
+                      }
                     });
                   },
                   icon: Icon(
@@ -1250,6 +1004,7 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
   }) {
     return Padding(
       padding: const EdgeInsets.all(14),
+
       child: LayoutBuilder(
         builder: (context, constraints) {
           return Wrap(
@@ -1257,6 +1012,8 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
             runSpacing: 12,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
+              if (constraints.maxWidth > 700)
+                SizedBox(width: 260, child: _buildStudentSearchField()),
               SizedBox(
                 width: constraints.maxWidth > 700 ? 280 : constraints.maxWidth,
                 child: DropdownButtonFormField<String>(
@@ -1284,6 +1041,7 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
 
                           setState(() {
                             _selectedBatchId = value;
+                            _clearStudentSearch();
                           });
 
                           await _loadEntries();
@@ -1315,6 +1073,7 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
 
                           setState(() {
                             _selectedMonth = value;
+                            _clearStudentSearch();
                           });
 
                           await _loadEntries();
@@ -1392,16 +1151,40 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
       return ErrorStateView(message: _errorMessage!, onRetry: _loadEntries);
     }
 
-    if (_entries.isEmpty) {
+    final visible = _visibleEntries;
+
+    final isMobile = MediaQuery.sizeOf(context).width < 700;
+
+    final showMobileSearch = isMobile && _mobileSearchExpanded;
+
+    Widget searchRow() {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: _buildStudentSearchField(),
+      );
+    }
+
+    if (visible.isEmpty) {
+      final hasSearch = _studentSearchQuery.trim().isNotEmpty;
+
       return RefreshIndicator(
         onRefresh: _loadEntries,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          children: const [
-            SizedBox(height: 120),
-            Icon(Icons.people_outline, size: 52, color: Colors.black38),
-            SizedBox(height: 12),
-            Center(child: Text('No students found for this batch.')),
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
+          children: [
+            if (showMobileSearch) searchRow(),
+            const SizedBox(height: 75),
+            const Icon(Icons.people_outline, size: 52, color: Colors.black38),
+            const SizedBox(height: 12),
+            Center(
+              child: Text(
+                hasSearch
+                    ? 'No matching student found in this batch.'
+                    : 'No students found for this batch.',
+                textAlign: TextAlign.center,
+              ),
+            ),
           ],
         ),
       );
@@ -1412,9 +1195,15 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
       child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
-        itemCount: _entries.length,
+        itemCount: visible.length + (showMobileSearch ? 1 : 0),
         itemBuilder: (context, index) {
-          return _buildStudentCard(_entries[index]);
+          if (showMobileSearch && index == 0) {
+            return searchRow();
+          }
+
+          final studentIndex = showMobileSearch ? index - 1 : index;
+
+          return _buildStudentCard(visible[studentIndex]);
         },
       ),
     );
@@ -2035,23 +1824,6 @@ class _FinancialDashboardPanelState extends State<FinancialDashboardPanel> {
 // ============================================================================
 // PRIVATE REQUEST MODEL
 // ============================================================================
-
-class _NewFeeStudentRequest {
-  final String name;
-
-  final FeeBatch batch;
-
-  final double defaultFee;
-
-  final List<String> subjects;
-
-  const _NewFeeStudentRequest({
-    required this.name,
-    required this.batch,
-    required this.defaultFee,
-    required this.subjects,
-  });
-}
 
 // ============================================================================
 // REUSABLE UI

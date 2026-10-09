@@ -70,15 +70,7 @@ class _TeacherAttendanceHistoryScreenState
       return false;
     }
 
-    if (classLevel == 9 || classLevel == 10) {
-      return const {'Comp', 'Bio'}.contains(subject);
-    }
-
-    if (classLevel == 11 || classLevel == 12) {
-      return const {'Comp', 'Bio', 'Chem'}.contains(subject);
-    }
-
-    return false;
+    return classLevel >= 9 && classLevel <= 12;
   }
 
   Future<void> _load() async {
