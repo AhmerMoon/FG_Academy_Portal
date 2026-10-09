@@ -8,36 +8,131 @@ on:
 permissions:
   contents: write
 
+# Agar jaldi jaldi multiple pushes hon,
+# sirf newest build release hogi.
+concurrency:
+  group: fg-academy-portal-release
+  cancel-in-progress: true
+
 jobs:
+  # ==========================================================
+  # ANDROID APK
+  # ==========================================================
   build-android:
     runs-on: ubuntu-latest
+
+    outputs:
+      version_code: ${{ steps.android_version.outputs.version_code }}
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.38.3"
-          channel: "stable"
+          channel: stable
 
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build Release APK
-        run: flutter build apk --release
+      - name: Restore Permanent Signing Key
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "ERROR: ANDROID_KEYSTORE_BASE64 secret is missing."
+            exit 1
+          fi
+
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" \
+            | base64 --decode \
+            > android/app/fgacademy-release.jks
+
+          test -s android/app/fgacademy-release.jks
+
+          echo "Signing keystore restored."
+
+      # New build number automatically on every new push.
+      - name: Calculate Android Build Number
+        id: android_version
+        shell: bash
+        run: |
+          echo "version_code=$((10000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_OUTPUT"
+
+      # Sign APK and embed GitHub repository name.
+      - name: Build Signed Release APK
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$ANDROID_KEYSTORE_PASSWORD" ]; then
+            echo "ERROR: ANDROID_KEYSTORE_PASSWORD secret is missing."
+            exit 1
+          fi
+
+          flutter build apk --release \
+            --build-number="${{ steps.android_version.outputs.version_code }}" \
+            --dart-define="GITHUB_REPOSITORY=${GITHUB_REPOSITORY}"
 
       - name: Prepare APK
+        shell: bash
         run: |
-          cp build/app/outputs/flutter-apk/app-release.apk FG_Academy_Portal.apk
+          set -euo pipefail
+
+          cp \
+            build/app/outputs/flutter-apk/app-release.apk \
+            FG_Academy_Portal.apk
+
+      - name: Verify APK Signature
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SDK_DIR="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+
+          if [ -z "$SDK_DIR" ]; then
+            echo "ERROR: Android SDK location unavailable."
+            exit 1
+          fi
+
+          APKSIGNER="$(
+            find "$SDK_DIR/build-tools" \
+              -type f -name apksigner \
+              | sort -V \
+              | tail -n 1
+          )"
+
+          if [ -z "$APKSIGNER" ]; then
+            echo "ERROR: apksigner not found."
+            exit 1
+          fi
+
+          "$APKSIGNER" verify \
+            --print-certs FG_Academy_Portal.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Android-APK
           path: FG_Academy_Portal.apk
+          if-no-files-found: error
 
+  # ==========================================================
+  # WINDOWS DESKTOP APPLICATION
+  # ==========================================================
   build-windows:
     runs-on: windows-latest
 
@@ -49,7 +144,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.38.3"
-          channel: "stable"
+          channel: stable
 
       - name: Enable Windows Desktop Support
         run: flutter config --enable-windows-desktop
@@ -118,7 +213,11 @@ jobs:
         with:
           name: Windows-ZIP
           path: Academy_Portal_Windows.zip
+          if-no-files-found: error
 
+  # ==========================================================
+  # AUTOMATIC GITHUB RELEASE
+  # ==========================================================
   create-release:
     needs:
       - build-android
@@ -139,12 +238,19 @@ jobs:
           name: Windows-ZIP
           path: release-assets/windows
 
-      - name: Create or Update Latest Release
+      - name: Create Latest Release
         uses: ncipollo/release-action@v1
         with:
           artifacts: "release-assets/android/FG_Academy_Portal.apk,release-assets/windows/Academy_Portal_Windows.zip"
-          tag: "latest"
+
+          artifactErrorsFailBuild: true
+
+          # Every build gets a unique tag.
+          tag: "android-${{ needs.build-android.outputs.version_code }}"
+          commit: ${{ github.sha }}
+
           name: "FG Academy Portal - Latest Update"
+
           body: |
             Latest FG Academy Portal release.
 
@@ -159,6 +265,7 @@ jobs:
 
             Local .env files and financial Excel workbooks
             are intentionally not included.
+
           allowUpdates: true
           makeLatest: true
           token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -6,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../app_theme.dart';
 import '../services/auth_service.dart';
+import '../services/github_update_service.dart';
 import 'dashboard_screen.dart';
 import 'login_screen.dart';
 
@@ -24,40 +26,88 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
-
     _checkVersionAndProceed();
   }
 
   Future<void> _checkVersionAndProceed() async {
-    await Future.delayed(const Duration(milliseconds: 1200));
+    await Future.delayed(const Duration(milliseconds: 800));
 
     if (!mounted) return;
 
-    try {
-      final packageInfo = await PackageInfo.fromPlatform();
+    PackageInfo? packageInfo;
 
+    try {
+      packageInfo = await PackageInfo.fromPlatform();
+    } catch (e) {
+      debugPrint('Package version check failed: $e');
+    }
+
+    final isAndroid =
+        !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+    GithubUpdateInfo? githubUpdate;
+
+    // Automatically check latest GitHub release on Android.
+    if (isAndroid && packageInfo != null) {
+      final installedBuildNumber = int.tryParse(packageInfo.buildNumber);
+
+      if (installedBuildNumber != null) {
+        githubUpdate = await GithubUpdateService().checkForUpdate(
+          installedBuildNumber,
+        );
+      }
+    }
+
+    if (!mounted) return;
+
+    // Preserve existing Supabase force-update behavior.
+    // No SQL changes are needed for normal GitHub updates.
+    try {
       final response = await supabase
           .from('app_settings')
-          .select(
-            'min_apk_version, '
-            'apk_download_url',
-          )
+          .select('min_apk_version, apk_download_url')
           .eq('id', 1)
           .single();
 
       final requiredVersion = response['min_apk_version']?.toString() ?? '';
 
-      final downloadUrl = response['apk_download_url']?.toString() ?? '';
+      final oldDownloadUrl = response['apk_download_url']?.toString() ?? '';
 
-      if (_isUpdateRequired(packageInfo.version, requiredVersion)) {
-        _showUpdateDialog(downloadUrl);
+      if (packageInfo != null &&
+          _isUpdateRequired(packageInfo.version, requiredVersion)) {
+        final downloadUrl = isAndroid
+            ? (githubUpdate?.apkUrl.toString() ??
+                  GithubUpdateService.latestApkUrl?.toString() ??
+                  oldDownloadUrl)
+            : oldDownloadUrl;
 
+        if (!mounted) return;
+
+        _showForceUpdateDialog(downloadUrl);
         return;
       }
     } catch (e) {
-      debugPrint('Version check failed: $e');
+      debugPrint('Supabase version check failed: $e');
     }
 
+    // Optional update popup: Update Now or Later.
+    if (githubUpdate != null && mounted) {
+      final updateNow = await _showOptionalUpdateDialog(githubUpdate);
+
+      if (!mounted) return;
+
+      if (updateNow) {
+        await _openApkDownload(githubUpdate.apkUrl.toString());
+
+        if (!mounted) return;
+      }
+    }
+
+    // Continue normal login / session restoration.
+    await _restoreSessionAndProceed();
+  }
+
+  Future<void> _restoreSessionAndProceed() async {
     try {
       final portalUser = await _authService.restoreSession();
 
@@ -65,7 +115,6 @@ class _SplashScreenState extends State<SplashScreen> {
 
       if (portalUser == null) {
         _open(const LoginScreen());
-
         return;
       }
 
@@ -87,7 +136,6 @@ class _SplashScreenState extends State<SplashScreen> {
 
   bool _isUpdateRequired(String current, String required) {
     final curr = _parseVersion(current);
-
     final req = _parseVersion(required);
 
     if (curr == null || req == null) {
@@ -95,13 +143,8 @@ class _SplashScreenState extends State<SplashScreen> {
     }
 
     for (int i = 0; i < 3; i++) {
-      if (req[i] > curr[i]) {
-        return true;
-      }
-
-      if (req[i] < curr[i]) {
-        return false;
-      }
+      if (req[i] > curr[i]) return true;
+      if (req[i] < curr[i]) return false;
     }
 
     return false;
@@ -114,23 +157,69 @@ class _SplashScreenState extends State<SplashScreen> {
       return null;
     }
 
-    final parsed = <int>[];
+    final result = <int>[];
 
     for (final part in parts.take(3)) {
       final value = int.tryParse(part);
 
-      if (value == null) {
-        return null;
-      }
+      if (value == null) return null;
 
-      parsed.add(value);
+      result.add(value);
     }
 
-    return parsed;
+    return result;
   }
 
-  void _showUpdateDialog(String url) {
-    showDialog(
+  Future<bool> _showOptionalUpdateDialog(GithubUpdateInfo update) async {
+    if (!mounted) return false;
+
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          icon: const Icon(
+            Icons.system_update_alt_rounded,
+            size: 40,
+            color: AppTheme.fgNavyBlue,
+          ),
+          title: const Text(
+            'New Update Available!',
+            textAlign: TextAlign.center,
+          ),
+          content: const Text(
+            'FG Academy Portal ka naya update '
+            'available hai.\n\n'
+            'Update Now dabane par APK download '
+            'hogi. Download hone ke baad file '
+            'open karke Update/Install confirm karein.',
+            textAlign: TextAlign.center,
+          ),
+          actionsAlignment: MainAxisAlignment.center,
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, false);
+              },
+              child: const Text('Later'),
+            ),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.download_rounded),
+              label: const Text('Update Now'),
+              onPressed: () {
+                Navigator.pop(dialogContext, true);
+              },
+            ),
+          ],
+        );
+      },
+    );
+
+    return result ?? false;
+  }
+
+  void _showForceUpdateDialog(String downloadUrl) {
+    showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) {
@@ -139,37 +228,62 @@ class _SplashScreenState extends State<SplashScreen> {
           child: AlertDialog(
             icon: const Icon(
               Icons.system_update_alt_rounded,
-              size: 36,
+              size: 40,
               color: AppTheme.fgNavyBlue,
             ),
-            title: const Text('Update Required'),
+            title: const Text('Update Required', textAlign: TextAlign.center),
             content: const Text(
-              'A newer FG Academy Portal version is required before continuing.',
+              'A newer FG Academy Portal version '
+              'is required before continuing.',
               textAlign: TextAlign.center,
             ),
             actionsAlignment: MainAxisAlignment.center,
             actions: [
               ElevatedButton.icon(
-                onPressed: () async {
-                  final uri = Uri.tryParse(url);
-
-                  if (uri == null) {
-                    return;
-                  }
-
-                  try {
-                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                  } catch (e) {
-                    debugPrint('Update URL error: $e');
-                  }
-                },
                 icon: const Icon(Icons.download_rounded),
                 label: const Text('Download Update'),
+                onPressed: () {
+                  _openApkDownload(downloadUrl);
+                },
               ),
             ],
           ),
         );
       },
+    );
+  }
+
+  Future<void> _openApkDownload(String url) async {
+    final uri = Uri.tryParse(url);
+
+    if (uri == null || uri.scheme != 'https') {
+      _showDownloadError();
+      return;
+    }
+
+    try {
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+
+      if (!opened) {
+        _showDownloadError();
+      }
+    } catch (e) {
+      debugPrint('APK download link failed: $e');
+      _showDownloadError();
+    }
+  }
+
+  void _showDownloadError() {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Could not open the update link. '
+          'Please check your internet connection.',
+        ),
+        backgroundColor: AppTheme.danger,
+      ),
     );
   }
 
@@ -180,7 +294,6 @@ class _SplashScreenState extends State<SplashScreen> {
         fit: StackFit.expand,
         children: [
           Image.asset('assets/images/school_bg.png', fit: BoxFit.cover),
-
           Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
@@ -193,12 +306,10 @@ class _SplashScreenState extends State<SplashScreen> {
               ),
             ),
           ),
-
           SafeArea(
             child: Column(
               children: [
                 const Spacer(),
-
                 Container(
                   width: 140,
                   height: 140,
@@ -210,9 +321,7 @@ class _SplashScreenState extends State<SplashScreen> {
                   ),
                   child: Image.asset('assets/images/app_logo_bg.png'),
                 ).animate().fadeIn().scale(begin: const Offset(0.9, 0.9)),
-
                 const SizedBox(height: 25),
-
                 const Text(
                   'FG Academy Portal',
                   textAlign: TextAlign.center,
@@ -222,9 +331,7 @@ class _SplashScreenState extends State<SplashScreen> {
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-
                 const SizedBox(height: 5),
-
                 const Text(
                   'Evening Coaching Classes',
                   style: TextStyle(
@@ -233,23 +340,17 @@ class _SplashScreenState extends State<SplashScreen> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-
                 const Spacer(),
-
                 const SizedBox(
                   width: 280,
                   child: LinearProgressIndicator(minHeight: 3),
                 ),
-
                 const SizedBox(height: 13),
-
                 const Text(
                   'Securing your academy workspace…',
                   style: TextStyle(color: Colors.white70, fontSize: 13),
                 ),
-
                 const SizedBox(height: 18),
-
                 const Text(
                   'Developed by Ahmer Moon Majid',
                   textAlign: TextAlign.center,
@@ -260,9 +361,7 @@ class _SplashScreenState extends State<SplashScreen> {
                     letterSpacing: 0.2,
                   ),
                 ),
-
                 const SizedBox(height: 3),
-
                 const Text(
                   'ahmermoonmajid@gmail.com',
                   textAlign: TextAlign.center,
@@ -272,7 +371,6 @@ class _SplashScreenState extends State<SplashScreen> {
                     fontWeight: FontWeight.w500,
                   ),
                 ),
-
                 const SizedBox(height: 24),
               ],
             ),

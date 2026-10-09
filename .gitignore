@@ -23,11 +23,24 @@ __pycache__/
 *.iml
 *.ipr
 *.iws
+*.jks
+*.keystore
 .idea/
 Fee_Data/*.xlsx
 Fee_Data/*.xls
 Fee_Data/*.xlsm
+# Android signing secrets
+/android/key.properties
+/android/app/*.jks
+/android/app/*.keystore
 
+# Backend secrets
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
 # The .vscode folder contains launch configuration and tasks you configure in
 # VS Code which you may wish to be included in version control, so this line
 # is commented out by default.

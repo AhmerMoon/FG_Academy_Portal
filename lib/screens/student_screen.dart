@@ -134,6 +134,13 @@ class _StudentsScreenState extends State<StudentsScreen> {
   }
 
   Future<void> fetchStudentsAndAttendance() async {
+    // Keep a temporary copy of all unsaved attendance.
+    // Refreshing the student list must NOT discard marks.
+    final pendingAttendance = <String, String?>{
+      for (final studentId in modifiedStudents)
+        studentId: attendanceStatus[studentId],
+    };
+
     if (mounted) {
       setState(() {
         isLoading = true;
@@ -304,6 +311,17 @@ class _StudentsScreenState extends State<StudentsScreen> {
       setState(() {
         students = studentRows;
 
+        // Restore locally marked attendance after refresh.
+        // Only restore IDs still visible in this batch.
+        for (final entry in pendingAttendance.entries) {
+          if (!visibleIds.contains(entry.key)) {
+            continue;
+          }
+
+          attendanceStatus[entry.key] = entry.value;
+          modifiedStudents.add(entry.key);
+        }
+
         _classLevel = classLevel;
 
         _teacherSubjectCode = teacherSubject;
@@ -348,15 +366,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
   }
 
   Future<void> _openAddStudentDialog() async {
-    if (hasUnsavedChanges) {
-      _showMessage(
-        'Please save the current attendance changes before adding a new student.',
-        error: true,
-      );
-
-      return;
-    }
-
     final classLevel = _classLevel;
 
     if (classLevel == null) {
