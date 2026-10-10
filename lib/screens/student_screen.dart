@@ -759,15 +759,28 @@ class _StudentsScreenState extends State<StudentsScreen> {
     });
 
     try {
-      await supabase
+      final savedRows = await supabase
           .from('attendance')
-          .upsert(payload, onConflict: 'student_id, date');
+          .upsert(payload, onConflict: 'student_id, date')
+          .select('student_id, status');
 
       if (!mounted) return;
 
       setState(() {
-        modifiedStudents.clear();
+        // Show the actual saved database result.
+        // If Present was protected by the trigger,
+        // the screen will also show Present.
+        for (final row in savedRows) {
+          final studentId = row['student_id']?.toString();
+          final savedStatus = row['status']?.toString();
 
+          if (studentId != null &&
+              (savedStatus == 'present' || savedStatus == 'absent')) {
+            attendanceStatus[studentId] = savedStatus;
+          }
+        }
+
+        modifiedStudents.clear();
         isSaving = false;
       });
 
