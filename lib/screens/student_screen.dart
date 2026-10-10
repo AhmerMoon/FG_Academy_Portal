@@ -366,25 +366,28 @@ class _StudentsScreenState extends State<StudentsScreen> {
   }
 
   Future<void> _openAddStudentDialog() async {
+    if (_isAddingStudent) return;
+
+    // Attendance may already contain unsaved marks.
+    // Teacher must still be able to add a new student.
     final classLevel = _classLevel;
 
     if (classLevel == null) {
       _showMessage('Class information is unavailable.', error: true);
-
       return;
     }
 
-    final nameController = TextEditingController();
+    // No manually managed TextEditingController.
+    // TextField will manage its own internal controller.
+    String studentName = '';
 
     var selectedSubjects = List<String>.from(
       studentDefaultSubjectsForClass(classLevel),
     );
 
-    // If teacher is adding from their
-    // own attendance screen, automatically
-    // include their teaching subject.
     final teacherSubject = _teacherSubjectCode;
 
+    // Automatically include the teacher's own subject.
     if (teacherSubject != null &&
         studentSubjectCodesForClass(classLevel).contains(teacherSubject) &&
         !selectedSubjects.contains(teacherSubject)) {
@@ -413,6 +416,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
                   Expanded(child: Text('Add New Student')),
                 ],
               ),
+
               content: SizedBox(
                 width: 500,
                 child: SingleChildScrollView(
@@ -463,10 +467,15 @@ class _StudentsScreenState extends State<StudentsScreen> {
 
                       const SizedBox(height: 16),
 
+                      // No external controller to dispose
+                      // while the dialog is closing.
                       TextField(
-                        controller: nameController,
-                        textCapitalization: TextCapitalization.words,
                         autofocus: true,
+                        textCapitalization: TextCapitalization.words,
+                        textInputAction: TextInputAction.done,
+                        onChanged: (value) {
+                          studentName = value;
+                        },
                         decoration: const InputDecoration(
                           labelText: 'Student Name',
                           prefixIcon: Icon(Icons.person_outline_rounded),
@@ -481,7 +490,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
                         onChanged: (subjects) {
                           setDialogState(() {
                             selectedSubjects = subjects;
-
                             dialogError = null;
                           });
                         },
@@ -501,7 +509,10 @@ class _StudentsScreenState extends State<StudentsScreen> {
                           borderRadius: BorderRadius.circular(11),
                         ),
                         child: const Text(
-                          'On save: student will be enrolled, today attendance will be Present, and current month fee will start as Unpaid.',
+                          'On save: student will be enrolled, '
+                          'today attendance will be Present, '
+                          'and current month fee will start '
+                          'as Unpaid.',
                           style: TextStyle(
                             fontSize: 13,
                             height: 1.45,
@@ -524,22 +535,25 @@ class _StudentsScreenState extends State<StudentsScreen> {
                   ),
                 ),
               ),
+
               actions: [
                 TextButton(
                   onPressed: () {
+                    FocusManager.instance.primaryFocus?.unfocus();
+
                     Navigator.of(dialogContext).pop();
                   },
                   child: const Text('Cancel'),
                 ),
+
                 ElevatedButton.icon(
                   onPressed: () {
-                    final name = nameController.text.trim();
+                    final name = studentName.trim();
 
                     if (name.isEmpty) {
                       setDialogState(() {
                         dialogError = 'Student name is required.';
                       });
-
                       return;
                     }
 
@@ -552,22 +566,22 @@ class _StudentsScreenState extends State<StudentsScreen> {
                       setDialogState(() {
                         dialogError = validation;
                       });
-
                       return;
                     }
 
-                    // Teacher must not add a
-                    // student who does not
-                    // study teacher's own subject.
+                    // Teacher's subject must be included.
                     if (teacherSubject != null &&
                         !selectedSubjects.contains(teacherSubject)) {
                       setDialogState(() {
                         dialogError =
-                            'Keep your teaching subject selected when adding a student from Attendance.';
+                            'Keep your teaching subject '
+                            'selected when adding a student '
+                            'from Attendance.';
                       });
-
                       return;
                     }
+
+                    FocusManager.instance.primaryFocus?.unfocus();
 
                     Navigator.of(dialogContext).pop(
                       _NewAttendanceStudentDraft(
@@ -586,12 +600,13 @@ class _StudentsScreenState extends State<StudentsScreen> {
       },
     );
 
-    nameController.dispose();
-
-    if (request == null || !mounted) {
+    // Cancel: do nothing, leave attendance untouched.
+    if (!mounted || request == null) {
       return;
     }
 
+    // Only actual Add Student confirmation
+    // calls Supabase.
     await _addNewStudent(request);
   }
 
