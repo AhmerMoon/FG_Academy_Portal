@@ -233,7 +233,7 @@ class _SplashScreenState extends State<SplashScreen> {
             ),
             title: const Text('Update Required', textAlign: TextAlign.center),
             content: const Text(
-              'A newer FG Academy Portal version '
+              'A newer Academy Portal version '
               'is required before continuing.',
               textAlign: TextAlign.center,
             ),
@@ -323,7 +323,7 @@ class _SplashScreenState extends State<SplashScreen> {
                 ).animate().fadeIn().scale(begin: const Offset(0.9, 0.9)),
                 const SizedBox(height: 25),
                 const Text(
-                  'FG Academy Portal',
+                  'Academy Portal',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.white,
