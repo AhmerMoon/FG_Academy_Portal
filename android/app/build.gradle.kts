@@ -29,7 +29,6 @@ android {
         versionName = flutter.versionName
     }
 
-    // Permanent release signing key from GitHub Secrets.
     signingConfigs {
         create("release") {
             storeFile = file("fgacademy-release.jks")
@@ -39,16 +38,20 @@ android {
 
             keyAlias = "fgacademy"
 
+            // IMPORTANT:
+            // GitHub may supply an empty ANDROID_KEY_PASSWORD.
+            // If empty, use the keystore password instead.
             keyPassword =
                 System.getenv("ANDROID_KEY_PASSWORD")
+                    ?.takeIf { it.isNotBlank() }
                     ?: System.getenv("ANDROID_KEYSTORE_PASSWORD")
         }
     }
 
     buildTypes {
         release {
-            // Never sign a release APK using debug keys.
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig =
+                signingConfigs.getByName("release")
         }
     }
 }
