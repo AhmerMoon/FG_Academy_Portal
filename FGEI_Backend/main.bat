@@ -1,29 +1,41 @@
-@echo off
-title FG Academy WhatsApp Attendance Reports
 
+@echo off
+setlocal
 cd /d "%~dp0"
 
-echo.
-echo ===============================================
-echo   FG Academy Attendance Automation
-echo ===============================================
-echo.
+set "PYTHON_EXE="
 
-if not exist ".venv\Scripts\python.exe" (
-    echo ERROR: Python environment is not installed.
-    echo.
-    echo Please run setup_backend.bat first.
-    echo.
-    pause
-    exit /b 1
+if exist "%~dp0.venv\Scripts\python.exe" (
+    set "PYTHON_EXE=%~dp0.venv\Scripts\python.exe"
 )
 
-".venv\Scripts\python.exe" "%~dp0main.py"
+if not defined PYTHON_EXE if exist "%~dp0venv\Scripts\python.exe" (
+    set "PYTHON_EXE=%~dp0venv\Scripts\python.exe"
+)
+
+if not defined PYTHON_EXE if exist "%~dp0..\.venv\Scripts\python.exe" (
+    set "PYTHON_EXE=%~dp0..\.venv\Scripts\python.exe"
+)
+
+if not defined PYTHON_EXE (
+    set "PYTHON_EXE=python"
+)
 
 echo.
-echo ===============================================
-echo   Automation Finished
-echo ===============================================
+echo IlmRise Academy - Attendance Automation
 echo.
 
+"%PYTHON_EXE%" "%~dp0main.py" %*
+
+set "EXIT_CODE=%ERRORLEVEL%"
+
+echo.
+if not "%EXIT_CODE%"=="0" (
+    echo Automation failed. Exit code: %EXIT_CODE%
+) else (
+    echo Automation finished.
+)
+
+echo.
 pause
+exit /b %EXIT_CODE%

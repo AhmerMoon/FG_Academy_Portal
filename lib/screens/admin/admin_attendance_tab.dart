@@ -7,8 +7,8 @@ import '../../app_theme.dart';
 import '../../utils/automation_launcher.dart';
 import '../../utils/dashboard_section_header.dart';
 import '../../utils/error_state_view.dart';
-import '../../widgets/academy_background.dart';
 import '../../utils/list_sorting.dart';
+import '../../widgets/academy_background.dart';
 
 class AdminAttendanceTab extends StatefulWidget {
   final Function(Widget screen)? onNavigate;
@@ -24,14 +24,13 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
   final SupabaseClient supabase = Supabase.instance.client;
 
   List<dynamic> batches = [];
-
   bool isLoading = true;
+  bool _startingAutomation = false;
   String? errorMessage;
 
   @override
   void initState() {
     super.initState();
-
     fetchBatches();
   }
 
@@ -80,7 +79,6 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
 
       final mapped = batchRows.map((batch) {
         final id = batch['id'].toString();
-
         final copy = Map<String, dynamic>.from(batch);
 
         copy['student_count'] = total[id] ?? 0;
@@ -94,7 +92,6 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
 
       setState(() {
         batches = sortBatches(mapped);
-
         isLoading = false;
         errorMessage = null;
       });
@@ -105,23 +102,16 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
 
       setState(() {
         isLoading = false;
-
         errorMessage =
-            'Unable to load attendance batches. Check your connection and try again.';
+            'Unable to load attendance batches. '
+            'Check your connection and try again.';
       });
     }
   }
 
   void _openAttendance(Map<String, dynamic> batch) {
     final id = batch['id'].toString();
-
     final name = batch['name']?.toString() ?? 'Batch';
-
-    final screen = EditAttendanceScreen(
-      batchId: id,
-      batchName: name,
-      initialDate: _today,
-    );
 
     if (widget.onNavigate != null && widget.onBack != null) {
       widget.onNavigate!(
@@ -132,34 +122,87 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
           onBack: widget.onBack,
         ),
       );
-
       return;
     }
 
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen)).then((
-      _,
-    ) {
-      if (mounted) {
-        fetchBatches();
-      }
-    });
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => EditAttendanceScreen(
+              batchId: id,
+              batchName: name,
+              initialDate: _today,
+            ),
+          ),
+        )
+        .then((_) {
+          if (mounted) fetchBatches();
+        });
   }
 
-  Future<void> _startAutomation() async {
-    final started = await launchAutomation();
+  Future<void> _startAutomation({String? batchId, String? batchName}) async {
+    if (_startingAutomation) return;
 
-    if (!mounted) return;
+    final isAll = batchId == null;
+    final target = isAll ? 'ALL batches' : (batchName ?? 'selected batch');
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          started
-              ? 'WhatsApp report automation started.'
-              : 'Automation could not start.',
-        ),
-        backgroundColor: started ? AppTheme.success : AppTheme.danger,
-      ),
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Send Attendance Report?'),
+          content: Text(
+            'Target: $target\n\n'
+            'The Windows WhatsApp automation will '
+            'generate this month\'s report and send '
+            'it to the configured WhatsApp group.\n\n'
+            'Continue?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 17),
+              label: const Text('Start'),
+            ),
+          ],
+        );
+      },
     );
+
+    if (!mounted || confirmed != true) return;
+
+    setState(() {
+      _startingAutomation = true;
+    });
+
+    try {
+      final started = await launchAutomation(batchId: batchId);
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            started
+                ? 'Automation started for $target. '
+                      'Check the Python window for progress.'
+                : 'Automation could not start. '
+                      'Check the backend files.',
+          ),
+          backgroundColor: started ? AppTheme.success : AppTheme.danger,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _startingAutomation = false;
+        });
+      }
+    }
   }
 
   @override
@@ -180,16 +223,18 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
           SliverToBoxAdapter(
             child: DashboardSectionHeader(
               title: 'Attendance',
-              subtitle: 'Today’s batch strength and attendance overview',
+              subtitle: 'Today\'s batch strength and attendance overview',
               trailing: isWindowsPlatform
                   ? ElevatedButton.icon(
-                      onPressed: _startAutomation,
+                      onPressed: _startingAutomation
+                          ? null
+                          : () => _startAutomation(),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF25D366),
                         foregroundColor: Colors.white,
                       ),
                       icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 17),
-                      label: const Text('Send Reports'),
+                      label: const Text('Send All Reports'),
                     )
                   : null,
             ),
@@ -201,13 +246,13 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
           else
             SliverPadding(
               padding: const EdgeInsets.all(12),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) => _buildAttendanceBatchCard(
-                    Map<String, dynamic>.from(batches[index]),
-                  ),
-                  childCount: batches.length,
-                ),
+              sliver: SliverList.builder(
+                itemCount: batches.length,
+                itemBuilder: (context, index) {
+                  final batch = Map<String, dynamic>.from(batches[index]);
+
+                  return _buildAttendanceBatchCard(batch);
+                },
               ),
             ),
         ],
@@ -221,101 +266,142 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
     final absent = (batch['absent_count'] as num?)?.toInt() ?? 0;
     final unmarked = total - present - absent;
 
+    final batchId = batch['id'].toString();
+    final batchName = batch['name']?.toString() ?? 'Batch';
+
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: () => _openAttendance(batch),
-        child: Padding(
-          padding: const EdgeInsets.all(15),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final compact = constraints.maxWidth < 620;
-              final title = Row(
-                children: [
-                  Container(
-                    width: 47,
-                    height: 47,
-                    decoration: BoxDecoration(
-                      color: AppTheme.fgNavyBlue.withValues(alpha: 0.07),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(
-                      Icons.fact_check_outlined,
-                      color: AppTheme.fgNavyBlue,
-                    ),
+      child: Padding(
+        padding: const EdgeInsets.all(13),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 620;
+
+            final title = Row(
+              children: [
+                Container(
+                  width: 47,
+                  height: 47,
+                  decoration: BoxDecoration(
+                    color: AppTheme.fgNavyBlue.withValues(alpha: 0.07),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          batch['name']?.toString() ?? 'Batch',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 16,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        const Text(
-                          'Open attendance register',
-                          style: TextStyle(
-                            color: AppTheme.textSecondary,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
+                  child: const Icon(
+                    Icons.fact_check_outlined,
+                    color: AppTheme.fgNavyBlue,
                   ),
-                  const Icon(
-                    Icons.chevron_right_rounded,
-                    color: AppTheme.textSecondary,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        batchName,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      const Text(
+                        'Open attendance register',
+                        style: TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: AppTheme.textSecondary,
+                ),
+              ],
+            );
+
+            final stats = Wrap(
+              spacing: 8,
+              runSpacing: 7,
+              children: [
+                _AttendanceBadge(
+                  label: 'Total',
+                  value: total,
+                  color: AppTheme.info,
+                ),
+                _AttendanceBadge(
+                  label: 'Present',
+                  value: present,
+                  color: AppTheme.success,
+                ),
+                _AttendanceBadge(
+                  label: 'Absent',
+                  value: absent,
+                  color: AppTheme.danger,
+                ),
+                _AttendanceBadge(
+                  label: 'Unmarked',
+                  value: unmarked < 0 ? 0 : unmarked,
+                  color: AppTheme.warning,
+                ),
+              ],
+            );
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => _openAttendance(batch),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    child: compact
+                        ? Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              title,
+                              const SizedBox(height: 12),
+                              stats,
+                            ],
+                          )
+                        : Row(
+                            children: [
+                              Expanded(child: title),
+                              const SizedBox(width: 14),
+                              stats,
+                            ],
+                          ),
+                  ),
+                ),
+
+                // WhatsApp automation is desktop-only.
+                if (isWindowsPlatform) ...[
+                  const SizedBox(height: 10),
+                  const Divider(height: 1),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: OutlinedButton.icon(
+                      onPressed: _startingAutomation
+                          ? null
+                          : () => _startAutomation(
+                              batchId: batchId,
+                              batchName: batchName,
+                            ),
+                      icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 16),
+                      label: const Text('Send WhatsApp Report'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF188A45),
+                      ),
+                    ),
                   ),
                 ],
-              );
-
-              final stats = Wrap(
-                spacing: 8,
-                runSpacing: 7,
-                children: [
-                  _AttendanceBadge(
-                    label: 'Total',
-                    value: total,
-                    color: AppTheme.info,
-                  ),
-                  _AttendanceBadge(
-                    label: 'Present',
-                    value: present,
-                    color: AppTheme.success,
-                  ),
-                  _AttendanceBadge(
-                    label: 'Absent',
-                    value: absent,
-                    color: AppTheme.danger,
-                  ),
-                  _AttendanceBadge(
-                    label: 'Unmarked',
-                    value: unmarked < 0 ? 0 : unmarked,
-                    color: AppTheme.warning,
-                  ),
-                ],
-              );
-
-              return compact
-                  ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [title, const SizedBox(height: 12), stats],
-                    )
-                  : Row(
-                      children: [
-                        Expanded(child: title),
-                        const SizedBox(width: 14),
-                        stats,
-                      ],
-                    );
-            },
-          ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -367,9 +453,9 @@ class _AttendanceBadge extends StatelessWidget {
   }
 }
 
-// ============================================================================
-// EDIT ATTENDANCE
-// ============================================================================
+// ============================================================
+// ADMIN ATTENDANCE EDIT SCREEN
+// ============================================================
 
 class EditAttendanceScreen extends StatefulWidget {
   final String batchId;
@@ -396,22 +482,18 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
 
   final Map<String, String> attendanceData = {};
   final Map<String, int> _priorAbsenceStreak = {};
-
   final Set<String> modifiedStudents = {};
 
   bool isLoading = true;
   bool isSaving = false;
 
   String? errorMessage;
-
   late DateTime currentDate;
 
   @override
   void initState() {
     super.initState();
-
     currentDate = DateTime.parse(widget.initialDate);
-
     fetchStudentsAndAttendance();
   }
 
@@ -419,7 +501,6 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
 
   bool get canGoForward {
     final today = DateTime.now();
-
     final cleanToday = DateTime(today.year, today.month, today.day);
 
     return currentDate.isBefore(cleanToday);
@@ -433,25 +514,20 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
 
   int get unmarkedCount => students.length - presentCount - absentCount;
 
-  String _dateOnly(DateTime value) {
+  String _dateOnly(DateTime date) {
     return DateTime(
-      value.year,
-      value.month,
-      value.day,
+      date.year,
+      date.month,
+      date.day,
     ).toIso8601String().split('T').first;
   }
 
   int _absenceStreakFor(String studentId) {
     final previous = _priorAbsenceStreak[studentId] ?? 0;
-    final selectedStatus = attendanceData[studentId];
+    final status = attendanceData[studentId];
 
-    if (selectedStatus == 'present') {
-      return 0;
-    }
-
-    if (selectedStatus == 'absent') {
-      return previous + 1;
-    }
+    if (status == 'present') return 0;
+    if (status == 'absent') return previous + 1;
 
     return previous;
   }
@@ -461,6 +537,8 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
   }
 
   Future<void> fetchStudentsAndAttendance() async {
+    if (!mounted) return;
+
     setState(() {
       isLoading = true;
       errorMessage = null;
@@ -495,27 +573,27 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
       final attendanceRows = results[1];
       final historyRows = results[2];
 
-      attendanceData.clear();
-      _priorAbsenceStreak.clear();
-      modifiedStudents.clear();
+      final fetchedAttendance = <String, String>{};
+      final fetchedStreaks = <String, int>{};
 
       for (final student in studentRows) {
-        _priorAbsenceStreak[student['id'].toString()] = 0;
+        fetchedStreaks[student['id'].toString()] = 0;
       }
 
       for (final row in attendanceRows) {
-        attendanceData[row['student_id'].toString()] = row['status'].toString();
+        fetchedAttendance[row['student_id'].toString()] = row['status']
+            .toString();
       }
 
       final historyByStudent = <String, List<Map<String, dynamic>>>{};
 
       for (final rawRow in historyRows) {
         final row = Map<String, dynamic>.from(rawRow);
-        final studentId = row['student_id']?.toString();
+        final id = row['student_id']?.toString();
 
-        if (studentId == null) continue;
+        if (id == null) continue;
 
-        historyByStudent.putIfAbsent(studentId, () => []).add(row);
+        historyByStudent.putIfAbsent(id, () => []).add(row);
       }
 
       for (final entry in historyByStudent.entries) {
@@ -538,13 +616,23 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
           }
         }
 
-        _priorAbsenceStreak[entry.key] = streak;
+        fetchedStreaks[entry.key] = streak;
       }
 
       if (!mounted) return;
 
       setState(() {
         students = studentRows;
+
+        attendanceData
+          ..clear()
+          ..addAll(fetchedAttendance);
+
+        _priorAbsenceStreak
+          ..clear()
+          ..addAll(fetchedStreaks);
+
+        modifiedStudents.clear();
 
         isLoading = false;
         errorMessage = null;
@@ -556,9 +644,9 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
 
       setState(() {
         isLoading = false;
-
         errorMessage =
-            'Unable to load attendance. Check your connection and try again.';
+            'Unable to load attendance. '
+            'Check your connection and try again.';
       });
     }
   }
@@ -566,7 +654,6 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
   void _setStatus(String studentId, String status) {
     setState(() {
       attendanceData[studentId] = status;
-
       modifiedStudents.add(studentId);
     });
   }
@@ -577,54 +664,61 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
         final id = student['id'].toString();
 
         attendanceData[id] = status;
-
         modifiedStudents.add(id);
       }
     });
   }
 
   Future<void> _saveChanges() async {
-    if (modifiedStudents.isEmpty) {
-      _showMessage('No attendance changes to save.');
-
+    if (modifiedStudents.isEmpty || isSaving) {
+      if (modifiedStudents.isEmpty) {
+        _showMessage('No attendance changes to save.');
+      }
       return;
     }
 
     final updates = <Map<String, dynamic>>[];
 
-    for (final studentId in modifiedStudents) {
-      final status = attendanceData[studentId];
+    for (final id in modifiedStudents) {
+      final status = attendanceData[id];
 
-      if (status == null) {
-        continue;
-      }
+      if (status == null) continue;
 
       updates.add({
-        'student_id': studentId,
+        'student_id': id,
         'batch_id': widget.batchId,
         'date': dateString,
         'status': status,
       });
     }
 
-    if (updates.isEmpty) {
-      return;
-    }
+    if (updates.isEmpty) return;
 
     setState(() {
       isSaving = true;
     });
 
     try {
-      await supabase
+      // Read back the actual server statuses.
+      // This respects the Present-wins DB trigger.
+      final savedRows = await supabase
           .from('attendance')
-          .upsert(updates, onConflict: 'student_id, date');
+          .upsert(updates, onConflict: 'student_id, date')
+          .select('student_id, status');
 
       if (!mounted) return;
 
       setState(() {
-        modifiedStudents.clear();
+        for (final row in savedRows) {
+          final id = row['student_id']?.toString();
+          final status = row['status']?.toString();
 
+          if (id != null && status != null) {
+            attendanceData[id] = status;
+          }
+        }
+
+        modifiedStudents.clear();
         isSaving = false;
       });
 
@@ -643,40 +737,38 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
   }
 
   Future<bool> _confirmDiscard() async {
-    return await showDialog<bool>(
-          context: context,
-          builder: (dialogContext) {
-            return AlertDialog(
-              title: const Text('Unsaved Changes'),
-              content: Text(
-                '${modifiedStudents.length} attendance change(s) have not been saved. Discard them?',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext, false),
-                  child: const Text('Keep Editing'),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.danger,
-                  ),
-                  onPressed: () => Navigator.pop(dialogContext, true),
-                  child: const Text('Discard'),
-                ),
-              ],
-            );
-          },
-        ) ??
-        false;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Unsaved Changes'),
+          content: Text(
+            '${modifiedStudents.length} attendance '
+            'change(s) have not been saved. Discard them?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Keep Editing'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Discard'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return result ?? false;
   }
 
   Future<void> _changeToDate(DateTime date) async {
     if (modifiedStudents.isNotEmpty) {
       final discard = await _confirmDiscard();
 
-      if (!discard || !mounted) {
-        return;
-      }
+      if (!discard || !mounted) return;
     }
 
     setState(() {
@@ -698,9 +790,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
       lastDate: DateTime.now(),
     );
 
-    if (picked == null || !mounted) {
-      return;
-    }
+    if (picked == null || !mounted) return;
 
     await _changeToDate(picked);
   }
@@ -709,9 +799,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
     if (modifiedStudents.isNotEmpty) {
       final discard = await _confirmDiscard();
 
-      if (!discard || !mounted) {
-        return;
-      }
+      if (!discard || !mounted) return;
     }
 
     if (widget.onBack != null) {
@@ -755,7 +843,11 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
             onPressed: _attemptBack,
             icon: const Icon(Icons.arrow_back_rounded),
           ),
-          title: Text(widget.batchName),
+          title: Text(
+            widget.batchName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
           actions: [
             IconButton(
               tooltip: 'Choose Date',
@@ -913,19 +1005,19 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
 
                           final status = attendanceData[id];
 
-                          final absenceStreak = _absenceStreakFor(id);
+                          final streak = _absenceStreakFor(id);
 
-                          final needsFollowUp = _needsParentFollowUp(id);
+                          final followUp = _needsParentFollowUp(id);
 
                           return Card(
                             margin: const EdgeInsets.only(bottom: 8),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(14),
                               side: BorderSide(
-                                color: needsFollowUp
+                                color: followUp
                                     ? AppTheme.danger.withValues(alpha: 0.55)
                                     : AppTheme.border,
-                                width: needsFollowUp ? 1.4 : 1,
+                                width: followUp ? 1.4 : 1,
                               ),
                             ),
                             child: Padding(
@@ -937,14 +1029,14 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
                                 children: [
                                   CircleAvatar(
                                     radius: 18,
-                                    backgroundColor: needsFollowUp
+                                    backgroundColor: followUp
                                         ? AppTheme.danger.withValues(
                                             alpha: 0.10,
                                           )
                                         : AppTheme.fgNavyBlue.withValues(
                                             alpha: 0.08,
                                           ),
-                                    foregroundColor: needsFollowUp
+                                    foregroundColor: followUp
                                         ? AppTheme.danger
                                         : AppTheme.fgNavyBlue,
                                     child: Text(
@@ -965,17 +1057,19 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
                                           student['name']?.toString() ??
                                               'Student',
                                           style: TextStyle(
-                                            color: needsFollowUp
+                                            color: followUp
                                                 ? AppTheme.danger
                                                 : AppTheme.textPrimary,
                                             fontSize: 15.5,
                                             fontWeight: FontWeight.w800,
                                           ),
                                         ),
-                                        if (needsFollowUp) ...[
+                                        if (followUp) ...[
                                           const SizedBox(height: 3),
                                           Text(
-                                            'Absent $absenceStreak consecutive attendance days • Parent follow-up',
+                                            'Absent $streak '
+                                            'consecutive attendance '
+                                            'days • Parent follow-up',
                                             style: const TextStyle(
                                               color: AppTheme.danger,
                                               fontSize: 12.5,

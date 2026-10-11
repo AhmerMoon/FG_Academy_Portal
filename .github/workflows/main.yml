@@ -8,10 +8,8 @@ on:
 permissions:
   contents: write
 
-# Agar jaldi jaldi multiple pushes hon,
-# sirf newest build release hogi.
 concurrency:
-  group: fg-academy-portal-release
+  group: academy-portal-release
   cancel-in-progress: true
 
 jobs:
@@ -43,6 +41,7 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
+      # Restore the permanent release signing key.
       - name: Restore Permanent Signing Key
         shell: bash
         env:
@@ -59,22 +58,27 @@ jobs:
             | base64 --decode \
             > android/app/fgacademy-release.jks
 
-          test -s android/app/fgacademy-release.jks
+          if [ ! -s android/app/fgacademy-release.jks ]; then
+            echo "ERROR: Signing keystore is empty."
+            exit 1
+          fi
 
-          echo "Signing keystore restored."
+          echo "Permanent signing keystore restored."
 
-      # New build number automatically on every new push.
+      # Increase Android versionCode automatically.
       - name: Calculate Android Build Number
         id: android_version
         shell: bash
         run: |
           echo "version_code=$((10000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_OUTPUT"
 
-      # Sign APK and embed GitHub repository name.
+      # Uses release signing configured in:
+      # android/app/build.gradle.kts
       - name: Build Signed Release APK
         shell: bash
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
 
@@ -96,6 +100,11 @@ jobs:
             build/app/outputs/flutter-apk/app-release.apk \
             FG_Academy_Portal.apk
 
+          test -s FG_Academy_Portal.apk
+
+      # CRITICAL:
+      # Block releases signed with Android Debug or any
+      # certificate other than our permanent release key.
       - name: Verify APK Signature
         shell: bash
         run: |
@@ -120,8 +129,32 @@ jobs:
             exit 1
           fi
 
-          "$APKSIGNER" verify \
-            --print-certs FG_Academy_Portal.apk
+          CERT_INFO="$(
+            "$APKSIGNER" verify \
+              --print-certs FG_Academy_Portal.apk
+          )"
+
+          echo "$CERT_INFO"
+
+          # SHA-256 of permanent fgacademy-release.jks key.
+          EXPECTED_SHA256="e832b0dd9b8726fc4b35c84bbe3d14737fef614041c5bed36856649236884274"
+
+          if ! echo "$CERT_INFO" \
+              | grep -qiF "$EXPECTED_SHA256"; then
+
+            echo ""
+            echo "========================================"
+            echo "ERROR: WRONG APK SIGNING CERTIFICATE!"
+            echo "Expected permanent signing key."
+            echo "Debug-signed APK will NOT be released."
+            echo "========================================"
+            exit 1
+          fi
+
+          echo ""
+          echo "========================================"
+          echo "SUCCESS: Permanent APK signing verified."
+          echo "========================================"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -131,7 +164,7 @@ jobs:
           if-no-files-found: error
 
   # ==========================================================
-  # WINDOWS DESKTOP APPLICATION
+  # WINDOWS DESKTOP APP
   # ==========================================================
   build-windows:
     runs-on: windows-latest
@@ -155,6 +188,7 @@ jobs:
       - name: Build Windows Release
         run: flutter build windows --release
 
+      # Include WhatsApp and Excel backend.
       - name: Add Local Automation Backend
         shell: powershell
         run: |
@@ -181,7 +215,7 @@ jobs:
             "$backend\fee_excel_bridge.py" -Force
 
           @"
-          FG Academy Local Fee Data
+          Academy Portal - Local Fee Data
 
           Put monthly Excel workbooks in this folder.
 
@@ -216,7 +250,7 @@ jobs:
           if-no-files-found: error
 
   # ==========================================================
-  # AUTOMATIC GITHUB RELEASE
+  # PUBLISH LATEST GITHUB RELEASE
   # ==========================================================
   create-release:
     needs:
@@ -245,22 +279,24 @@ jobs:
 
           artifactErrorsFailBuild: true
 
-          # Every build gets a unique tag.
+          # Unique release tag for automatic update detection.
           tag: "android-${{ needs.build-android.outputs.version_code }}"
+
           commit: ${{ github.sha }}
 
-          name: "FG Academy Portal - Latest Update"
+          name: "Academy Portal - Latest Update"
 
           body: |
-            Latest FG Academy Portal release.
+            Latest Academy Portal release.
 
             Downloads:
             - FG_Academy_Portal.apk
             - Academy_Portal_Windows.zip
 
             Windows package includes:
-            - WhatsApp reporting backend
-            - Excel Fees test bridge
+            - WhatsApp Attendance Automation
+            - Individual Batch Reporting
+            - Excel Fees Backend
             - Empty Fee_Data folder
 
             Local .env files and financial Excel workbooks

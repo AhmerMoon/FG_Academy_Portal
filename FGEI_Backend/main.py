@@ -1,129 +1,84 @@
-import os
-import json
+
+import argparse
 import base64
-import time
 import calendar
+import json
+import os
+import sys
+import time
 import warnings
 
 from datetime import datetime
+from pathlib import Path
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from dotenv import load_dotenv
-from supabase import create_client, Client
-
-import pandas as pd
 import dataframe_image as dfi
+import pandas as pd
 import pywhatkit as kit
+from dotenv import load_dotenv
+from supabase import Client, create_client
 
 
 # ============================================================
-# CONFIGURATION
+# ILMRISE ACADEMY - WHATSAPP ATTENDANCE AUTOMATION
 # ============================================================
 
 warnings.filterwarnings("ignore")
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
 
-ENV_PATH = os.path.join(BASE_DIR, ".env")
+ACADEMY_NAME = "IlmRise Academy"
 
-load_dotenv(ENV_PATH)
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
+SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "").strip()
 
-
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
-
-SUPABASE_SECRET_KEY = os.environ.get(
-    "SUPABASE_SECRET_KEY",
-    "",
-).strip()
-
-
-SEND_WHATSAPP = (
-    os.environ.get(
-        "SEND_WHATSAPP",
-        "false",
-    )
-    .strip()
-    .lower()
-    in {"1", "true", "yes", "on"}
-)
-
+SEND_WHATSAPP = os.getenv(
+    "SEND_WHATSAPP", "false"
+).strip().lower() in {"1", "true", "yes", "on"}
 
 WHATSAPP_WAIT_TIME = 20
-
 WHATSAPP_CLOSE_TIME = 5
-
 BETWEEN_GROUPS_DELAY = 5
-
 MAX_SEND_ATTEMPTS = 2
 
 
-# ============================================================
-# ENV / KEY VALIDATION
-# ============================================================
-
 def validate_environment():
     if not SUPABASE_URL:
-        raise RuntimeError(
-            "SUPABASE_URL is missing from .env"
-        )
+        raise RuntimeError("SUPABASE_URL missing from .env")
 
     if not SUPABASE_SECRET_KEY:
         raise RuntimeError(
-            "SUPABASE_SECRET_KEY is missing from .env"
+            "SUPABASE_SECRET_KEY missing from .env"
         )
 
-    # New Supabase publishable key accidentally supplied.
-    if SUPABASE_SECRET_KEY.startswith(
-        "sb_publishable_"
-    ):
+    if SUPABASE_SECRET_KEY.startswith("sb_publishable_"):
         raise RuntimeError(
-            "SUPABASE_SECRET_KEY contains a publishable key. "
-            "Use the server-side sb_secret_ key instead."
+            "Publishable key cannot run backend automation. "
+            "Use a trusted server-side secret key."
         )
 
-    # Legacy Supabase JWT keys can be inspected safely
-    # without knowing their signing secret.
     if SUPABASE_SECRET_KEY.count(".") == 2:
         try:
-            payload_part = (
-                SUPABASE_SECRET_KEY
-                .split(".")[1]
-            )
-
-            padding = "=" * (
-                -len(payload_part) % 4
-            )
+            part = SUPABASE_SECRET_KEY.split(".")[1]
+            part += "=" * (-len(part) % 4)
 
             payload = json.loads(
-                base64.urlsafe_b64decode(
-                    payload_part + padding
-                ).decode("utf-8")
+                base64.urlsafe_b64decode(part)
             )
 
-            role = payload.get("role")
-
-            if role == "anon":
+            if payload.get("role") == "anon":
                 raise RuntimeError(
-                    "The .env still contains the old anon key. "
-                    "Use the Supabase service_role / secret key "
-                    "for this trusted local automation."
+                    "Anon key cannot run backend automation."
                 )
-
         except RuntimeError:
             raise
-
         except Exception:
-            # If an unfamiliar key format cannot be decoded,
-            # let Supabase validate it when connecting.
             pass
 
 
 validate_environment()
-
-
-# ============================================================
-# SUPABASE ADMIN CLIENT
-# ============================================================
 
 supabase: Client = create_client(
     SUPABASE_URL,
@@ -131,31 +86,84 @@ supabase: Client = create_client(
 )
 
 
-# ============================================================
-# HELPERS
-# ============================================================
-
 def pakistan_now():
-    return datetime.now(
-        ZoneInfo("Asia/Karachi")
-    )
+    return datetime.now(ZoneInfo("Asia/Karachi"))
 
 
 def safe_filename(value):
-    invalid_chars = '<>:"/\\|?*'
+    value = str(value)
 
-    cleaned = value
+    for char in '<>:"/\\|?*':
+        value = value.replace(char, "_")
 
-    for char in invalid_chars:
-        cleaned = cleaned.replace(
-            char,
-            "_",
+    return "_".join(value.split())
+
+
+def get_month_details():
+    now = pakistan_now()
+
+    year = now.year
+    month = now.month
+
+    _, last_day = calendar.monthrange(year, month)
+
+    start_date = f"{year}-{month:02d}-01"
+    end_date = f"{year}-{month:02d}-{last_day:02d}"
+
+    valid_days = [
+        day
+        for day in range(1, last_day + 1)
+        if datetime(year, month, day).weekday() != 6
+    ]
+
+    return (
+        start_date,
+        end_date,
+        valid_days,
+        now.strftime("%b %Y"),
+    )
+
+
+def get_target_batches(batch_id=None):
+    query = (
+        supabase.table("batches")
+        .select("id, name, whatsapp_group_id")
+    )
+
+    if batch_id is not None:
+        query = query.eq("id", batch_id)
+
+    result = query.execute()
+    rows = result.data or []
+
+    if batch_id is not None and not rows:
+        raise RuntimeError(
+            "Selected batch was not found in Supabase."
         )
 
-    return cleaned.replace(
-        " ",
-        "_",
-    )
+    batches = []
+
+    for batch in rows:
+        group_id = str(
+            batch.get("whatsapp_group_id") or ""
+        ).strip()
+
+        if not group_id:
+            if batch_id is not None:
+                raise RuntimeError(
+                    "Selected batch has no WhatsApp Group ID. "
+                    "Configure its group before sending."
+                )
+
+            print(
+                "Skipping batch without WhatsApp group:",
+                batch.get("name"),
+            )
+            continue
+
+        batches.append(batch)
+
+    return batches
 
 
 def send_whatsapp_image(
@@ -164,26 +172,16 @@ def send_whatsapp_image(
     caption_text,
     batch_name,
 ):
-    """
-    Returns:
-        True  -> successfully sent
-        False -> failed after retries
-    """
-
-    for attempt in range(
-        1,
-        MAX_SEND_ATTEMPTS + 1,
-    ):
+    for attempt in range(1, MAX_SEND_ATTEMPTS + 1):
         try:
             print(
-                f"📲 WhatsApp attempt "
-                f"{attempt}/{MAX_SEND_ATTEMPTS}: "
-                f"{batch_name}"
+                f"WhatsApp attempt {attempt}/"
+                f"{MAX_SEND_ATTEMPTS}: {batch_name}"
             )
 
             kit.sendwhats_image(
                 receiver=group_id,
-                img_path=image_path,
+                img_path=str(image_path),
                 caption=caption_text,
                 wait_time=WHATSAPP_WAIT_TIME,
                 tab_close=True,
@@ -191,32 +189,22 @@ def send_whatsapp_image(
             )
 
             print(
-                f"✅ Sent successfully: "
+                f"WhatsApp send command completed: "
                 f"{batch_name}"
             )
-
             return True
 
         except Exception as error:
             print(
-                f"❌ WhatsApp attempt "
-                f"{attempt} failed for "
-                f"{batch_name}: {error}"
+                f"WhatsApp failed for {batch_name}: "
+                f"{error}"
             )
 
             if attempt < MAX_SEND_ATTEMPTS:
-                print(
-                    "🔁 Retrying in 8 seconds..."
-                )
-
                 time.sleep(8)
 
     return False
 
-
-# ============================================================
-# REPORT GENERATION
-# ============================================================
 
 def generate_batch_report(
     batch,
@@ -226,737 +214,384 @@ def generate_batch_report(
     month_name,
 ):
     batch_id = batch["id"]
-
     batch_name = batch["name"]
 
+    print(f"Generating report: {batch_name}")
 
-    print(
-        f"🔄 Processing Batch: "
-        f"{batch_name}"
-    )
-
-
-    # --------------------------------------------------------
-    # STUDENTS
-    # --------------------------------------------------------
-
+    # Students in this batch only.
     students_res = (
-        supabase
-        .table("students")
+        supabase.table("students")
         .select("id, name")
-        .eq(
-            "batch_id",
-            batch_id,
-        )
+        .eq("batch_id", batch_id)
         .order("name")
         .execute()
     )
 
-
-    students_data = (
-        students_res.data or []
-    )
-
+    students_data = students_res.data or []
 
     if not students_data:
-        print(
-            f"⚠️ Skipping {batch_name}: "
-            "No students found."
-        )
-
+        print(f"No students in {batch_name}. Skipping.")
         return None
 
-
-    df_students = pd.DataFrame(
-        students_data
+    students_df = pd.DataFrame(students_data)
+    students_df["Sr No"] = range(
+        1, len(students_df) + 1
     )
 
-
-    df_students["Sr No"] = (
-        range(
-            1,
-            len(df_students) + 1,
-        )
-    )
-
-
-    df_students.rename(
-        columns={
-            "name": "Name of Student"
-        },
+    students_df.rename(
+        columns={"name": "Name of Student"},
         inplace=True,
     )
 
-
-    # --------------------------------------------------------
-    # MONTH ATTENDANCE
-    # --------------------------------------------------------
-
-    att_res = (
-        supabase
-        .table("attendance")
-        .select(
-            "student_id, date, status"
-        )
-        .eq(
-            "batch_id",
-            batch_id,
-        )
-        .gte(
-            "date",
-            start_date,
-        )
-        .lte(
-            "date",
-            end_date,
-        )
+    # Monthly attendance for selected batch.
+    attendance_res = (
+        supabase.table("attendance")
+        .select("student_id, date, status")
+        .eq("batch_id", batch_id)
+        .gte("date", start_date)
+        .lte("date", end_date)
         .execute()
     )
 
-
-    attendance_data = (
-        att_res.data or []
-    )
-
+    attendance_data = attendance_res.data or []
 
     if attendance_data:
-        df_att = pd.DataFrame(
-            attendance_data
-        )
-    else:
-        df_att = pd.DataFrame(
-            columns=[
-                "student_id",
-                "date",
-                "status",
-            ]
-        )
+        attendance_df = pd.DataFrame(attendance_data)
 
-
-    # --------------------------------------------------------
-    # ATTENDANCE PIVOT
-    #
-    # IMPORTANT:
-    # Pivot by student_id, not student name.
-    # Two students having the same name will therefore
-    # not corrupt/merge their attendance.
-    # --------------------------------------------------------
-
-    if not df_att.empty:
-        status_map = {
-            "present": "P",
-            "absent": "A",
-            "leave": "L",
-        }
-
-
-        df_att["status_short"] = (
-            df_att["status"].map(
-                status_map
+        attendance_df["status_short"] = (
+            attendance_df["status"].map(
+                {
+                    "present": "P",
+                    "absent": "A",
+                    "leave": "L",
+                }
             )
         )
 
-
-        df_att = df_att.dropna(
+        attendance_df = attendance_df.dropna(
             subset=["date"]
         ).copy()
 
+        attendance_df["day"] = pd.to_datetime(
+            attendance_df["date"]
+        ).dt.day.astype(int)
 
-        df_att["day"] = (
-            pd.to_datetime(
-                df_att["date"]
-            )
-            .dt.day
-            .astype(int)
-        )
-
-
-        # If somehow more than one record exists for
-        # a student/day, keep the last one rather than
-        # crashing pivot().
-        pivot_df = df_att.pivot_table(
+        # Use UUID, never student name, for grouping.
+        pivot_df = attendance_df.pivot_table(
             index="student_id",
             columns="day",
             values="status_short",
             aggfunc="last",
         )
 
-
-        df_final = (
-            df_students[
-                [
-                    "id",
-                    "Sr No",
-                    "Name of Student",
-                ]
-            ]
-            .merge(
-                pivot_df,
-                how="left",
-                left_on="id",
-                right_index=True,
-            )
+        final_df = students_df[
+            ["id", "Sr No", "Name of Student"]
+        ].merge(
+            pivot_df,
+            how="left",
+            left_on="id",
+            right_index=True,
         )
 
     else:
-        df_final = df_students[
-            [
-                "id",
-                "Sr No",
-                "Name of Student",
-            ]
+        final_df = students_df[
+            ["id", "Sr No", "Name of Student"]
         ].copy()
 
-
-    # Internal UUID is not displayed.
-    df_final.drop(
+    final_df.drop(
         columns=["id"],
         inplace=True,
         errors="ignore",
     )
 
-
-    # --------------------------------------------------------
-    # COMPLETE MONTH COLUMNS
-    # Sunday is intentionally excluded.
-    # --------------------------------------------------------
-
     for day in valid_days:
-        if day not in df_final.columns:
-            df_final[day] = ""
+        if day not in final_df.columns:
+            final_df[day] = ""
 
-
-    columns_order = [
-        "Sr No",
-        "Name of Student",
-    ] + valid_days
-
-
-    df_final = df_final[
-        columns_order
-    ]
-
-
-    df_final = df_final.fillna("")
-
-
-    # --------------------------------------------------------
-    # STYLING
-    # --------------------------------------------------------
+    final_df = final_df[
+        ["Sr No", "Name of Student"] + valid_days
+    ].fillna("")
 
     styles = [
         {
             "selector": "table",
             "props": [
-                (
-                    "border-collapse",
-                    "collapse",
-                ),
-                (
-                    "border",
-                    "2px solid black",
-                ),
-                (
-                    "min-width",
-                    "1250px",
-                ),
+                ("border-collapse", "collapse"),
+                ("border", "2px solid black"),
+                ("min-width", "1250px"),
             ],
         },
-
         {
             "selector": "th",
             "props": [
-                (
-                    "border",
-                    "1px solid black !important",
-                ),
-                (
-                    "padding",
-                    "10px 15px",
-                ),
-                (
-                    "background-color",
-                    "#f0f0f0",
-                ),
-                (
-                    "text-align",
-                    "center",
-                ),
+                ("border", "1px solid black"),
+                ("padding", "10px 15px"),
+                ("background-color", "#f0f0f0"),
+                ("text-align", "center"),
             ],
         },
-
         {
             "selector": "td",
             "props": [
-                (
-                    "border",
-                    "1px solid black !important",
-                ),
-                (
-                    "padding",
-                    "10px 15px",
-                ),
-                (
-                    "text-align",
-                    "center",
-                ),
+                ("border", "1px solid black"),
+                ("padding", "10px 15px"),
+                ("text-align", "center"),
             ],
         },
-
         {
             "selector": "tbody tr",
             "props": [
-                (
-                    "background-color",
-                    "white !important",
-                ),
+                ("background-color", "white"),
             ],
         },
-
         {
             "selector": "td:nth-child(2)",
             "props": [
-                (
-                    "text-align",
-                    "left",
-                ),
-                (
-                    "white-space",
-                    "nowrap",
-                ),
-                (
-                    "padding-left",
-                    "15px",
-                ),
-                (
-                    "min-width",
-                    "250px",
-                ),
+                ("text-align", "left"),
+                ("white-space", "nowrap"),
+                ("padding-left", "15px"),
+                ("min-width", "250px"),
             ],
         },
-
         {
             "selector": "caption",
             "props": [
-                (
-                    "caption-side",
-                    "top",
-                ),
-                (
-                    "text-align",
-                    "center",
-                ),
-                (
-                    "margin-bottom",
-                    "20px",
-                ),
-                (
-                    "color",
-                    "black",
-                ),
+                ("caption-side", "top"),
+                ("text-align", "center"),
+                ("margin-bottom", "20px"),
+                ("color", "black"),
             ],
         },
     ]
 
-
     caption_html = (
-        "<span "
-        "style='font-size: 22px; "
-        "font-weight: bold;'>"
-        "FGEIs Evening Coaching Classes"
+        "<span style='font-size:22px;"
+        "font-weight:bold;'>"
+        f"{ACADEMY_NAME}"
         "</span>"
-
-        "<hr "
-        "style='border: 0; "
-        "border-top: 2px solid black; "
-        "margin: 10px 0;'>"
-
-        "<span "
-        "style='font-size: 22px; "
-        "font-weight: bold;'>"
-        f"Attendance Report for Month of "
+        "<hr style='border:0;"
+        "border-top:2px solid black;"
+        "margin:10px 0;'>"
+        "<span style='font-size:22px;"
+        "font-weight:bold;'>"
+        "Attendance Report for Month of "
         f"{month_name} for {batch_name}"
         "</span>"
     )
 
-
     styled_df = (
-        df_final
-        .style
+        final_df.style
         .set_table_styles(styles)
         .set_caption(caption_html)
         .hide(axis="index")
     )
 
-
-    # --------------------------------------------------------
-    # PNG
-    # --------------------------------------------------------
-
     filename = (
-        f"{safe_filename(batch_name)}"
-        "_Attendance.png"
+        f"{safe_filename(batch_name)}_Attendance.png"
     )
 
-
-    image_path = os.path.join(
-        BASE_DIR,
-        filename,
-    )
-
+    image_path = BASE_DIR / filename
 
     dfi.export(
         styled_df,
-        image_path,
+        str(image_path),
         max_cols=-1,
         max_rows=-1,
     )
 
-
-    print(
-        f"✅ Image Rendered: "
-        f"{image_path}"
-    )
-
+    print(f"Image generated: {image_path}")
 
     return image_path
 
 
-# ============================================================
-# MASTER AUTOMATION
-# ============================================================
-
-def process_all_batches():
+def process_batches(batch_id=None):
     print()
-    print(
-        "🚀 FG Academy Attendance "
-        "Automation Starting..."
-    )
-    print()
+    print(f"{ACADEMY_NAME} Attendance Automation")
 
-
-    if SEND_WHATSAPP:
-        print(
-            "📲 WhatsApp sending: ENABLED"
-        )
+    if batch_id:
+        print(f"Mode: Single batch ({batch_id})")
     else:
-        print(
-            "🧪 WhatsApp sending: DISABLED "
-            "(PNG generation test mode)"
-        )
+        print("Mode: All batches")
 
-
+    print(
+        "WhatsApp sending:",
+        "ENABLED" if SEND_WHATSAPP else
+        "DISABLED - PNG only",
+    )
     print()
 
-
-    # --------------------------------------------------------
-    # BATCHES
-    # --------------------------------------------------------
-
-    batches_res = (
-        supabase
-        .table("batches")
-        .select(
-            "id, name, whatsapp_group_id"
-        )
-        .execute()
-    )
-
-
-    batches = [
-        batch
-        for batch in (
-            batches_res.data or []
-        )
-        if batch.get(
-            "whatsapp_group_id"
-        )
-        and str(
-            batch.get(
-                "whatsapp_group_id"
-            )
-        ).strip()
-    ]
-
+    batches = get_target_batches(batch_id)
 
     if not batches:
-        print(
-            "❌ No batch with a WhatsApp "
-            "Group ID was found."
-        )
-
+        print("No eligible batches were found.")
         return
 
+    (
+        start_date,
+        end_date,
+        valid_days,
+        month_name,
+    ) = get_month_details()
 
-    # --------------------------------------------------------
-    # CURRENT MONTH
-    # --------------------------------------------------------
+    generated = []
+    sent = []
+    failed = []
+    skipped = []
 
-    now = pakistan_now()
+    total = len(batches)
 
-    year = now.year
-
-    month = now.month
-
-
-    _, last_day = (
-        calendar.monthrange(
-            year,
-            month,
-        )
-    )
-
-
-    start_date = (
-        f"{year}-"
-        f"{month:02d}-01"
-    )
-
-
-    end_date = (
-        f"{year}-"
-        f"{month:02d}-"
-        f"{last_day:02d}"
-    )
-
-
-    # Python weekday:
-    # Monday = 0
-    # Sunday = 6
-    valid_days = [
-        day
-        for day in range(
-            1,
-            last_day + 1,
-        )
-        if datetime(
-            year,
-            month,
-            day,
-        ).weekday()
-        != 6
-    ]
-
-
-    month_name = now.strftime(
-        "%b %Y"
-    )
-
-
-    # --------------------------------------------------------
-    # RESULTS
-    # --------------------------------------------------------
-
-    generated_batches = []
-
-    sent_batches = []
-
-    failed_batches = []
-
-    skipped_batches = []
-
-
-    total_batches = len(batches)
-
-
-    # --------------------------------------------------------
-    # PROCESS
-    # --------------------------------------------------------
-
-    for index, batch in enumerate(
-        batches,
-        start=1,
-    ):
+    for index, batch in enumerate(batches, start=1):
         batch_name = batch["name"]
-
         group_id = str(
             batch["whatsapp_group_id"]
         ).strip()
 
-
         print()
-        print("=" * 70)
-
-        print(
-            f"[{index}/{total_batches}] "
-            f"{batch_name}"
-        )
-
-        print("=" * 70)
-
+        print("=" * 65)
+        print(f"[{index}/{total}] {batch_name}")
+        print("=" * 65)
 
         try:
-            image_path = (
-                generate_batch_report(
-                    batch=batch,
-                    start_date=start_date,
-                    end_date=end_date,
-                    valid_days=valid_days,
-                    month_name=month_name,
-                )
+            image_path = generate_batch_report(
+                batch=batch,
+                start_date=start_date,
+                end_date=end_date,
+                valid_days=valid_days,
+                month_name=month_name,
             )
-
 
             if image_path is None:
-                skipped_batches.append(
-                    batch_name
+                skipped.append(batch_name)
+                continue
+
+            generated.append(batch_name)
+
+            if SEND_WHATSAPP:
+                caption = (
+                    "Assalam o Alaikum,\n"
+                    "Attached is the attendance report for "
+                    f"{batch_name} ({month_name}).\n"
+                    f"{ACADEMY_NAME}"
                 )
 
-                continue
-
-
-            generated_batches.append(
-                batch_name
-            )
-
-
-            if not SEND_WHATSAPP:
-                continue
-
-
-            caption_text = (
-                "Assalam o Alaikum,\n"
-                "Attached is the automated "
-                "attendance report for "
-                f"{batch_name} "
-                f"({month_name})."
-            )
-
-
-            success = (
-                send_whatsapp_image(
+                success = send_whatsapp_image(
                     group_id=group_id,
                     image_path=image_path,
-                    caption_text=caption_text,
+                    caption_text=caption,
                     batch_name=batch_name,
                 )
-            )
 
+                if success:
+                    sent.append(batch_name)
+                else:
+                    failed.append(batch_name)
 
-            if success:
-                sent_batches.append(
-                    batch_name
-                )
-            else:
-                failed_batches.append(
-                    batch_name
-                )
-
-
-            if (
-                SEND_WHATSAPP
-                and index < total_batches
-            ):
+            if SEND_WHATSAPP and index < total:
                 print(
-                    f"⏳ Waiting "
-                    f"{BETWEEN_GROUPS_DELAY} "
-                    "seconds..."
+                    f"Waiting {BETWEEN_GROUPS_DELAY}s "
+                    "before next batch..."
                 )
-
-                time.sleep(
-                    BETWEEN_GROUPS_DELAY
-                )
-
+                time.sleep(BETWEEN_GROUPS_DELAY)
 
         except Exception as error:
             print(
-                f"❌ Error processing "
-                f"{batch_name}: "
+                f"Failed to process {batch_name}: "
                 f"{error}"
             )
-
-            failed_batches.append(
-                batch_name
-            )
-
-
-    # --------------------------------------------------------
-    # FINAL SUMMARY
-    # --------------------------------------------------------
+            failed.append(batch_name)
 
     print()
-    print("=" * 70)
+    print("=" * 65)
+    print("AUTOMATION FINISHED")
+    print("=" * 65)
 
-    print(
-        "🎉 AUTOMATION FINISHED"
-    )
-
-    print("=" * 70)
-
-    print(
-        f"📄 Reports generated: "
-        f"{len(generated_batches)}"
-    )
-
+    print(f"Reports generated: {len(generated)}")
 
     if SEND_WHATSAPP:
-        print(
-            f"✅ WhatsApp sent: "
-            f"{len(sent_batches)}"
-        )
+        print(f"Send commands completed: {len(sent)}")
+        print(f"Failed: {len(failed)}")
 
-        print(
-            f"❌ WhatsApp failed: "
-            f"{len(failed_batches)}"
-        )
+    print(f"Skipped: {len(skipped)}")
+
+    for name in failed:
+        print(f"FAILED: {name}")
+
+    for name in skipped:
+        print(f"SKIPPED: {name}")
 
 
-    print(
-        f"⚠️ Batches skipped: "
-        f"{len(skipped_batches)}"
+def main():
+    parser = argparse.ArgumentParser(
+        description="IlmRise attendance WhatsApp automation"
     )
 
+    parser.add_argument(
+        "--batch-id",
+        type=str,
+        default=None,
+        help="UUID of one batch. Omit to process all.",
+    )
 
-    if failed_batches:
-        print()
-        print(
-            "Failed batches:"
-        )
+    args = parser.parse_args()
 
-        for name in failed_batches:
-            print(
-                f" - {name}"
+    if args.batch_id:
+        try:
+            UUID(args.batch_id)
+        except ValueError:
+            parser.error(
+                "--batch-id must be a valid batch UUID."
             )
 
+    # Prevent multiple automation processes from
+    # sending to WhatsApp simultaneously on Windows.
+    lock_file = BASE_DIR / "automation.lock"
 
-    if skipped_batches:
-        print()
-        print(
-            "Skipped batches:"
-        )
+    with open(lock_file, "a+b") as lock:
+        if os.name == "nt":
+            import msvcrt
 
-        for name in skipped_batches:
-            print(
-                f" - {name}"
-            )
+            lock.seek(0)
 
+            if lock.read(1) == b"":
+                lock.seek(0)
+                lock.write(b"0")
+                lock.flush()
 
-    print()
+            lock.seek(0)
 
+            try:
+                msvcrt.locking(
+                    lock.fileno(),
+                    msvcrt.LK_NBLCK,
+                    1,
+                )
+            except OSError:
+                raise RuntimeError(
+                    "Another WhatsApp automation is running. "
+                    "Finish it before starting another."
+                )
 
-# ============================================================
-# START
-# ============================================================
+        try:
+            process_batches(args.batch_id)
+        finally:
+            if os.name == "nt":
+                lock.seek(0)
+                msvcrt.locking(
+                    lock.fileno(),
+                    msvcrt.LK_UNLCK,
+                    1,
+                )
+
 
 if __name__ == "__main__":
     try:
-        process_all_batches()
-
+        main()
     except Exception as error:
         print()
+        print("AUTOMATION STOPPED")
+        print(f"Reason: {error}")
         print(
-            "❌ AUTOMATION STOPPED"
+            "Check .env, Supabase, Python environment, "
+            "WhatsApp Web and internet connection."
         )
-
-        print(
-            f"Reason: {error}"
-        )
-
-        print()
-        print(
-            "Check .env, Supabase key, "
-            "internet connection and "
-            "database permissions."
-        )
-
-        raise
+        sys.exit(1)

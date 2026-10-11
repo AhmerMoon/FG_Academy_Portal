@@ -3,7 +3,11 @@ import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:async';
 
+import '../services/award_draft_store.dart';
+import '../utils/student_group_helper.dart';
+import '../widgets/student_subject_selector.dart';
 import '../app_theme.dart';
 import '../models/fee_models.dart';
 import '../models/portal_user.dart';
@@ -34,6 +38,10 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
   List<_AwardStudentRow> _students = [];
 
   final Map<String, String> _draftMarks = {};
+  final Map<String, String> _savedMarkTexts = {};
+  final Map<String, String> _pendingMarkDrafts = {};
+
+  bool _addingStudent = false;
   final Map<String, TextEditingController> _markControllers = {};
 
   final Map<String, FocusNode> _markFocusNodes = {};
@@ -448,6 +456,51 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     _markFocusNodes.clear();
   }
 
+  Future<void> _persistMarkDrafts() async {
+    final userId = _supabase.auth.currentUser?.id;
+    final testId = _selectedTestId;
+
+    if (userId == null || testId == null) return;
+
+    final snapshot = Map<String, String>.from(_pendingMarkDrafts);
+
+    try {
+      await AwardDraftStore.save(
+        userId: userId,
+        testId: testId,
+        marks: snapshot,
+      );
+    } catch (e) {
+      debugPrint('Award draft storage error: $e');
+
+      if (mounted) {
+        _showMessage('Draft could not be saved on this device.', error: true);
+      }
+    }
+  }
+
+  void _recordMarkDraft(String studentId, String text) {
+    final value = text.trim().toUpperCase();
+    final savedValue = _savedMarkTexts[studentId] ?? '';
+    final wasEmpty = _pendingMarkDrafts.isEmpty;
+
+    _draftMarks[studentId] = value;
+
+    if (value == savedValue) {
+      _pendingMarkDrafts.remove(studentId);
+    } else {
+      _pendingMarkDrafts[studentId] = value;
+    }
+
+    // Hive is updated on every edit, not just Save Marks.
+    unawaited(_persistMarkDrafts());
+
+    // Refresh the Save button only when necessary.
+    if (mounted && wasEmpty != _pendingMarkDrafts.isEmpty) {
+      setState(() {});
+    }
+  }
+
   void _syncMarkInputs(List<_AwardStudentRow> students) {
     final activeIds = students.map((student) => student.id).toSet();
 
@@ -467,14 +520,36 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       _markFocusNodes.remove(id)?.dispose();
     }
 
+    final userId = _supabase.auth.currentUser?.id;
+    final testId = _selectedTestId;
+
+    final storedDrafts = userId != null && testId != null
+        ? AwardDraftStore.load(userId: userId, testId: testId)
+        : <String, String>{};
+
     _draftMarks.clear();
+    _savedMarkTexts.clear();
+    _pendingMarkDrafts.clear();
 
     for (final student in students) {
-      final value = student.isAbsent
+      final savedValue = student.isAbsent
           ? 'A'
           : student.savedMarks == null
           ? ''
           : _formatNumber(student.savedMarks!);
+
+      _savedMarkTexts[student.id] = savedValue;
+
+      // Prefer an unsaved local draft over the cloud value.
+      final localDraft = storedDrafts[student.id];
+
+      final displayValue = localDraft != null && localDraft != savedValue
+          ? localDraft
+          : savedValue;
+
+      if (localDraft != null && localDraft != savedValue) {
+        _pendingMarkDrafts[student.id] = localDraft;
+      }
 
       final controller = _markControllers.putIfAbsent(
         student.id,
@@ -482,13 +557,13 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       );
 
       controller.value = TextEditingValue(
-        text: value,
-        selection: TextSelection.collapsed(offset: value.length),
+        text: displayValue,
+        selection: TextSelection.collapsed(offset: displayValue.length),
       );
 
       _markFocusNodes.putIfAbsent(student.id, () => FocusNode());
 
-      _draftMarks[student.id] = value;
+      _draftMarks[student.id] = displayValue;
     }
   }
 
@@ -571,11 +646,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     String value,
     double maxMarks,
   ) {
-    final clean = value.trim();
+    _recordMarkDraft(student.id, value);
 
-    _draftMarks[student.id] = clean;
-
-    if (_shouldAutoAdvance(value: clean, maxMarks: maxMarks)) {
+    if (_shouldAutoAdvance(value: value, maxMarks: maxMarks)) {
       _focusNextStudent(student.id);
     }
   }
@@ -583,18 +656,356 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
   void _markStudentAbsent(_AwardStudentRow student) {
     final controller = _markControllers[student.id];
 
-    if (controller == null) {
-      return;
-    }
+    if (controller == null) return;
 
     controller.value = const TextEditingValue(
       text: 'A',
       selection: TextSelection.collapsed(offset: 1),
     );
 
-    _draftMarks[student.id] = 'A';
-
+    _recordMarkDraft(student.id, 'A');
     _focusNextStudent(student.id);
+  }
+
+  Future<void> _addStudentFromAwards() async {
+    if (_addingStudent || _saving) return;
+
+    final batchId = _selectedBatchId;
+    final subject = _selectedSubject;
+    final classLevel = _selectedClassLevel;
+
+    if (batchId == null || subject == null || classLevel <= 0) {
+      _showMessage('Select a batch and subject first.', error: true);
+      return;
+    }
+
+    String studentName = '';
+
+    var selectedSubjects = normalizeStudentSubjects(classLevel, [
+      ...studentDefaultSubjectsForClass(classLevel),
+      subject,
+    ]);
+
+    String? dialogError;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Add Student'),
+              content: SizedBox(
+                width: 480,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        _selectedBatch?['name']?.toString() ?? 'Selected batch',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: AppTheme.fgNavyBlue,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text('Award subject: ${feeSubjectLabel(subject)}'),
+                      const SizedBox(height: 14),
+                      TextField(
+                        autofocus: true,
+                        textCapitalization: TextCapitalization.words,
+                        onChanged: (value) {
+                          studentName = value;
+                        },
+                        decoration: const InputDecoration(
+                          labelText: 'Student Name',
+                          prefixIcon: Icon(Icons.person_outline_rounded),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      StudentSubjectSelector(
+                        classLevel: classLevel,
+                        selectedSubjects: selectedSubjects,
+                        onChanged: (subjects) {
+                          setDialogState(() {
+                            selectedSubjects = subjects;
+                            dialogError = null;
+                          });
+                        },
+                        onValidationError: (message) {
+                          setDialogState(() {
+                            dialogError = message;
+                          });
+                        },
+                      ),
+                      if (dialogError != null) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          dialogError!,
+                          style: const TextStyle(color: AppTheme.danger),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    Navigator.pop(dialogContext, false);
+                  },
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    final name = studentName.trim();
+
+                    if (name.isEmpty) {
+                      setDialogState(() {
+                        dialogError = 'Enter student name.';
+                      });
+                      return;
+                    }
+
+                    final validation = studentSubjectSelectionError(
+                      classLevel,
+                      selectedSubjects,
+                    );
+
+                    if (validation != null) {
+                      setDialogState(() {
+                        dialogError = validation;
+                      });
+                      return;
+                    }
+
+                    if (!selectedSubjects.contains(subject)) {
+                      setDialogState(() {
+                        dialogError =
+                            'Keep ${feeSubjectLabel(subject)} selected.';
+                      });
+                      return;
+                    }
+
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    Navigator.pop(dialogContext, true);
+                  },
+                  icon: const Icon(Icons.person_add_alt_1_rounded),
+                  label: const Text('Add'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (!mounted || confirmed != true) return;
+
+    setState(() {
+      _addingStudent = true;
+    });
+
+    try {
+      await _persistMarkDrafts();
+
+      await _supabase.rpc(
+        'portal_add_student_from_attendance_v2',
+        params: {
+          'p_name': studentName.trim(),
+          'p_batch_id': batchId,
+          'p_subjects': selectedSubjects,
+        },
+      );
+
+      if (!mounted) return;
+
+      // Reload students; the test's pending marks
+      // are automatically restored from local storage.
+      await _loadTestStudents();
+
+      _showMessage(
+        '${studentName.trim()} added successfully. '
+        'Existing marks have been preserved.',
+      );
+    } catch (e) {
+      debugPrint('Award Add Student error: $e');
+
+      _showMessage('Student could not be added.\n$e', error: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _addingStudent = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _editAwardStudent(_AwardStudentRow student) async {
+    try {
+      final response = await _supabase
+          .from('students')
+          .select('name, stream')
+          .eq('id', student.id)
+          .single();
+
+      if (!mounted) return;
+
+      String name = response['name']?.toString() ?? '';
+
+      var subjects = normalizeStudentSubjects(
+        _selectedClassLevel,
+        (response['stream'] as List).map((value) => value.toString()),
+      );
+
+      String? error;
+
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                title: const Text('Edit Student'),
+                content: SizedBox(
+                  width: 480,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        TextFormField(
+                          initialValue: name,
+                          textCapitalization: TextCapitalization.words,
+                          onChanged: (value) => name = value,
+                          decoration: const InputDecoration(
+                            labelText: 'Student Name',
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        StudentSubjectSelector(
+                          classLevel: _selectedClassLevel,
+                          selectedSubjects: subjects,
+                          onChanged: (value) {
+                            setDialogState(() {
+                              subjects = value;
+                              error = null;
+                            });
+                          },
+                          onValidationError: (message) {
+                            setDialogState(() {
+                              error = message;
+                            });
+                          },
+                        ),
+                        if (error != null)
+                          Text(
+                            error!,
+                            style: const TextStyle(color: AppTheme.danger),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: const Text('Cancel'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () {
+                      final validation = studentSubjectSelectionError(
+                        _selectedClassLevel,
+                        subjects,
+                      );
+
+                      if (name.trim().isEmpty || validation != null) {
+                        setDialogState(() {
+                          error = validation ?? 'Enter name.';
+                        });
+                        return;
+                      }
+
+                      Navigator.pop(dialogContext, true);
+                    },
+                    child: const Text('Save'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+
+      if (!mounted || confirmed != true) return;
+
+      await _persistMarkDrafts();
+
+      await _supabase.rpc(
+        'portal_edit_award_student',
+        params: {
+          'p_student_id': student.id,
+          'p_name': name.trim(),
+          'p_subjects': subjects,
+        },
+      );
+
+      await _loadTestStudents();
+      _showMessage('Student updated.');
+    } catch (e) {
+      _showMessage('Student edit failed.\n$e', error: true);
+    }
+  }
+
+  Future<void> _deleteAwardStudent(_AwardStudentRow student) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Remove Student?'),
+          content: Text(
+            'Remove ${student.name}?\n\n'
+            'Only newly added students without paid fees, '
+            'saved marks or historical attendance '
+            'can be removed by teachers.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Remove'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted || confirmed != true) return;
+
+    try {
+      await _persistMarkDrafts();
+
+      await _supabase.rpc(
+        'portal_delete_new_award_student',
+        params: {'p_student_id': student.id},
+      );
+
+      _pendingMarkDrafts.remove(student.id);
+      await _persistMarkDrafts();
+
+      await _loadTestStudents();
+
+      _showMessage('Student removed.');
+    } catch (e) {
+      _showMessage('Student could not be removed.\n$e', error: true);
+    }
   }
 
   Future<void> _createTest() async {
@@ -770,25 +1181,40 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
   }
 
   Future<void> _saveMarks() async {
-    final test = _selectedTest;
+    if (_saving) return;
 
-    if (test == null) {
+    final test = _selectedTest;
+    if (test == null) return;
+
+    if (_pendingMarkDrafts.isEmpty) {
+      _showMessage('No unsaved changes.');
       return;
     }
 
     final maxMarks = (test['max_marks'] as num).toDouble();
 
     final payload = <Map<String, dynamic>>[];
+    final submittedIds = <String>[];
 
     for (final student in _students) {
-      final controller = _markControllers[student.id];
+      if (!_pendingMarkDrafts.containsKey(student.id)) {
+        continue;
+      }
 
-      final value = (controller?.text ?? _draftMarks[student.id] ?? '')
-          .trim()
-          .toUpperCase();
+      final value =
+          (_markControllers[student.id]?.text ??
+                  _pendingMarkDrafts[student.id] ??
+                  '')
+              .trim()
+              .toUpperCase();
 
       if (value.isEmpty) {
-        continue;
+        _showMessage(
+          '${student.name}: enter marks or select A. '
+          'Use Clear Saved Mark to remove an old result.',
+          error: true,
+        );
+        return;
       }
 
       if (value == 'A') {
@@ -798,32 +1224,20 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
           'is_absent': true,
         });
 
+        submittedIds.add(student.id);
         continue;
       }
 
       final marks = double.tryParse(value);
 
-      if (marks == null) {
+      if (marks == null || marks < 0 || marks > maxMarks) {
         _showMessage(
-          'Invalid marks for '
-          '${student.name}.',
-          error: true,
-        );
-
-        return;
-      }
-
-      if (marks < 0 || marks > maxMarks) {
-        _showMessage(
-          '${student.name}: '
-          'marks must be between '
-          '0 and '
-          '${_formatNumber(maxMarks)}.',
+          '${student.name}: enter marks between '
+          '0 and ${_formatNumber(maxMarks)}.',
           error: true,
         );
 
         _markFocusNodes[student.id]?.requestFocus();
-
         return;
       }
 
@@ -832,15 +1246,12 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
         'marks': marks,
         'is_absent': false,
       });
+
+      submittedIds.add(student.id);
     }
 
     if (payload.isEmpty) {
-      _showMessage(
-        'Enter at least one '
-        'student mark.',
-        error: true,
-      );
-
+      _showMessage('No marks to save.', error: true);
       return;
     }
 
@@ -856,19 +1267,28 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
         params: {'p_test_id': test['id'].toString(), 'p_marks': payload},
       );
 
-      await _loadTestStudents();
-
-      if (!mounted) {
-        return;
+      // Clear only the marks successfully sent.
+      // Other pending drafts remain on this device.
+      for (final id in submittedIds) {
+        _pendingMarkDrafts.remove(id);
       }
 
+      await _persistMarkDrafts();
+      await _loadTestStudents();
+
+      if (!mounted) return;
+
       await _showSavedSuccessSheet(
-        savedCount: result is num ? result.toInt() : payload.length,
+        savedCount: result is num ? result.toInt() : submittedIds.length,
       );
     } catch (e) {
       debugPrint('Save award marks error: $e');
 
-      _showMessage(_friendlyError(e), error: true);
+      _showMessage(
+        'Marks could not be uploaded. '
+        'Your local draft is still available.\n$e',
+        error: true,
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -1045,6 +1465,11 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
         },
       );
 
+      // Remove any older local draft for this student,
+      // otherwise refresh could restore the cleared mark.
+      _pendingMarkDrafts.remove(student.id);
+      await _persistMarkDrafts();
+
       await _loadTestStudents();
 
       _showMessage('Saved mark cleared.');
@@ -1094,6 +1519,27 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          IconButton(
+            tooltip: 'Add Student',
+            color: Colors.white,
+            onPressed:
+                _addingStudent ||
+                    _saving ||
+                    _selectedSubject == null ||
+                    _selectedBatchId == null
+                ? null
+                : _addStudentFromAwards,
+            icon: _addingStudent
+                ? const SizedBox(
+                    width: 19,
+                    height: 19,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.person_add_alt_1_rounded),
+          ),
           IconButton(
             tooltip: 'History',
             color: Colors.white,
@@ -1680,6 +2126,28 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                         ],
                       ),
                     ),
+
+                    PopupMenuButton<String>(
+                      tooltip: 'Student actions',
+                      icon: const Icon(Icons.more_vert_rounded),
+                      onSelected: (action) {
+                        if (action == 'edit') {
+                          _editAwardStudent(student);
+                        } else if (action == 'delete') {
+                          _deleteAwardStudent(student);
+                        }
+                      },
+                      itemBuilder: (context) => const [
+                        PopupMenuItem<String>(
+                          value: 'edit',
+                          child: Text('Edit Student'),
+                        ),
+                        PopupMenuItem<String>(
+                          value: 'delete',
+                          child: Text('Remove New Student'),
+                        ),
+                      ],
+                    ),
                   ],
                 );
 
@@ -1764,7 +2232,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
               ),
             ),
             ElevatedButton.icon(
-              onPressed: _saving ? null : _saveMarks,
+              onPressed: _saving || _pendingMarkDrafts.isEmpty
+                  ? null
+                  : _saveMarks,
               icon: _saving
                   ? const SizedBox(
                       width: 18,

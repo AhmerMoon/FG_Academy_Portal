@@ -20,6 +20,7 @@ import 'profile_screen.dart';
 import 'teacher_batches_screen.dart';
 import 'admin/fees/excel_fee_test_screen.dart';
 import 'admin/teachers_tab.dart';
+import '../services/award_draft_store.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String userRole;
@@ -132,7 +133,58 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  void _selectSection(int index) {
+  Future<bool> _confirmLeavingAwardDraft() async {
+    final onAwards = _isAdmin ? _selectedIndex == 5 : _selectedIndex == 1;
+
+    if (!onAwards) return true;
+
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+
+    if (userId == null || !AwardDraftStore.hasPendingDrafts(userId)) {
+      return true;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Award List not submitted'),
+          content: const Text(
+            'Aapke kuch marks abhi Supabase par save '
+            'nahi hue.\n\n'
+            'Draft is phone par saved hai. '
+            'Wapas aakar Save Marks dabana zaroori hai.\n\n'
+            'Kya aap phir bhi tab change karna chahte hain?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Keep Editing'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Leave'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return confirmed == true;
+  }
+
+  void _selectSection(int index) async {
+    if (index == _selectedIndex && _activeSubScreen == null) {
+      return;
+    }
+
+    if (!await _confirmLeavingAwardDraft()) {
+      return;
+    }
+
+    if (!mounted) return;
+
     setState(() {
       _selectedIndex = index;
       _activeSubScreen = null;
@@ -156,10 +208,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _openProfile() {
-    setState(() {
-      _activeSubScreen = null;
-      _selectedIndex = _isAdmin ? 7 : 2;
-    });
+    _selectSection(_isAdmin ? 7 : 2);
   }
 
   Future<void> _refreshStats() async {
@@ -238,6 +287,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _logout() async {
+    if (!await _confirmLeavingAwardDraft()) {
+      return;
+    }
+
+    if (!mounted) return;
     try {
       await AuthService().signOut();
 
@@ -372,7 +426,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
     }
 
-    return 'FG Academy';
+    return 'Academy Portal';
   }
 
   int get _mobileAdminIndex {
@@ -522,7 +576,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'FG ACADEMY',
+                    'Academy Portal',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 21,
@@ -784,7 +838,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'FG Academy',
+                          'Academy Portal',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 19,
