@@ -22,7 +22,7 @@ if not defined PYTHON_EXE (
 )
 
 echo.
-echo IlmRise Academy - Attendance Automation
+echo Academy - Attendance Automation
 echo.
 
 "%PYTHON_EXE%" "%~dp0main.py" %*

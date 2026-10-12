@@ -29,7 +29,7 @@ warnings.filterwarnings("ignore")
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
-ACADEMY_NAME = "IlmRise Academy"
+ACADEMY_NAME = "FGEIs Evening Coaching Classes"
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
 SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "").strip()
@@ -469,7 +469,7 @@ def process_batches(batch_id=None):
             if SEND_WHATSAPP:
                 caption = (
                     "Assalam o Alaikum,\n"
-                    "Attached is the attendance report for "
+                    "Please check your child's attendance."
                     f"{batch_name} ({month_name}).\n"
                     f"{ACADEMY_NAME}"
                 )
@@ -522,7 +522,7 @@ def process_batches(batch_id=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="IlmRise attendance WhatsApp automation"
+        description="Academy attendance WhatsApp automation"
     )
 
     parser.add_argument(
