@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import 'award_lists_screen.dart';
 import '../app_theme.dart';
 import '../services/auth_service.dart';
@@ -13,12 +14,10 @@ import '../utils/list_sorting.dart';
 import '../widgets/academy_background.dart';
 import 'admin/admin_attendance_tab.dart';
 import 'admin/batches_tab.dart';
-import 'admin/fees/fees_tab.dart';
 import 'admin/students_tab.dart';
 import 'login_screen.dart';
 import 'profile_screen.dart';
 import 'teacher_batches_screen.dart';
-import 'admin/fees/excel_fee_test_screen.dart';
 import 'admin/teachers_tab.dart';
 import '../services/award_draft_store.dart';
 
@@ -35,7 +34,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   int _selectedIndex = 0;
-
   Widget? _activeSubScreen;
 
   int _totalStudents = 0;
@@ -44,21 +42,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<Map<String, dynamic>> _batchStrengths = [];
 
   bool _isLoadingStats = true;
-
   String? _statsError;
 
   bool get _isAdmin => widget.userRole == 'admin';
-  bool get _canUseExcelFeeTest {
-    if (!_isAdmin || !isWindowsPlatform) {
-      return false;
-    }
-
-    final email = Hive.box(
-      'settings',
-    ).get('email')?.toString().trim().toLowerCase();
-
-    return email == 'ahmermoonmajid@gmail.com';
-  }
 
   List<_NavigationItem> get _items {
     if (_isAdmin) {
@@ -86,12 +72,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           label: 'Attendance',
           icon: Icons.fact_check_outlined,
           selectedIcon: Icons.fact_check_rounded,
-        ),
-        _NavigationItem(
-          index: 4,
-          label: 'Fees',
-          icon: Icons.payments_outlined,
-          selectedIcon: Icons.payments_rounded,
         ),
         _NavigationItem(
           index: 5,
@@ -232,7 +212,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ]);
 
       final students = results[0];
-
       final batches = results[1];
 
       final strengths = <String, int>{};
@@ -262,7 +241,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       setState(() {
         _totalStudents = students.length;
-
         _totalBatches = batches.length;
 
         _batchStrengths = sorted
@@ -270,7 +248,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             .toList();
 
         _isLoadingStats = false;
-
         _statsError = null;
       });
     } catch (e) {
@@ -280,7 +257,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       setState(() {
         _isLoadingStats = false;
-
         _statsError = 'Unable to load academy statistics.';
       });
     }
@@ -292,15 +268,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     if (!mounted) return;
+
     try {
       await AuthService().signOut();
 
       final box = Hive.box('settings');
 
       await box.put('isLoggedIn', false);
-
       await box.put('role', '');
-
       await box.put('username', '');
     } catch (e) {
       debugPrint('Logout error: $e');
@@ -308,7 +283,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (!mounted) return;
 
       _showMessage('Could not log out.', error: true);
-
       return;
     }
 
@@ -379,9 +353,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             onBack: desktopMode ? _closeSubScreen : null,
           );
 
-        case 4:
-          return const FeesTab();
-
         case 5:
           return AwardListsScreen(userRole: widget.userRole);
 
@@ -440,11 +411,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       case 3:
         return 2;
 
-      case 4:
-        return 3;
-
       case 7:
-        return 4;
+        return 3;
 
       case 2:
         return 0;
@@ -469,10 +437,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         break;
 
       case 3:
-        _selectSection(4);
-        break;
-
-      case 4:
         _openProfile();
         break;
     }
@@ -485,9 +449,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final width = constraints.maxWidth;
 
         final desktop = width >= 1180;
-
         final tablet = width >= 720 && width < 1180;
-
         final mobile = width < 720;
 
         final content = AcademyBackground(
@@ -745,6 +707,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final selectedPosition = _items.indexWhere(
       (item) => item.index == _selectedIndex,
     );
+
     return NavigationRail(
       selectedIndex: selectedPosition >= 0 ? selectedPosition : null,
       labelType: NavigationRailLabelType.all,
@@ -900,7 +863,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         : null,
                     onTap: () {
                       Navigator.of(context).pop();
-
                       _selectSection(item.index);
                     },
                   );
@@ -973,11 +935,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           label: 'Attendance',
         ),
         NavigationDestination(
-          icon: Icon(Icons.payments_outlined),
-          selectedIcon: Icon(Icons.payments_rounded),
-          label: 'Fees',
-        ),
-        NavigationDestination(
           icon: Icon(Icons.person_outline_rounded),
           selectedIcon: Icon(Icons.person_rounded),
           label: 'Profile',
@@ -998,7 +955,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         borderRadius: BorderRadius.circular(13),
         onTap: () {
           Navigator.of(context).pop();
-
           _openProfile();
         },
         child: Padding(
@@ -1138,53 +1094,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       );
                     },
                   ),
+
                   const SizedBox(height: 14),
-
                   _strengthCard(),
-
-                  if (_canUseExcelFeeTest) ...[
-                    const SizedBox(height: 12),
-
-                    Card(
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 17,
-                          vertical: 8,
-                        ),
-                        leading: Container(
-                          width: 48,
-                          height: 48,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: AppTheme.warning.withValues(alpha: 0.10),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Icon(
-                            Icons.science_rounded,
-                            color: AppTheme.warning,
-                            size: 27,
-                          ),
-                        ),
-                        title: const Text(
-                          'Excel Fees (Test)',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 15,
-                          ),
-                        ),
-                        subtitle: const Text(
-                          'Experimental local Excel '
-                          'fee reports • Ahmer only',
-                        ),
-                        trailing: const Icon(Icons.chevron_right_rounded),
-                        onTap: () {
-                          _navigateToSubScreen(
-                            ExcelFeeTestScreen(onBack: _closeSubScreen),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
 
                   if (isWindowsPlatform) ...[
                     const SizedBox(height: 12),
