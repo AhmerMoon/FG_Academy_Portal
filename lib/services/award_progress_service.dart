@@ -46,7 +46,6 @@ class AwardProgressBundle {
   final String preparedBy;
 
   final List<AwardProgressTest> tests;
-
   final List<AwardProgressStudent> students;
 
   const AwardProgressBundle({
@@ -81,7 +80,6 @@ class AwardProgressService {
     }).toList()..sort((a, b) => a.testNo.compareTo(b.testNo));
 
     final testIds = parsedTests.map((test) => test.id).toList();
-
     final batchId = batch['id'].toString();
 
     final results = await Future.wait<dynamic>([
@@ -89,6 +87,7 @@ class AwardProgressService {
           .from('students')
           .select('id, name, stream')
           .eq('batch_id', batchId)
+          .eq('is_archived', false)
           .order('name', ascending: true),
 
       supabase
@@ -103,7 +102,6 @@ class AwardProgressService {
     ]);
 
     final rawStudents = results[0] as List;
-
     final rawMarks = results[1] as List;
 
     final resultsByStudent = <String, Map<String, AwardProgressResult>>{};
@@ -112,7 +110,6 @@ class AwardProgressService {
       final row = Map<String, dynamic>.from(raw);
 
       final studentId = row['student_id']?.toString();
-
       final testId = row['test_id']?.toString();
 
       if (studentId == null || testId == null) {

@@ -1,0 +1,49 @@
+You are working in my existing, LIVE Flutter Academy Portal repository (Android, Windows, and Vercel Web). I want one final, narrowly scoped cleanup release. Read the whole current project carefully; do not assume an older codebase dump is the latest version.
+
+IMPORTANT REFERENCES
+- docs/Academy_Supabase_Schema_Reference.json is a supplied snapshot of the database schema (tables, columns, RLS, functions, triggers, constraints, views). Read it completely to understand relations. It may be stale: inspect the actual current migrations/current schema and compare. If Supabase read-only MCP is connected, inspect the LIVE SCHEMA only; do not query student personal data or execute writes. A Supabase URL alone does NOT grant private schema access.
+- docs/Academy_Portal_Final_Cleanup.sql is a proposed one-transaction migration. REVIEW every statement against the ACTUAL CURRENT schema before running it. Do not execute it for me, and do not modify the production database automatically. Report schema drift and dependencies first.
+- Keep existing auth, admin/teacher permissions, responsive layouts, award lists, attendance, WhatsApp reporting and GitHub/Vercel deployment working.
+
+FIRST: READ-ONLY PLAN
+1. Identify every live Flutter and backend reference to fees (`fee_*`, `default_fee`, `fee_remarks`, Fees screens, Excel fees bridge/Python code, fee reports/PDF, `admin_add_fee_student` etc.) and every student ADD, DELETE, SELECT, attendance history and award/student listing route. Search all the current repository files, not only known paths.
+2. Identify the exact files, RPC contracts, database migrations and potential compatibility risks. Explain your plan before editing. Keep a small, reviewed diff; ask me to approve risky deletions.
+3. Supabase schema relationships to preserve: `students.id` UUID; `students.batch_id` -> `batches`; `students.stream` text[] subject codes; `attendance.student_id` -> `students.id` with ON DELETE CASCADE; `award_marks.student_id` -> `students.id` with ON DELETE CASCADE; `award_tests`, `teacher_assignments`, `user_profiles` and Supabase Auth must remain intact.
+
+CHANGE A — REMOVE ALL FEES FROM THE APP
+- No Fees tab in the sidebar or bottom navigation; no Fees card / Excel Fees Test anywhere on the dashboard; no Fee, default amount, payment month or Fee remarks fields in Add/Edit Student.
+- Remove ALL unreachable fee-specific Flutter screens/models/services/PDF builders/Excel bridge code and Python fee integration, but only if no remaining code imports or depends on them. Do not remove the separate attendance WhatsApp Python backend.
+- Add Student must no longer depend on `FeeService.addStudent` or `admin_add_fee_student` / `add_fee_student` fee RPCs. Use the fee-free new `portal_add_student(p_name, p_batch_id, p_subjects)` RPC specified in the SQL migration. The old teacher attendance-add RPC `portal_add_student_from_attendance_v2` will be replaced on the server to call the new fee-free implementation.
+- Keep other features, navigation, notifications, sign-in, teacher permissions, award sheets, daily attendance and existing responsive Web + Android + Windows UI unchanged unless necessary.
+
+CHANGE B — ARCHIVE INSTEAD OF DELETE (NON-NEGOTIABLE)
+- In `lib/screens/admin/students_tab.dart` and every other student delete flow, replace hard DELETE with an admin-only `archive_student(p_student_id, p_reason)` RPC. No `.from('students').delete()` anywhere in runtime code.
+- Rename destructive UI to `Archive Student`, show a confirmation stating historical attendance and award marks WILL BE RETAINED, and optionally collect a short reason (e.g. Left academy).
+- Add an **Archive** section/tab within Admin Students, NOT a new left sidebar tab. Show archived students with name, batch, archived date/reason, searchable and sorted. Add `Restore` with confirmation; call `restore_student(p_student_id)`. The SAME UUID must be restored and history preserved. Admin only; teacher must not access archive list.
+- Every ACTIVE student query must use `.eq('is_archived', false)` (or equivalent). Every archive query must use `.eq('is_archived', true)`. Filter in Admin and Teacher attendance lists, student counts, award-list student picker, add/edit forms, student search, report generation and every appropriate metric. Do not silently erase older attendance/award rows. Show archived student's historical attendance and marks in the Admin Archive detail (read-only) so disputes about prior dates can be resolved.
+- Look for code paths deleting batches (which can also cascade). Existing database migration blocks batch hard delete; remove/rework any destructive UI route.
+- If a matching-name student is archived, guide the admin to Restore instead of creating a duplicate. No attempt to recreate previously hard-deleted history.
+- For historical reporting, clearly distinguish CURRENT ACTIVE population from HISTORICAL past-period records; do not falsify historic attendance or mark archived students absent going forward.
+- Ensure attendance automation backend (`FGEI_Backend/main.py`, and alternate main_single_tab.py if present) excludes archived students when selecting current attendance and calculating unmarked counts. Preserve existing 'Send All only if today's unmarked count is zero' business rule and individual batch sending behavior. Do NOT change WhatsApp sending transport as part of this task.
+
+CHANGE C — STREAM / SUBJECT SELECTION IS MANDATORY
+- On EVERY Add Student entry point (Admin Students, Admin Attendance, Teacher Attendance, dialogs and RPCs), the Save button must refuse empty `stream` / selected subjects. Show 'Select at least one subject before adding the student.'
+- Preserve existing Class 9/10 subject choice rules (Computer and Biology alternative) and Class 11/12 limits. Teacher must include an assigned teaching subject; existing DB `validate_student_subject_stream()` trigger already checks valid choices; confirm it remains.
+- Do not silently auto-fill unspecified subjects. Show chosen stream clearly in the student list and relevant teacher views.
+- Existing student `stream` fields are already NOT NULL with validation according to supplied schema snapshot. Validate any legacy anomalies and report; do not fabricate or overwrite subjects.
+
+DATABASE + SECURITY
+- Supabase SQL is delivered separately, not to be executed by you until I approve. Actual current schema may differ from the snapshot.
+- New `students` fields: `is_archived` (default false), `archived_at`, `archived_by`, `archive_reason`. Existing `students.status` ('enrolled'/'trial') is unrelated and must be preserved.
+- Migration removes all `fee_*` views/tables/functions and `students.default_fee`/`students.fee_remarks`. Check grants, triggers, RLS, dependent functions before any drop. Protect all existing student, attendance and award data. Old APK clients using the removed fee RPCs may require an update.
+- Admin-only archive and restore enforced on server using `public.is_portal_admin()`, secured SECURITY DEFINER functions and explicit execute grants. Do NOT use the Supabase service-role or secret key in Flutter/Web.
+- Do not set RLS to public, loosen permissions, change signup or remove existing teacher permissions.
+
+TESTS + DEPLOYMENT
+- Verify no fee imports / fee RPC calls remain in app; `flutter analyze` and `flutter test` must pass, with tests for create student with/without stream, archive, restore, active filter, historical attendance preservation, award marks preservation, and admin/teacher permissions.
+- Test admin add student, teacher attendance add, archive, restore, monthly reports and current attendance totals; verify archived student attendance is not erased and is not counted as current unmarked attendance. Check student with zero selected subjects is rejected at both Flutter and SQL levels.
+- Test phone-size Vercel Web, Windows and Android layouts. Preserve login and Supabase auth redirects.
+- Work in a feature branch, do NOT push, publish, or deploy until I explicitly approve. Never run destructive commands or execute SQL against production automatically.
+- Suggested release sequence: inspect and backup production DB, rehearse SQL on isolated copy/staging, implement and validate client changes, coordinate one maintenance window for production SQL + new Web deployment + Android/Windows builds; check legacy APK compatibility. Provide a rollback plan and final changed-file report.
+
+Start by reading and reporting your plan; DO NOT edit anything until I approve the plan.

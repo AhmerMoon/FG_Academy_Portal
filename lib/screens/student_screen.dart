@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../app_theme.dart';
+import '../models/fee_models.dart';
 import '../utils/error_state_view.dart';
 import '../utils/list_sorting.dart';
 import '../widgets/academy_background.dart';
-import '../utils/student_group_helper.dart';
-import '../widgets/student_subject_selector.dart';
+import '../widgets/add_student_dialog.dart';
 
 class StudentsScreen extends StatefulWidget {
   final String batchId;
@@ -28,21 +29,15 @@ class _StudentsScreenState extends State<StudentsScreen> {
   List<dynamic> students = [];
 
   final Map<String, String?> attendanceStatus = {};
-
   final Map<String, int> _priorAbsenceStreak = {};
-
   final Set<String> modifiedStudents = {};
 
   bool isLoading = true;
-
   bool isSaving = false;
-
   bool _isAddingStudent = false;
 
   String? errorMessage;
-
   int? _classLevel;
-
   String? _teacherSubjectCode;
 
   late final String todayDate;
@@ -52,7 +47,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
     super.initState();
 
     final now = DateTime.now();
-
     todayDate = DateTime(
       now.year,
       now.month,
@@ -62,11 +56,13 @@ class _StudentsScreenState extends State<StudentsScreen> {
     fetchStudentsAndAttendance();
   }
 
-  int get presentCount =>
-      attendanceStatus.values.where((status) => status == 'present').length;
+  int get presentCount => students.where((student) {
+    return attendanceStatus[student['id'].toString()] == 'present';
+  }).length;
 
-  int get absentCount =>
-      attendanceStatus.values.where((status) => status == 'absent').length;
+  int get absentCount => students.where((student) {
+    return attendanceStatus[student['id'].toString()] == 'absent';
+  }).length;
 
   int get unmarkedCount => students.length - presentCount - absentCount;
 
@@ -80,51 +76,12 @@ class _StudentsScreenState extends State<StudentsScreen> {
     ).toIso8601String().split('T').first;
   }
 
-  String _subjectLabel(String code) {
-    switch (code) {
-      case 'Phy':
-        return 'Physics';
-
-      case 'Chem':
-        return 'Chemistry';
-
-      case 'Math':
-        return 'Mathematics';
-
-      case 'Eng':
-        return 'English';
-
-      case 'Comp':
-        return 'Computer';
-
-      case 'Bio':
-        return 'Biology';
-
-      default:
-        return code;
-    }
-  }
-
-  bool _shouldFilterAttendanceBySubject(int classLevel, String? subjectCode) {
-    if (subjectCode == null) {
-      return false;
-    }
-
-    return classLevel >= 9 && classLevel <= 12;
-  }
-
   int _absenceStreakFor(String studentId) {
     final previous = _priorAbsenceStreak[studentId] ?? 0;
+    final today = attendanceStatus[studentId];
 
-    final todayStatus = attendanceStatus[studentId];
-
-    if (todayStatus == 'present') {
-      return 0;
-    }
-
-    if (todayStatus == 'absent') {
-      return previous + 1;
-    }
+    if (today == 'present') return 0;
+    if (today == 'absent') return previous + 1;
 
     return previous;
   }
@@ -134,51 +91,41 @@ class _StudentsScreenState extends State<StudentsScreen> {
   }
 
   Future<void> fetchStudentsAndAttendance() async {
-    // Keep a temporary copy of all unsaved attendance.
-    // Refreshing the student list must NOT discard marks.
+    if (!mounted) return;
+
+    // Preserve attendance marked locally but not submitted.
     final pendingAttendance = <String, String?>{
-      for (final studentId in modifiedStudents)
-        studentId: attendanceStatus[studentId],
+      for (final id in modifiedStudents) id: attendanceStatus[id],
     };
 
-    if (mounted) {
-      setState(() {
-        isLoading = true;
-        errorMessage = null;
-      });
-    }
+    setState(() {
+      isLoading = true;
+      errorMessage = null;
+    });
 
     try {
-      // ========================================================
-      // CLASS CONTEXT
-      // ========================================================
-
       final batchRow = await supabase
           .from('batches')
           .select('id, class_level')
           .eq('id', widget.batchId)
           .single();
 
-      final classLevel = (batchRow['class_level'] as num?)?.toInt();
+      final level = (batchRow['class_level'] as num?)?.toInt();
 
-      if (classLevel == null) {
-        throw StateError('Batch class level is unavailable.');
+      if (level == null) {
+        throw StateError('Batch class level unavailable.');
       }
-
-      // ========================================================
-      // TEACHER SUBJECT
-      // ========================================================
 
       String? teacherSubject;
 
-      final authUser = supabase.auth.currentUser;
+      final user = supabase.auth.currentUser;
 
-      if (authUser != null) {
+      if (user != null) {
         final assignments = await supabase
             .from('teacher_assignments')
             .select('subject_code')
-            .eq('teacher_id', authUser.id)
-            .eq('class_level', classLevel)
+            .eq('teacher_id', user.id)
+            .eq('class_level', level)
             .limit(1);
 
         if (assignments.isNotEmpty) {
@@ -186,14 +133,8 @@ class _StudentsScreenState extends State<StudentsScreen> {
         }
       }
 
-      final filterBySubject = _shouldFilterAttendanceBySubject(
-        classLevel,
-        teacherSubject,
-      );
-
-      // ========================================================
-      // STUDENTS + ATTENDANCE
-      // ========================================================
+      final filterBySubject =
+          teacherSubject != null && level >= 9 && level <= 12;
 
       final today = DateTime.parse(todayDate);
 
@@ -204,6 +145,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
             .from('students')
             .select('id, name, stream')
             .eq('batch_id', widget.batchId)
+            .eq('is_archived', false)
             .order('name', ascending: true),
 
         supabase
@@ -223,64 +165,55 @@ class _StudentsScreenState extends State<StudentsScreen> {
 
       final rawStudents = results[0] as List;
 
-      final filteredStudents = rawStudents.where((raw) {
-        if (!filterBySubject) {
-          return true;
-        }
+      final filtered = rawStudents.where((raw) {
+        if (!filterBySubject) return true;
 
         final stream = raw['stream'];
 
-        if (stream is! List) {
-          return false;
-        }
+        if (stream is! List) return false;
 
-        return stream.map((item) => item.toString()).contains(teacherSubject);
+        return stream
+            .map((subject) => subject.toString())
+            .contains(teacherSubject);
       }).toList();
 
-      final studentRows = sortStudents(filteredStudents);
+      final studentRows = sortStudents(filtered);
 
       final visibleIds = studentRows
           .map((student) => student['id'].toString())
           .toSet();
 
-      final attendanceRows = results[1] as List;
-
-      final historyRows = results[2] as List;
-
-      attendanceStatus.clear();
-      _priorAbsenceStreak.clear();
-      modifiedStudents.clear();
+      final loadedStatus = <String, String?>{};
+      final loadedStreak = <String, int>{};
 
       for (final student in studentRows) {
         final id = student['id'].toString();
 
-        attendanceStatus[id] = null;
-
-        _priorAbsenceStreak[id] = 0;
+        loadedStatus[id] = null;
+        loadedStreak[id] = 0;
       }
 
-      for (final row in attendanceRows) {
-        final studentId = row['student_id'].toString();
+      for (final row in results[1] as List) {
+        final id = row['student_id']?.toString();
 
-        if (!visibleIds.contains(studentId)) {
+        if (id == null || !visibleIds.contains(id)) {
           continue;
         }
 
-        attendanceStatus[studentId] = row['status']?.toString();
+        loadedStatus[id] = row['status']?.toString();
       }
 
       final historyByStudent = <String, List<Map<String, dynamic>>>{};
 
-      for (final rawRow in historyRows) {
-        final row = Map<String, dynamic>.from(rawRow);
+      for (final raw in results[2] as List) {
+        final row = Map<String, dynamic>.from(raw);
+        final id = row['student_id']?.toString();
 
-        final studentId = row['student_id']?.toString();
-
-        if (studentId == null || !visibleIds.contains(studentId)) {
+        if (id == null || !visibleIds.contains(id)) {
           continue;
         }
 
-        historyByStudent.putIfAbsent(studentId, () => []).add(row);
+        historyByStudent.putIfAbsent(id, () => []).add(row);
       }
 
       for (final entry in historyByStudent.entries) {
@@ -295,15 +228,21 @@ class _StudentsScreenState extends State<StudentsScreen> {
 
           if (status == 'absent') {
             streak++;
-            continue;
-          }
-
-          if (status == 'present') {
+          } else if (status == 'present') {
             break;
           }
         }
 
-        _priorAbsenceStreak[entry.key] = streak;
+        loadedStreak[entry.key] = streak;
+      }
+
+      final pendingIds = <String>{};
+
+      for (final entry in pendingAttendance.entries) {
+        if (!visibleIds.contains(entry.key)) continue;
+
+        loadedStatus[entry.key] = entry.value;
+        pendingIds.add(entry.key);
       }
 
       if (!mounted) return;
@@ -311,23 +250,22 @@ class _StudentsScreenState extends State<StudentsScreen> {
       setState(() {
         students = studentRows;
 
-        // Restore locally marked attendance after refresh.
-        // Only restore IDs still visible in this batch.
-        for (final entry in pendingAttendance.entries) {
-          if (!visibleIds.contains(entry.key)) {
-            continue;
-          }
+        attendanceStatus
+          ..clear()
+          ..addAll(loadedStatus);
 
-          attendanceStatus[entry.key] = entry.value;
-          modifiedStudents.add(entry.key);
-        }
+        _priorAbsenceStreak
+          ..clear()
+          ..addAll(loadedStreak);
 
-        _classLevel = classLevel;
+        modifiedStudents
+          ..clear()
+          ..addAll(pendingIds);
 
+        _classLevel = level;
         _teacherSubjectCode = teacherSubject;
 
         isLoading = false;
-
         errorMessage = null;
       });
     } catch (e) {
@@ -337,7 +275,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
 
       setState(() {
         isLoading = false;
-
         errorMessage =
             'Unable to load students and attendance. '
             'Check your connection and try again.';
@@ -346,282 +283,65 @@ class _StudentsScreenState extends State<StudentsScreen> {
   }
 
   void _setStatus(String studentId, String status) {
+    if (isSaving) return;
+
     setState(() {
       attendanceStatus[studentId] = status;
-
       modifiedStudents.add(studentId);
     });
   }
 
   void _markAll(String status) {
+    if (isSaving) return;
+
     setState(() {
       for (final student in students) {
         final id = student['id'].toString();
 
         attendanceStatus[id] = status;
-
         modifiedStudents.add(id);
       }
     });
   }
 
   Future<void> _openAddStudentDialog() async {
-    if (_isAddingStudent) return;
+    if (_isAddingStudent || isSaving) return;
 
-    // Attendance may already contain unsaved marks.
-    // Teacher must still be able to add a new student.
-    final classLevel = _classLevel;
+    final level = _classLevel;
 
-    if (classLevel == null) {
-      _showMessage('Class information is unavailable.', error: true);
+    if (level == null) {
+      _showMessage('Class information unavailable.', error: true);
       return;
     }
 
-    // No manually managed TextEditingController.
-    // TextField will manage its own internal controller.
-    String studentName = '';
-
-    var selectedSubjects = List<String>.from(
-      studentDefaultSubjectsForClass(classLevel),
+    final batch = FeeBatch(
+      id: widget.batchId,
+      name: widget.batchName,
+      classLevel: level,
     );
 
-    final teacherSubject = _teacherSubjectCode;
-
-    // Automatically include the teacher's own subject.
-    if (teacherSubject != null &&
-        studentSubjectCodesForClass(classLevel).contains(teacherSubject) &&
-        !selectedSubjects.contains(teacherSubject)) {
-      selectedSubjects = normalizeStudentSubjects(classLevel, [
-        ...selectedSubjects,
-        teacherSubject,
-      ]);
-    }
-
-    String? dialogError;
-
-    final request = await showDialog<_NewAttendanceStudentDraft>(
+    final request = await showAcademyAddStudentDialog(
       context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Row(
-                children: [
-                  Icon(
-                    Icons.person_add_alt_1_rounded,
-                    color: AppTheme.fgNavyBlue,
-                  ),
-                  SizedBox(width: 10),
-                  Expanded(child: Text('Add New Student')),
-                ],
-              ),
-
-              content: SizedBox(
-                width: 500,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(
-                        widget.batchName,
-                        style: const TextStyle(
-                          color: AppTheme.fgNavyBlue,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-
-                      const SizedBox(height: 4),
-
-                      Text(
-                        'Class $classLevel',
-                        style: const TextStyle(
-                          color: AppTheme.textSecondary,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-
-                      if (teacherSubject != null) ...[
-                        const SizedBox(height: 9),
-
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: AppTheme.fgNavyBlue.withValues(alpha: 0.06),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            'Your teaching subject: '
-                            '${_subjectLabel(teacherSubject)}',
-                            style: const TextStyle(
-                              color: AppTheme.fgNavyBlue,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ],
-
-                      const SizedBox(height: 16),
-
-                      // No external controller to dispose
-                      // while the dialog is closing.
-                      TextField(
-                        autofocus: true,
-                        textCapitalization: TextCapitalization.words,
-                        textInputAction: TextInputAction.done,
-                        onChanged: (value) {
-                          studentName = value;
-                        },
-                        decoration: const InputDecoration(
-                          labelText: 'Student Name',
-                          prefixIcon: Icon(Icons.person_outline_rounded),
-                        ),
-                      ),
-
-                      const SizedBox(height: 20),
-
-                      StudentSubjectSelector(
-                        classLevel: classLevel,
-                        selectedSubjects: selectedSubjects,
-                        onChanged: (subjects) {
-                          setDialogState(() {
-                            selectedSubjects = subjects;
-                            dialogError = null;
-                          });
-                        },
-                        onValidationError: (message) {
-                          setDialogState(() {
-                            dialogError = message;
-                          });
-                        },
-                      ),
-
-                      const SizedBox(height: 17),
-
-                      Container(
-                        padding: const EdgeInsets.all(13),
-                        decoration: BoxDecoration(
-                          color: AppTheme.success.withValues(alpha: 0.07),
-                          borderRadius: BorderRadius.circular(11),
-                        ),
-                        child: const Text(
-                          'On save: student will be enrolled, '
-                          'today attendance will be Present, '
-                          'and current month fee will start '
-                          'as Unpaid.',
-                          style: TextStyle(
-                            fontSize: 13,
-                            height: 1.45,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-
-                      if (dialogError != null) ...[
-                        const SizedBox(height: 12),
-                        Text(
-                          dialogError!,
-                          style: const TextStyle(
-                            color: AppTheme.danger,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    FocusManager.instance.primaryFocus?.unfocus();
-
-                    Navigator.of(dialogContext).pop();
-                  },
-                  child: const Text('Cancel'),
-                ),
-
-                ElevatedButton.icon(
-                  onPressed: () {
-                    final name = studentName.trim();
-
-                    if (name.isEmpty) {
-                      setDialogState(() {
-                        dialogError = 'Student name is required.';
-                      });
-                      return;
-                    }
-
-                    final validation = studentSubjectSelectionError(
-                      classLevel,
-                      selectedSubjects,
-                    );
-
-                    if (validation != null) {
-                      setDialogState(() {
-                        dialogError = validation;
-                      });
-                      return;
-                    }
-
-                    // Teacher's subject must be included.
-                    if (teacherSubject != null &&
-                        !selectedSubjects.contains(teacherSubject)) {
-                      setDialogState(() {
-                        dialogError =
-                            'Keep your teaching subject '
-                            'selected when adding a student '
-                            'from Attendance.';
-                      });
-                      return;
-                    }
-
-                    FocusManager.instance.primaryFocus?.unfocus();
-
-                    Navigator.of(dialogContext).pop(
-                      _NewAttendanceStudentDraft(
-                        name: name,
-                        subjects: List<String>.from(selectedSubjects),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.person_add_alt_1_rounded),
-                  label: const Text('Add Student'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      batches: [batch],
+      initialBatch: batch,
+      paymentMonth: '',
+      lockBatch: true,
+      requiredSubject: _teacherSubjectCode,
     );
 
-    // Cancel: do nothing, leave attendance untouched.
-    if (!mounted || request == null) {
-      return;
-    }
+    if (!mounted || request == null) return;
 
-    // Only actual Add Student confirmation
-    // calls Supabase.
-    await _addNewStudent(request);
-  }
-
-  Future<void> _addNewStudent(_NewAttendanceStudentDraft request) async {
     setState(() {
       _isAddingStudent = true;
     });
 
     try {
       await supabase.rpc(
-        'portal_add_student_from_attendance_v2',
+        'portal_add_student_simple',
         params: {
           'p_name': request.name,
           'p_batch_id': widget.batchId,
-          'p_subjects': request.subjects,
+          'p_group_code': request.groupCode,
         },
       );
 
@@ -629,27 +349,29 @@ class _StudentsScreenState extends State<StudentsScreen> {
 
       _showMessage(
         '${request.name} added successfully. '
-        'Today attendance is Present and current month fee is Unpaid.',
+        'Today attendance is Present.',
       );
 
       await fetchStudentsAndAttendance();
     } catch (e) {
-      debugPrint('Teacher add student error: $e');
+      debugPrint('Teacher Add Student error: $e');
 
       if (!mounted) return;
 
-      var message = 'Could not add student. Please try again.';
-
       final raw = e.toString().toLowerCase();
 
-      if (raw.contains('already exists')) {
-        message = 'A student with this name already exists in this batch.';
-      } else if (raw.contains('not allowed')) {
-        message = 'You are not allowed to add a student to this batch.';
+      String message = 'Could not add student. Please try again.';
+
+      if (raw.contains('archived')) {
+        message =
+            'This student is archived. '
+            'Ask Admin to restore the student.';
+      } else if (raw.contains('already exists') || raw.contains('duplicate')) {
+        message = 'A student with this name already exists.';
       } else if (raw.contains('teaching subject')) {
-        message = 'The student must include your teaching subject.';
-      } else if (raw.contains('maximum')) {
-        message = 'Too many subjects selected.';
+        message = 'Selected stream must include your teaching subject.';
+      } else if (raw.contains('permission') || raw.contains('not authorized')) {
+        message = 'You are not authorized to add to this batch.';
       }
 
       _showMessage(message, error: true);
@@ -673,18 +395,13 @@ class _StudentsScreenState extends State<StudentsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _ConfirmationRow(label: 'Batch', value: widget.batchName),
-
                   _ConfirmationRow(label: 'Present', value: '$presentCount'),
-
                   _ConfirmationRow(label: 'Absent', value: '$absentCount'),
-
                   _ConfirmationRow(
                     label: 'Changed',
                     value: '${modifiedStudents.length}',
                   ),
-
                   const SizedBox(height: 10),
-
                   const Text(
                     'Please verify the class count before saving.',
                     style: TextStyle(
@@ -699,7 +416,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
                   onPressed: () => Navigator.pop(dialogContext, false),
                   child: const Text('Cancel'),
                 ),
-
                 ElevatedButton.icon(
                   onPressed: () => Navigator.pop(dialogContext, true),
                   icon: const Icon(Icons.cloud_upload_outlined),
@@ -713,9 +429,10 @@ class _StudentsScreenState extends State<StudentsScreen> {
   }
 
   Future<void> _submitAttendance() async {
+    if (isSaving) return;
+
     if (modifiedStudents.isEmpty) {
       _showMessage('No attendance changes to save.');
-
       return;
     }
 
@@ -725,34 +442,37 @@ class _StudentsScreenState extends State<StudentsScreen> {
         'Mark everyone Present or Absent before submitting.',
         error: true,
       );
-
       return;
     }
 
     final confirmed = await _confirmSubmit();
 
-    if (!confirmed || !mounted) {
-      return;
-    }
+    if (!confirmed || !mounted) return;
+
+    final activeIds = students
+        .map((student) => student['id'].toString())
+        .toSet();
 
     final payload = <Map<String, dynamic>>[];
 
-    for (final studentId in modifiedStudents) {
-      final status = attendanceStatus[studentId];
+    for (final id in modifiedStudents) {
+      if (!activeIds.contains(id)) continue;
 
-      if (status == null) continue;
+      final status = attendanceStatus[id];
+
+      if (status != 'present' && status != 'absent') {
+        continue;
+      }
 
       payload.add({
-        'student_id': studentId,
+        'student_id': id,
         'batch_id': widget.batchId,
         'date': todayDate,
         'status': status,
       });
     }
 
-    if (payload.isEmpty) {
-      return;
-    }
+    if (payload.isEmpty) return;
 
     setState(() {
       isSaving = true;
@@ -767,16 +487,12 @@ class _StudentsScreenState extends State<StudentsScreen> {
       if (!mounted) return;
 
       setState(() {
-        // Show the actual saved database result.
-        // If Present was protected by the trigger,
-        // the screen will also show Present.
         for (final row in savedRows) {
-          final studentId = row['student_id']?.toString();
-          final savedStatus = row['status']?.toString();
+          final id = row['student_id']?.toString();
+          final status = row['status']?.toString();
 
-          if (studentId != null &&
-              (savedStatus == 'present' || savedStatus == 'absent')) {
-            attendanceStatus[studentId] = savedStatus;
+          if (id != null && (status == 'present' || status == 'absent')) {
+            attendanceStatus[id] = status;
           }
         }
 
@@ -795,8 +511,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
       });
 
       _showMessage(
-        'Could not save attendance. '
-        'Check your connection and try again.',
+        'Could not save attendance. Check your connection.',
         error: true,
       );
     }
@@ -805,27 +520,29 @@ class _StudentsScreenState extends State<StudentsScreen> {
   Future<bool> _confirmDiscardChanges() async {
     return await showDialog<bool>(
           context: context,
-          builder: (dialogContext) => AlertDialog(
-            title: const Text('Unsaved Attendance'),
-            content: Text(
-              '${modifiedStudents.length} attendance change(s) '
-              'have not been saved. Leave and discard them?',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('Stay'),
+          builder: (dialogContext) {
+            return AlertDialog(
+              title: const Text('Unsaved Attendance'),
+              content: Text(
+                '${modifiedStudents.length} attendance '
+                'change(s) have not been saved. '
+                'Leave and discard them?',
               ),
-
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.danger,
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Stay'),
                 ),
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('Discard & Leave'),
-              ),
-            ],
-          ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.danger,
+                  ),
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: const Text('Discard & Leave'),
+                ),
+              ],
+            );
+          },
         ) ??
         false;
   }
@@ -834,9 +551,12 @@ class _StudentsScreenState extends State<StudentsScreen> {
     if (hasUnsavedChanges) {
       final discard = await _confirmDiscardChanges();
 
-      if (!discard || !mounted) {
-        return;
-      }
+      if (!discard || !mounted) return;
+
+      // Clear local unsaved state so PopScope allows leaving.
+      setState(() {
+        modifiedStudents.clear();
+      });
     }
 
     if (mounted) {
@@ -870,18 +590,18 @@ class _StudentsScreenState extends State<StudentsScreen> {
       },
       child: Scaffold(
         backgroundColor: Colors.transparent,
-
         appBar: AppBar(
           automaticallyImplyLeading: false,
-
           leading: IconButton(
             tooltip: 'Back',
             onPressed: _attemptBack,
             icon: const Icon(Icons.arrow_back_rounded),
           ),
-
-          title: Text(widget.batchName),
-
+          title: Text(
+            widget.batchName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
           actions: [
             IconButton(
               tooltip: 'Add New Student',
@@ -899,7 +619,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
                     )
                   : const Icon(Icons.person_add_alt_1_rounded),
             ),
-
             IconButton(
               tooltip: 'Refresh',
               onPressed: isSaving || _isAddingStudent
@@ -907,11 +626,8 @@ class _StudentsScreenState extends State<StudentsScreen> {
                   : fetchStudentsAndAttendance,
               icon: const Icon(Icons.refresh_rounded),
             ),
-
-            const SizedBox(width: 4),
           ],
         ),
-
         body: AcademyBackground(
           child: isLoading
               ? const Center(child: CircularProgressIndicator())
@@ -945,9 +661,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                       color: AppTheme.fgNavyBlue,
                                     ),
                                   ),
-
                                   const SizedBox(width: 11),
-
                                   Expanded(
                                     child: Column(
                                       crossAxisAlignment:
@@ -961,7 +675,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                             fontWeight: FontWeight.w600,
                                           ),
                                         ),
-
                                         Text(
                                           DateFormat(
                                             'dd MMM yyyy',
@@ -977,9 +690,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                   ),
                                 ],
                               ),
-
                               const Divider(height: 22),
-
                               Wrap(
                                 alignment: WrapAlignment.center,
                                 spacing: 7,
@@ -990,19 +701,16 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                     value: students.length,
                                     color: AppTheme.info,
                                   ),
-
                                   _TeacherCountBadge(
                                     label: 'Present',
                                     value: presentCount,
                                     color: AppTheme.success,
                                   ),
-
                                   _TeacherCountBadge(
                                     label: 'Absent',
                                     value: absentCount,
                                     color: AppTheme.danger,
                                   ),
-
                                   _TeacherCountBadge(
                                     label: 'Unmarked',
                                     value: unmarkedCount < 0
@@ -1012,9 +720,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                   ),
                                 ],
                               ),
-
                               const SizedBox(height: 13),
-
                               Row(
                                 children: [
                                   Expanded(
@@ -1029,9 +735,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                       label: const Text('All Present'),
                                     ),
                                   ),
-
                                   const SizedBox(width: 8),
-
                                   Expanded(
                                     child: OutlinedButton.icon(
                                       onPressed: isSaving
@@ -1051,7 +755,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
                         ),
                       ),
                     ),
-
                     Expanded(
                       child: students.isEmpty
                           ? Center(
@@ -1063,9 +766,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                     color: AppTheme.textSecondary,
                                     size: 50,
                                   ),
-
                                   const SizedBox(height: 12),
-
                                   const Text(
                                     'No students found in this batch.',
                                     style: TextStyle(
@@ -1073,11 +774,11 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                       fontWeight: FontWeight.w700,
                                     ),
                                   ),
-
                                   const SizedBox(height: 14),
-
                                   ElevatedButton.icon(
-                                    onPressed: _openAddStudentDialog,
+                                    onPressed: isSaving || _isAddingStudent
+                                        ? null
+                                        : _openAddStudentDialog,
                                     icon: const Icon(
                                       Icons.person_add_alt_1_rounded,
                                     ),
@@ -1096,26 +797,22 @@ class _StudentsScreenState extends State<StudentsScreen> {
                               itemCount: students.length,
                               itemBuilder: (context, index) {
                                 final student = students[index];
-
                                 final id = student['id'].toString();
-
                                 final status = attendanceStatus[id];
-
                                 final absenceStreak = _absenceStreakFor(id);
-
-                                final needsFollowUp = _needsParentFollowUp(id);
+                                final followUp = _needsParentFollowUp(id);
 
                                 return Card(
                                   margin: const EdgeInsets.only(bottom: 8),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(14),
                                     side: BorderSide(
-                                      color: needsFollowUp
+                                      color: followUp
                                           ? AppTheme.danger.withValues(
                                               alpha: 0.55,
                                             )
                                           : AppTheme.border,
-                                      width: needsFollowUp ? 1.4 : 1,
+                                      width: followUp ? 1.4 : 1,
                                     ),
                                   ),
                                   child: Padding(
@@ -1127,14 +824,14 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                       children: [
                                         CircleAvatar(
                                           radius: 18,
-                                          backgroundColor: needsFollowUp
+                                          backgroundColor: followUp
                                               ? AppTheme.danger.withValues(
                                                   alpha: 0.10,
                                                 )
                                               : AppTheme.fgNavyBlue.withValues(
                                                   alpha: 0.08,
                                                 ),
-                                          foregroundColor: needsFollowUp
+                                          foregroundColor: followUp
                                               ? AppTheme.danger
                                               : AppTheme.fgNavyBlue,
                                           child: Text(
@@ -1145,9 +842,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                             ),
                                           ),
                                         ),
-
                                         const SizedBox(width: 11),
-
                                         Expanded(
                                           child: Column(
                                             crossAxisAlignment:
@@ -1159,17 +854,17 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                                 style: TextStyle(
                                                   fontSize: 16,
                                                   fontWeight: FontWeight.w800,
-                                                  color: needsFollowUp
+                                                  color: followUp
                                                       ? AppTheme.danger
                                                       : AppTheme.textPrimary,
                                                 ),
                                               ),
-
-                                              if (needsFollowUp) ...[
+                                              if (followUp) ...[
                                                 const SizedBox(height: 3),
-
                                                 Text(
-                                                  'Absent $absenceStreak consecutive attendance days • Parent follow-up',
+                                                  'Absent $absenceStreak '
+                                                  'consecutive attendance '
+                                                  'days • Parent follow-up',
                                                   style: const TextStyle(
                                                     color: AppTheme.danger,
                                                     fontSize: 13,
@@ -1180,7 +875,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                             ],
                                           ),
                                         ),
-
                                         _TeacherStatusButton(
                                           label: 'P',
                                           selected: status == 'present',
@@ -1189,9 +883,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                               ? null
                                               : () => _setStatus(id, 'present'),
                                         ),
-
                                         const SizedBox(width: 7),
-
                                         _TeacherStatusButton(
                                           label: 'A',
                                           selected: status == 'absent',
@@ -1210,7 +902,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
                   ],
                 ),
         ),
-
         bottomNavigationBar: !hasUnsavedChanges
             ? null
             : SafeArea(
@@ -1240,22 +931,9 @@ class _StudentsScreenState extends State<StudentsScreen> {
   }
 }
 
-class _NewAttendanceStudentDraft {
-  final String name;
-
-  final List<String> subjects;
-
-  const _NewAttendanceStudentDraft({
-    required this.name,
-    required this.subjects,
-  });
-}
-
 class _TeacherCountBadge extends StatelessWidget {
   final String label;
-
   final int value;
-
   final Color color;
 
   const _TeacherCountBadge({
@@ -1280,11 +958,10 @@ class _TeacherCountBadge extends StatelessWidget {
             '$value',
             style: TextStyle(
               color: color,
-              fontWeight: FontWeight.w800,
               fontSize: 16,
+              fontWeight: FontWeight.w800,
             ),
           ),
-
           Text(
             label,
             style: const TextStyle(
@@ -1301,11 +978,8 @@ class _TeacherCountBadge extends StatelessWidget {
 
 class _TeacherStatusButton extends StatelessWidget {
   final String label;
-
   final bool selected;
-
   final Color color;
-
   final VoidCallback? onTap;
 
   const _TeacherStatusButton({
@@ -1335,8 +1009,8 @@ class _TeacherStatusButton extends StatelessWidget {
             label,
             style: TextStyle(
               color: selected ? Colors.white : AppTheme.textSecondary,
-              fontWeight: FontWeight.w800,
               fontSize: 15,
+              fontWeight: FontWeight.w800,
             ),
           ),
         ),
@@ -1347,7 +1021,6 @@ class _TeacherStatusButton extends StatelessWidget {
 
 class _ConfirmationRow extends StatelessWidget {
   final String label;
-
   final String value;
 
   const _ConfirmationRow({required this.label, required this.value});
@@ -1367,7 +1040,6 @@ class _ConfirmationRow extends StatelessWidget {
               ),
             ),
           ),
-
           Text(
             value,
             style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),

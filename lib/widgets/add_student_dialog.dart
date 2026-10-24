@@ -1,22 +1,26 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../app_theme.dart';
 import '../models/fee_models.dart';
 import '../utils/student_group_helper.dart';
-import 'student_subject_selector.dart';
 
 class NewStudentRequest {
   final String name;
   final FeeBatch batch;
+
+  // Kept for compatibility with existing screens.
   final double defaultFee;
   final List<String> subjects;
+
+  // New simple Add Student RPC uses this.
+  final String groupCode;
 
   const NewStudentRequest({
     required this.name,
     required this.batch,
     required this.defaultFee,
     required this.subjects,
+    required this.groupCode,
   });
 }
 
@@ -26,19 +30,44 @@ Future<NewStudentRequest?> showAcademyAddStudentDialog({
   required FeeBatch initialBatch,
   required String paymentMonth,
   bool lockBatch = false,
+
+  // Compatibility with Teacher Attendance and Award Lists.
+  //
+  // IMPORTANT:
+  // This value must NOT filter the available streams.
+  // A teacher can add a student to any valid stream
+  // of the selected class.
+  String? requiredSubject,
 }) async {
+  if (batches.isEmpty) {
+    return null;
+  }
+
   FeeBatch dialogBatch = initialBatch;
 
-  final nameController = TextEditingController();
-  final feeController = TextEditingController(
-    text: dialogBatch.classLevel <= 10 ? '5500' : '6000',
-  );
+  if (!batches.any((batch) => batch.id == initialBatch.id)) {
+    dialogBatch = batches.first;
+  }
 
-  var selectedSubjects = List<String>.from(
-    studentDefaultSubjectsForClass(dialogBatch.classLevel),
-  );
+  final nameController = TextEditingController();
+
+  // Stream is intentionally not preselected.
+  // User must explicitly choose one.
+  String? selectedGroupCode;
 
   String? dialogError;
+
+  double defaultFeeForClass(int classLevel) {
+    if (classLevel == 9 || classLevel == 10) {
+      return 5500;
+    }
+
+    if (classLevel == 11 || classLevel == 12) {
+      return 6000;
+    }
+
+    return 0;
+  }
 
   try {
     return await showDialog<NewStudentRequest>(
@@ -47,6 +76,23 @@ Future<NewStudentRequest?> showAcademyAddStudentDialog({
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            final classLevel = dialogBatch.classLevel;
+
+            // CRITICAL FIX:
+            // Always use ALL presets for the selected class.
+            //
+            // Do not filter by requiredSubject.
+            // Pre-Medical must remain visible even
+            // when a Math/Computer teacher adds a student.
+            final availableStreams = studentSubjectPresetsForClass(classLevel);
+
+            final selectedPreset = availableStreams
+                .cast<StudentSubjectPreset?>()
+                .firstWhere(
+                  (preset) => preset?.code == selectedGroupCode,
+                  orElse: () => null,
+                );
+
             return AlertDialog(
               scrollable: true,
               insetPadding: const EdgeInsets.symmetric(
@@ -55,7 +101,10 @@ Future<NewStudentRequest?> showAcademyAddStudentDialog({
               ),
               title: const Row(
                 children: [
-                  Icon(Icons.person_add_alt_1, color: AppTheme.fgNavyBlue),
+                  Icon(
+                    Icons.person_add_alt_1_rounded,
+                    color: AppTheme.fgNavyBlue,
+                  ),
                   SizedBox(width: 10),
                   Expanded(
                     child: Text(
@@ -66,11 +115,14 @@ Future<NewStudentRequest?> showAcademyAddStudentDialog({
                 ],
               ),
               content: SizedBox(
-                width: 520,
+                width: 500,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    // ====================================
+                    // BATCH
+                    // ====================================
                     DropdownButtonFormField<String>(
                       key: ValueKey(dialogBatch.id),
                       initialValue: dialogBatch.id,
@@ -80,7 +132,7 @@ Future<NewStudentRequest?> showAcademyAddStudentDialog({
                         prefixIcon: Icon(Icons.class_outlined),
                       ),
                       items: batches.map((batch) {
-                        return DropdownMenuItem(
+                        return DropdownMenuItem<String>(
                           value: batch.id,
                           child: Text(
                             batch.name,
@@ -100,89 +152,225 @@ Future<NewStudentRequest?> showAcademyAddStudentDialog({
                               setDialogState(() {
                                 dialogBatch = newBatch;
 
-                                feeController.text = newBatch.classLevel <= 10
-                                    ? '5500'
-                                    : '6000';
-
-                                selectedSubjects = List<String>.from(
-                                  studentDefaultSubjectsForClass(
-                                    newBatch.classLevel,
-                                  ),
-                                );
-
+                                // A different class means the
+                                // student must choose a new stream.
+                                selectedGroupCode = null;
                                 dialogError = null;
                               });
                             },
                     ),
-                    const SizedBox(height: 14),
-                    TextFormField(
+
+                    const SizedBox(height: 15),
+
+                    // ====================================
+                    // STUDENT NAME
+                    // ====================================
+                    TextField(
                       controller: nameController,
+                      autofocus: true,
                       textCapitalization: TextCapitalization.words,
+                      textInputAction: TextInputAction.done,
                       decoration: const InputDecoration(
-                        labelText: 'Student Name',
-                        prefixIcon: Icon(Icons.person_outline),
+                        labelText: 'Student Name *',
+                        hintText: 'Enter full name',
+                        prefixIcon: Icon(Icons.person_outline_rounded),
                       ),
+                      onChanged: (_) {
+                        if (dialogError != null) {
+                          setDialogState(() {
+                            dialogError = null;
+                          });
+                        }
+                      },
                     ),
-                    const SizedBox(height: 14),
-                    TextFormField(
-                      controller: feeController,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      inputFormatters: [
-                        FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+
+                    const SizedBox(height: 22),
+
+                    // ====================================
+                    // STREAM SELECTION
+                    // ====================================
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.account_tree_outlined,
+                          color: AppTheme.fgNavyBlue,
+                          size: 22,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Select Stream *',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              color: AppTheme.fgNavyBlue,
+                            ),
+                          ),
+                        ),
                       ],
-                      decoration: InputDecoration(
-                        labelText: 'Default Monthly Fee',
-                        prefixText: 'Rs ',
-                        helperText: dialogBatch.classLevel <= 10
-                            ? 'SSC suggested fee: Rs 5,500'
-                            : 'HSSC suggested fee: Rs 6,000',
+                    ),
+
+                    const SizedBox(height: 6),
+
+                    Text(
+                      'Class $classLevel — choose one stream',
+                      style: const TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12.5,
                       ),
                     ),
-                    const SizedBox(height: 20),
-                    StudentSubjectSelector(
-                      classLevel: dialogBatch.classLevel,
-                      selectedSubjects: selectedSubjects,
-                      onChanged: (subjects) {
-                        setDialogState(() {
-                          selectedSubjects = subjects;
-                          dialogError = null;
-                        });
-                      },
-                      onValidationError: (message) {
-                        setDialogState(() {
-                          dialogError = message;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 16),
+
+                    const SizedBox(height: 12),
+
+                    if (availableStreams.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Text(
+                          'No streams available for this class.',
+                          style: TextStyle(
+                            color: AppTheme.danger,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      )
+                    else
+                      ...availableStreams.map((preset) {
+                        final selected = selectedGroupCode == preset.code;
+
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 9),
+                          child: Material(
+                            color: selected
+                                ? AppTheme.fgNavyBlue.withValues(alpha: 0.07)
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(12),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(12),
+                              onTap: () {
+                                setDialogState(() {
+                                  selectedGroupCode = preset.code;
+
+                                  dialogError = null;
+                                });
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 13,
+                                  vertical: 13,
+                                ),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: selected
+                                        ? AppTheme.fgNavyBlue
+                                        : AppTheme.border,
+                                    width: selected ? 1.8 : 1,
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      selected
+                                          ? Icons.radio_button_checked
+                                          : Icons.radio_button_unchecked,
+                                      color: selected
+                                          ? AppTheme.fgNavyBlue
+                                          : AppTheme.textSecondary,
+                                    ),
+
+                                    const SizedBox(width: 12),
+
+                                    Expanded(
+                                      child: Text(
+                                        preset.label,
+                                        style: TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: selected
+                                              ? FontWeight.w800
+                                              : FontWeight.w600,
+                                          color: selected
+                                              ? AppTheme.fgNavyBlue
+                                              : AppTheme.textPrimary,
+                                        ),
+                                      ),
+                                    ),
+
+                                    if (selected)
+                                      const Icon(
+                                        Icons.check_circle,
+                                        color: AppTheme.success,
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+
+                    // ====================================
+                    // INFORMATION
+                    // ====================================
+                    const SizedBox(height: 8),
+
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: AppTheme.success.withValues(alpha: 0.07),
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: Text(
-                        'On save: student will be created, '
-                        'today attendance will be Present, '
-                        'and $paymentMonth fee will start as Unpaid.',
-                        style: const TextStyle(fontSize: 12.5, height: 1.45),
+                      child: const Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.info_outline,
+                            color: AppTheme.success,
+                            size: 19,
+                          ),
+                          SizedBox(width: 9),
+                          Expanded(
+                            child: Text(
+                              'Subjects will be assigned '
+                              'automatically according to '
+                              'the selected stream. '
+                              'No separate subject or fee '
+                              'selection is required.',
+                              style: TextStyle(fontSize: 12.5, height: 1.45),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
+
+                    // ====================================
+                    // VALIDATION ERROR
+                    // ====================================
                     if (dialogError != null) ...[
                       const SizedBox(height: 12),
+
                       Text(
                         dialogError!,
                         style: const TextStyle(
                           color: AppTheme.danger,
                           fontWeight: FontWeight.w700,
+                          fontSize: 13,
                         ),
                       ),
                     ],
+
+                    // Teacher subject is intentionally
+                    // not used to hide streams.
+                    //
+                    // Example:
+                    // Math teacher, Class 11:
+                    //
+                    // FCS             -> visible
+                    // Pre-Engineering -> visible
+                    // Pre-Medical     -> visible
                   ],
                 ),
               ),
+
               actions: [
                 TextButton(
                   onPressed: () {
@@ -190,13 +378,13 @@ Future<NewStudentRequest?> showAcademyAddStudentDialog({
                   },
                   child: const Text('Cancel'),
                 ),
+
                 ElevatedButton.icon(
-                  icon: const Icon(Icons.person_add),
+                  icon: const Icon(Icons.person_add_alt_1_rounded),
                   label: const Text('Add Student'),
+
                   onPressed: () {
                     final name = nameController.text.trim();
-
-                    final fee = double.tryParse(feeController.text.trim());
 
                     if (name.isEmpty) {
                       setDialogState(() {
@@ -205,24 +393,40 @@ Future<NewStudentRequest?> showAcademyAddStudentDialog({
                       return;
                     }
 
-                    if (fee == null || fee <= 0) {
+                    if (selectedPreset == null) {
                       setDialogState(() {
-                        dialogError = 'Enter a valid default fee.';
+                        dialogError = 'Please select a stream.';
                       });
                       return;
                     }
 
-                    final validation = studentSubjectSelectionError(
+                    final subjects = studentSubjectsForGroup(
                       dialogBatch.classLevel,
-                      selectedSubjects,
+                      selectedPreset.code,
                     );
 
-                    if (validation != null) {
+                    if (subjects.isEmpty) {
                       setDialogState(() {
-                        dialogError = validation;
+                        dialogError = 'Invalid stream selection.';
                       });
                       return;
                     }
+
+                    final fee = defaultFeeForClass(dialogBatch.classLevel);
+
+                    if (fee <= 0) {
+                      setDialogState(() {
+                        dialogError = 'Unsupported class level.';
+                      });
+                      return;
+                    }
+
+                    // Store all information in the
+                    // request for compatibility.
+                    //
+                    // New RPC:
+                    // portal_add_student_simple
+                    // uses name, batch and groupCode.
 
                     Navigator.pop(
                       dialogContext,
@@ -230,7 +434,8 @@ Future<NewStudentRequest?> showAcademyAddStudentDialog({
                         name: name,
                         batch: dialogBatch,
                         defaultFee: fee,
-                        subjects: List<String>.from(selectedSubjects),
+                        subjects: List<String>.from(subjects),
+                        groupCode: selectedPreset.code,
                       ),
                     );
                   },
@@ -243,6 +448,5 @@ Future<NewStudentRequest?> showAcademyAddStudentDialog({
     );
   } finally {
     nameController.dispose();
-    feeController.dispose();
   }
 }

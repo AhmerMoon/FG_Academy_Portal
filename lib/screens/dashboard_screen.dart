@@ -207,7 +207,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     try {
       final results = await Future.wait([
-        supabase.from('students').select('id, batch_id'),
+        supabase
+            .from('students')
+            .select('id, batch_id')
+            .eq('is_archived', false),
         supabase.from('batches').select('id, name, class_level'),
       ]);
 

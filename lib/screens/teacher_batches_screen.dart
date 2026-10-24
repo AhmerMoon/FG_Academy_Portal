@@ -27,7 +27,6 @@ class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
   @override
   void initState() {
     super.initState();
-
     fetchBatches();
   }
 
@@ -35,7 +34,7 @@ class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
     try {
       final results = await Future.wait([
         supabase.from('batches').select('id, name, class_level'),
-        supabase.from('students').select('batch_id'),
+        supabase.from('students').select('batch_id').eq('is_archived', false),
       ]);
 
       final batchRows = results[0];
@@ -63,7 +62,6 @@ class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
 
       setState(() {
         batches = sortBatches(mapped);
-
         isLoading = false;
         errorMessage = null;
       });
@@ -74,7 +72,6 @@ class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
 
       setState(() {
         isLoading = false;
-
         errorMessage =
             'Unable to load batches. Check your connection and try again.';
       });
@@ -109,6 +106,7 @@ class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final desktop = constraints.maxWidth >= 860;
+
         final header = DashboardSectionHeader(
           title: 'My Batches',
           subtitle: 'Select a class to record today’s attendance',
@@ -136,6 +134,7 @@ class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
                   sliver: SliverList(
                     delegate: SliverChildBuilderDelegate((context, index) {
                       final batch = Map<String, dynamic>.from(batches[index]);
+
                       return _TeacherBatchCard(
                         batch: batch,
                         onTap: () => _openBatch(batch),
@@ -149,6 +148,7 @@ class _TeacherBatchesScreenState extends State<TeacherBatchesScreen> {
                   sliver: SliverGrid(
                     delegate: SliverChildBuilderDelegate((context, index) {
                       final batch = Map<String, dynamic>.from(batches[index]);
+
                       return _TeacherBatchCard(
                         batch: batch,
                         onTap: () => _openBatch(batch),

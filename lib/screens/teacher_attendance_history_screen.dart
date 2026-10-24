@@ -10,7 +10,6 @@ import '../widgets/academy_background.dart';
 class TeacherAttendanceHistoryScreen extends StatefulWidget {
   final String batchId;
   final String batchName;
-
   final int? classLevel;
   final String? teacherSubjectCode;
 
@@ -57,13 +56,11 @@ class _TeacherAttendanceHistoryScreenState
   @override
   void initState() {
     super.initState();
-
     _load();
   }
 
   bool get _filterBySubject {
     final classLevel = widget.classLevel;
-
     final subject = widget.teacherSubjectCode;
 
     if (classLevel == null || subject == null) {
@@ -87,6 +84,7 @@ class _TeacherAttendanceHistoryScreenState
             .from('students')
             .select('id, name, stream')
             .eq('batch_id', widget.batchId)
+            .eq('is_archived', false)
             .order('name', ascending: true),
 
         _supabase
@@ -97,7 +95,6 @@ class _TeacherAttendanceHistoryScreenState
       ]);
 
       final rawStudents = results[0] as List;
-
       final subject = widget.teacherSubjectCode;
 
       final filteredStudents = rawStudents.where((raw) {
@@ -121,12 +118,10 @@ class _TeacherAttendanceHistoryScreenState
           .toSet();
 
       final rows = results[1] as List;
-
       final attendance = <String, String>{};
 
       for (final row in rows) {
         final id = row['student_id']?.toString();
-
         final status = row['status']?.toString();
 
         if (id == null || status == null || !visibleIds.contains(id)) {

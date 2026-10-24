@@ -17,14 +17,12 @@ class _BatchesTabState extends State<BatchesTab> {
   final SupabaseClient supabase = Supabase.instance.client;
 
   List<dynamic> batches = [];
-
   bool isLoading = true;
   String? errorMessage;
 
   @override
   void initState() {
     super.initState();
-
     fetchBatches();
   }
 
@@ -34,7 +32,7 @@ class _BatchesTabState extends State<BatchesTab> {
         supabase
             .from('batches')
             .select('id, name, class_level, whatsapp_group_id'),
-        supabase.from('students').select('batch_id'),
+        supabase.from('students').select('batch_id').eq('is_archived', false),
       ]);
 
       final batchRows = results[0];
@@ -62,7 +60,6 @@ class _BatchesTabState extends State<BatchesTab> {
 
       setState(() {
         batches = sortBatches(mapped);
-
         isLoading = false;
         errorMessage = null;
       });
@@ -73,7 +70,6 @@ class _BatchesTabState extends State<BatchesTab> {
 
       setState(() {
         isLoading = false;
-
         errorMessage =
             'Unable to load batches. Check your connection and try again.';
       });
@@ -141,9 +137,7 @@ class _BatchesTabState extends State<BatchesTab> {
                           DropdownMenuItem(value: 12, child: Text('12th')),
                         ],
                         onChanged: (value) {
-                          if (value == null) {
-                            return;
-                          }
+                          if (value == null) return;
 
                           setDialogState(() {
                             selectedLevel = value;
@@ -172,7 +166,9 @@ class _BatchesTabState extends State<BatchesTab> {
                           borderRadius: BorderRadius.circular(11),
                         ),
                         child: const Text(
-                          'Class level is used by attendance, fee reporting and financial grouping. Keep it aligned with the batch name.',
+                          'Class level is used by attendance '
+                          'and award lists. Keep it aligned '
+                          'with the batch name.',
                           style: TextStyle(
                             color: AppTheme.textSecondary,
                             fontSize: 12,
@@ -195,9 +191,7 @@ class _BatchesTabState extends State<BatchesTab> {
                   onPressed: () {
                     final name = nameController.text.trim();
 
-                    if (name.isEmpty) {
-                      return;
-                    }
+                    if (name.isEmpty) return;
 
                     Navigator.pop(
                       dialogContext,
@@ -299,6 +293,7 @@ class _BatchesTabState extends State<BatchesTab> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final columns = constraints.maxWidth >= 900 ? 2 : 1;
+
         final header = DashboardSectionHeader(
           title: 'Batches',
           subtitle: 'Class groups and communication settings',
@@ -319,6 +314,7 @@ class _BatchesTabState extends State<BatchesTab> {
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
               SliverToBoxAdapter(child: header),
+
               if (batches.isEmpty)
                 const SliverFillRemaining(
                   child: Center(child: Text('No batches found.')),
@@ -329,6 +325,7 @@ class _BatchesTabState extends State<BatchesTab> {
                   sliver: SliverList(
                     delegate: SliverChildBuilderDelegate((context, index) {
                       final batch = Map<String, dynamic>.from(batches[index]);
+
                       return _BatchCard(
                         batch: batch,
                         onEdit: () => _openBatchForm(batch: batch),
@@ -342,6 +339,7 @@ class _BatchesTabState extends State<BatchesTab> {
                   sliver: SliverGrid(
                     delegate: SliverChildBuilderDelegate((context, index) {
                       final batch = Map<String, dynamic>.from(batches[index]);
+
                       return _BatchCard(
                         batch: batch,
                         onEdit: () => _openBatchForm(batch: batch),
@@ -431,6 +429,7 @@ class _BatchCard extends StatelessWidget {
                           ),
                         ),
                       ),
+
                       if (classLevel > 0)
                         Container(
                           padding: const EdgeInsets.symmetric(

@@ -1,7 +1,7 @@
 ================================================================================
 FLUTTER PROJECT CODEBASE
 Project Root: D:\academy_portal
-Total Dart Files: 51
+Total Dart Files: 54
 ================================================================================
 
 lib/main.dart:
@@ -1312,8 +1312,8 @@ import '../../app_theme.dart';
 import '../../utils/automation_launcher.dart';
 import '../../utils/dashboard_section_header.dart';
 import '../../utils/error_state_view.dart';
-import '../../widgets/academy_background.dart';
 import '../../utils/list_sorting.dart';
+import '../../widgets/academy_background.dart';
 
 class AdminAttendanceTab extends StatefulWidget {
   final Function(Widget screen)? onNavigate;
@@ -1329,14 +1329,13 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
   final SupabaseClient supabase = Supabase.instance.client;
 
   List<dynamic> batches = [];
-
   bool isLoading = true;
+  bool _startingAutomation = false;
   String? errorMessage;
 
   @override
   void initState() {
     super.initState();
-
     fetchBatches();
   }
 
@@ -1385,7 +1384,6 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
 
       final mapped = batchRows.map((batch) {
         final id = batch['id'].toString();
-
         final copy = Map<String, dynamic>.from(batch);
 
         copy['student_count'] = total[id] ?? 0;
@@ -1399,7 +1397,6 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
 
       setState(() {
         batches = sortBatches(mapped);
-
         isLoading = false;
         errorMessage = null;
       });
@@ -1410,23 +1407,16 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
 
       setState(() {
         isLoading = false;
-
         errorMessage =
-            'Unable to load attendance batches. Check your connection and try again.';
+            'Unable to load attendance batches. '
+            'Check your connection and try again.';
       });
     }
   }
 
   void _openAttendance(Map<String, dynamic> batch) {
     final id = batch['id'].toString();
-
     final name = batch['name']?.toString() ?? 'Batch';
-
-    final screen = EditAttendanceScreen(
-      batchId: id,
-      batchName: name,
-      initialDate: _today,
-    );
 
     if (widget.onNavigate != null && widget.onBack != null) {
       widget.onNavigate!(
@@ -1437,34 +1427,87 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
           onBack: widget.onBack,
         ),
       );
-
       return;
     }
 
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen)).then((
-      _,
-    ) {
-      if (mounted) {
-        fetchBatches();
-      }
-    });
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => EditAttendanceScreen(
+              batchId: id,
+              batchName: name,
+              initialDate: _today,
+            ),
+          ),
+        )
+        .then((_) {
+          if (mounted) fetchBatches();
+        });
   }
 
-  Future<void> _startAutomation() async {
-    final started = await launchAutomation();
+  Future<void> _startAutomation({String? batchId, String? batchName}) async {
+    if (_startingAutomation) return;
 
-    if (!mounted) return;
+    final isAll = batchId == null;
+    final target = isAll ? 'ALL batches' : (batchName ?? 'selected batch');
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          started
-              ? 'WhatsApp report automation started.'
-              : 'Automation could not start.',
-        ),
-        backgroundColor: started ? AppTheme.success : AppTheme.danger,
-      ),
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Send Attendance Report?'),
+          content: Text(
+            'Target: $target\n\n'
+            'The Windows WhatsApp automation will '
+            'generate this month\'s report and send '
+            'it to the configured WhatsApp group.\n\n'
+            'Continue?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 17),
+              label: const Text('Start'),
+            ),
+          ],
+        );
+      },
     );
+
+    if (!mounted || confirmed != true) return;
+
+    setState(() {
+      _startingAutomation = true;
+    });
+
+    try {
+      final started = await launchAutomation(batchId: batchId);
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            started
+                ? 'Automation started for $target. '
+                      'Check the Python window for progress.'
+                : 'Automation could not start. '
+                      'Check the backend files.',
+          ),
+          backgroundColor: started ? AppTheme.success : AppTheme.danger,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _startingAutomation = false;
+        });
+      }
+    }
   }
 
   @override
@@ -1485,16 +1528,18 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
           SliverToBoxAdapter(
             child: DashboardSectionHeader(
               title: 'Attendance',
-              subtitle: 'Today’s batch strength and attendance overview',
+              subtitle: 'Today\'s batch strength and attendance overview',
               trailing: isWindowsPlatform
                   ? ElevatedButton.icon(
-                      onPressed: _startAutomation,
+                      onPressed: _startingAutomation
+                          ? null
+                          : () => _startAutomation(),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF25D366),
                         foregroundColor: Colors.white,
                       ),
                       icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 17),
-                      label: const Text('Send Reports'),
+                      label: const Text('Send All Reports'),
                     )
                   : null,
             ),
@@ -1506,13 +1551,13 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
           else
             SliverPadding(
               padding: const EdgeInsets.all(12),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) => _buildAttendanceBatchCard(
-                    Map<String, dynamic>.from(batches[index]),
-                  ),
-                  childCount: batches.length,
-                ),
+              sliver: SliverList.builder(
+                itemCount: batches.length,
+                itemBuilder: (context, index) {
+                  final batch = Map<String, dynamic>.from(batches[index]);
+
+                  return _buildAttendanceBatchCard(batch);
+                },
               ),
             ),
         ],
@@ -1526,101 +1571,142 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
     final absent = (batch['absent_count'] as num?)?.toInt() ?? 0;
     final unmarked = total - present - absent;
 
+    final batchId = batch['id'].toString();
+    final batchName = batch['name']?.toString() ?? 'Batch';
+
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: () => _openAttendance(batch),
-        child: Padding(
-          padding: const EdgeInsets.all(15),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final compact = constraints.maxWidth < 620;
-              final title = Row(
-                children: [
-                  Container(
-                    width: 47,
-                    height: 47,
-                    decoration: BoxDecoration(
-                      color: AppTheme.fgNavyBlue.withValues(alpha: 0.07),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(
-                      Icons.fact_check_outlined,
-                      color: AppTheme.fgNavyBlue,
-                    ),
+      child: Padding(
+        padding: const EdgeInsets.all(13),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 620;
+
+            final title = Row(
+              children: [
+                Container(
+                  width: 47,
+                  height: 47,
+                  decoration: BoxDecoration(
+                    color: AppTheme.fgNavyBlue.withValues(alpha: 0.07),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          batch['name']?.toString() ?? 'Batch',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 16,
-                          ),
-                        ),
-                        const SizedBox(height: 3),
-                        const Text(
-                          'Open attendance register',
-                          style: TextStyle(
-                            color: AppTheme.textSecondary,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
+                  child: const Icon(
+                    Icons.fact_check_outlined,
+                    color: AppTheme.fgNavyBlue,
                   ),
-                  const Icon(
-                    Icons.chevron_right_rounded,
-                    color: AppTheme.textSecondary,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        batchName,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      const Text(
+                        'Open attendance register',
+                        style: TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: AppTheme.textSecondary,
+                ),
+              ],
+            );
+
+            final stats = Wrap(
+              spacing: 8,
+              runSpacing: 7,
+              children: [
+                _AttendanceBadge(
+                  label: 'Total',
+                  value: total,
+                  color: AppTheme.info,
+                ),
+                _AttendanceBadge(
+                  label: 'Present',
+                  value: present,
+                  color: AppTheme.success,
+                ),
+                _AttendanceBadge(
+                  label: 'Absent',
+                  value: absent,
+                  color: AppTheme.danger,
+                ),
+                _AttendanceBadge(
+                  label: 'Unmarked',
+                  value: unmarked < 0 ? 0 : unmarked,
+                  color: AppTheme.warning,
+                ),
+              ],
+            );
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => _openAttendance(batch),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    child: compact
+                        ? Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              title,
+                              const SizedBox(height: 12),
+                              stats,
+                            ],
+                          )
+                        : Row(
+                            children: [
+                              Expanded(child: title),
+                              const SizedBox(width: 14),
+                              stats,
+                            ],
+                          ),
+                  ),
+                ),
+
+                // WhatsApp automation is desktop-only.
+                if (isWindowsPlatform) ...[
+                  const SizedBox(height: 10),
+                  const Divider(height: 1),
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: OutlinedButton.icon(
+                      onPressed: _startingAutomation
+                          ? null
+                          : () => _startAutomation(
+                              batchId: batchId,
+                              batchName: batchName,
+                            ),
+                      icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 16),
+                      label: const Text('Send WhatsApp Report'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF188A45),
+                      ),
+                    ),
                   ),
                 ],
-              );
-
-              final stats = Wrap(
-                spacing: 8,
-                runSpacing: 7,
-                children: [
-                  _AttendanceBadge(
-                    label: 'Total',
-                    value: total,
-                    color: AppTheme.info,
-                  ),
-                  _AttendanceBadge(
-                    label: 'Present',
-                    value: present,
-                    color: AppTheme.success,
-                  ),
-                  _AttendanceBadge(
-                    label: 'Absent',
-                    value: absent,
-                    color: AppTheme.danger,
-                  ),
-                  _AttendanceBadge(
-                    label: 'Unmarked',
-                    value: unmarked < 0 ? 0 : unmarked,
-                    color: AppTheme.warning,
-                  ),
-                ],
-              );
-
-              return compact
-                  ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [title, const SizedBox(height: 12), stats],
-                    )
-                  : Row(
-                      children: [
-                        Expanded(child: title),
-                        const SizedBox(width: 14),
-                        stats,
-                      ],
-                    );
-            },
-          ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -1672,9 +1758,9 @@ class _AttendanceBadge extends StatelessWidget {
   }
 }
 
-// ============================================================================
-// EDIT ATTENDANCE
-// ============================================================================
+// ============================================================
+// ADMIN ATTENDANCE EDIT SCREEN
+// ============================================================
 
 class EditAttendanceScreen extends StatefulWidget {
   final String batchId;
@@ -1701,22 +1787,18 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
 
   final Map<String, String> attendanceData = {};
   final Map<String, int> _priorAbsenceStreak = {};
-
   final Set<String> modifiedStudents = {};
 
   bool isLoading = true;
   bool isSaving = false;
 
   String? errorMessage;
-
   late DateTime currentDate;
 
   @override
   void initState() {
     super.initState();
-
     currentDate = DateTime.parse(widget.initialDate);
-
     fetchStudentsAndAttendance();
   }
 
@@ -1724,7 +1806,6 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
 
   bool get canGoForward {
     final today = DateTime.now();
-
     final cleanToday = DateTime(today.year, today.month, today.day);
 
     return currentDate.isBefore(cleanToday);
@@ -1738,25 +1819,20 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
 
   int get unmarkedCount => students.length - presentCount - absentCount;
 
-  String _dateOnly(DateTime value) {
+  String _dateOnly(DateTime date) {
     return DateTime(
-      value.year,
-      value.month,
-      value.day,
+      date.year,
+      date.month,
+      date.day,
     ).toIso8601String().split('T').first;
   }
 
   int _absenceStreakFor(String studentId) {
     final previous = _priorAbsenceStreak[studentId] ?? 0;
-    final selectedStatus = attendanceData[studentId];
+    final status = attendanceData[studentId];
 
-    if (selectedStatus == 'present') {
-      return 0;
-    }
-
-    if (selectedStatus == 'absent') {
-      return previous + 1;
-    }
+    if (status == 'present') return 0;
+    if (status == 'absent') return previous + 1;
 
     return previous;
   }
@@ -1766,6 +1842,8 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
   }
 
   Future<void> fetchStudentsAndAttendance() async {
+    if (!mounted) return;
+
     setState(() {
       isLoading = true;
       errorMessage = null;
@@ -1800,27 +1878,27 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
       final attendanceRows = results[1];
       final historyRows = results[2];
 
-      attendanceData.clear();
-      _priorAbsenceStreak.clear();
-      modifiedStudents.clear();
+      final fetchedAttendance = <String, String>{};
+      final fetchedStreaks = <String, int>{};
 
       for (final student in studentRows) {
-        _priorAbsenceStreak[student['id'].toString()] = 0;
+        fetchedStreaks[student['id'].toString()] = 0;
       }
 
       for (final row in attendanceRows) {
-        attendanceData[row['student_id'].toString()] = row['status'].toString();
+        fetchedAttendance[row['student_id'].toString()] = row['status']
+            .toString();
       }
 
       final historyByStudent = <String, List<Map<String, dynamic>>>{};
 
       for (final rawRow in historyRows) {
         final row = Map<String, dynamic>.from(rawRow);
-        final studentId = row['student_id']?.toString();
+        final id = row['student_id']?.toString();
 
-        if (studentId == null) continue;
+        if (id == null) continue;
 
-        historyByStudent.putIfAbsent(studentId, () => []).add(row);
+        historyByStudent.putIfAbsent(id, () => []).add(row);
       }
 
       for (final entry in historyByStudent.entries) {
@@ -1843,13 +1921,23 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
           }
         }
 
-        _priorAbsenceStreak[entry.key] = streak;
+        fetchedStreaks[entry.key] = streak;
       }
 
       if (!mounted) return;
 
       setState(() {
         students = studentRows;
+
+        attendanceData
+          ..clear()
+          ..addAll(fetchedAttendance);
+
+        _priorAbsenceStreak
+          ..clear()
+          ..addAll(fetchedStreaks);
+
+        modifiedStudents.clear();
 
         isLoading = false;
         errorMessage = null;
@@ -1861,9 +1949,9 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
 
       setState(() {
         isLoading = false;
-
         errorMessage =
-            'Unable to load attendance. Check your connection and try again.';
+            'Unable to load attendance. '
+            'Check your connection and try again.';
       });
     }
   }
@@ -1871,7 +1959,6 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
   void _setStatus(String studentId, String status) {
     setState(() {
       attendanceData[studentId] = status;
-
       modifiedStudents.add(studentId);
     });
   }
@@ -1882,54 +1969,61 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
         final id = student['id'].toString();
 
         attendanceData[id] = status;
-
         modifiedStudents.add(id);
       }
     });
   }
 
   Future<void> _saveChanges() async {
-    if (modifiedStudents.isEmpty) {
-      _showMessage('No attendance changes to save.');
-
+    if (modifiedStudents.isEmpty || isSaving) {
+      if (modifiedStudents.isEmpty) {
+        _showMessage('No attendance changes to save.');
+      }
       return;
     }
 
     final updates = <Map<String, dynamic>>[];
 
-    for (final studentId in modifiedStudents) {
-      final status = attendanceData[studentId];
+    for (final id in modifiedStudents) {
+      final status = attendanceData[id];
 
-      if (status == null) {
-        continue;
-      }
+      if (status == null) continue;
 
       updates.add({
-        'student_id': studentId,
+        'student_id': id,
         'batch_id': widget.batchId,
         'date': dateString,
         'status': status,
       });
     }
 
-    if (updates.isEmpty) {
-      return;
-    }
+    if (updates.isEmpty) return;
 
     setState(() {
       isSaving = true;
     });
 
     try {
-      await supabase
+      // Read back the actual server statuses.
+      // This respects the Present-wins DB trigger.
+      final savedRows = await supabase
           .from('attendance')
-          .upsert(updates, onConflict: 'student_id, date');
+          .upsert(updates, onConflict: 'student_id, date')
+          .select('student_id, status');
 
       if (!mounted) return;
 
       setState(() {
-        modifiedStudents.clear();
+        for (final row in savedRows) {
+          final id = row['student_id']?.toString();
+          final status = row['status']?.toString();
 
+          if (id != null && status != null) {
+            attendanceData[id] = status;
+          }
+        }
+
+        modifiedStudents.clear();
         isSaving = false;
       });
 
@@ -1948,40 +2042,38 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
   }
 
   Future<bool> _confirmDiscard() async {
-    return await showDialog<bool>(
-          context: context,
-          builder: (dialogContext) {
-            return AlertDialog(
-              title: const Text('Unsaved Changes'),
-              content: Text(
-                '${modifiedStudents.length} attendance change(s) have not been saved. Discard them?',
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext, false),
-                  child: const Text('Keep Editing'),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.danger,
-                  ),
-                  onPressed: () => Navigator.pop(dialogContext, true),
-                  child: const Text('Discard'),
-                ),
-              ],
-            );
-          },
-        ) ??
-        false;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Unsaved Changes'),
+          content: Text(
+            '${modifiedStudents.length} attendance '
+            'change(s) have not been saved. Discard them?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Keep Editing'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Discard'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return result ?? false;
   }
 
   Future<void> _changeToDate(DateTime date) async {
     if (modifiedStudents.isNotEmpty) {
       final discard = await _confirmDiscard();
 
-      if (!discard || !mounted) {
-        return;
-      }
+      if (!discard || !mounted) return;
     }
 
     setState(() {
@@ -2003,9 +2095,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
       lastDate: DateTime.now(),
     );
 
-    if (picked == null || !mounted) {
-      return;
-    }
+    if (picked == null || !mounted) return;
 
     await _changeToDate(picked);
   }
@@ -2014,9 +2104,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
     if (modifiedStudents.isNotEmpty) {
       final discard = await _confirmDiscard();
 
-      if (!discard || !mounted) {
-        return;
-      }
+      if (!discard || !mounted) return;
     }
 
     if (widget.onBack != null) {
@@ -2060,7 +2148,11 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
             onPressed: _attemptBack,
             icon: const Icon(Icons.arrow_back_rounded),
           ),
-          title: Text(widget.batchName),
+          title: Text(
+            widget.batchName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
           actions: [
             IconButton(
               tooltip: 'Choose Date',
@@ -2218,19 +2310,19 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
 
                           final status = attendanceData[id];
 
-                          final absenceStreak = _absenceStreakFor(id);
+                          final streak = _absenceStreakFor(id);
 
-                          final needsFollowUp = _needsParentFollowUp(id);
+                          final followUp = _needsParentFollowUp(id);
 
                           return Card(
                             margin: const EdgeInsets.only(bottom: 8),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(14),
                               side: BorderSide(
-                                color: needsFollowUp
+                                color: followUp
                                     ? AppTheme.danger.withValues(alpha: 0.55)
                                     : AppTheme.border,
-                                width: needsFollowUp ? 1.4 : 1,
+                                width: followUp ? 1.4 : 1,
                               ),
                             ),
                             child: Padding(
@@ -2242,14 +2334,14 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
                                 children: [
                                   CircleAvatar(
                                     radius: 18,
-                                    backgroundColor: needsFollowUp
+                                    backgroundColor: followUp
                                         ? AppTheme.danger.withValues(
                                             alpha: 0.10,
                                           )
                                         : AppTheme.fgNavyBlue.withValues(
                                             alpha: 0.08,
                                           ),
-                                    foregroundColor: needsFollowUp
+                                    foregroundColor: followUp
                                         ? AppTheme.danger
                                         : AppTheme.fgNavyBlue,
                                     child: Text(
@@ -2270,17 +2362,19 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
                                           student['name']?.toString() ??
                                               'Student',
                                           style: TextStyle(
-                                            color: needsFollowUp
+                                            color: followUp
                                                 ? AppTheme.danger
                                                 : AppTheme.textPrimary,
                                             fontSize: 15.5,
                                             fontWeight: FontWeight.w800,
                                           ),
                                         ),
-                                        if (needsFollowUp) ...[
+                                        if (followUp) ...[
                                           const SizedBox(height: 3),
                                           Text(
-                                            'Absent $absenceStreak consecutive attendance days • Parent follow-up',
+                                            'Absent $streak '
+                                            'consecutive attendance '
+                                            'days • Parent follow-up',
                                             style: const TextStyle(
                                               color: AppTheme.danger,
                                               fontSize: 12.5,
@@ -6027,8 +6121,7 @@ import '../../../utils/error_state_view.dart';
 import '../../../utils/fee_month.dart';
 import '../../../utils/fee_pdf_generator.dart';
 import 'fee_audit_dashboard.dart';
-import '../../../utils/student_group_helper.dart';
-import '../../../widgets/student_subject_selector.dart';
+import '../../../widgets/add_student_dialog.dart';
 
 class FeesTab extends StatefulWidget {
   const FeesTab({super.key});
@@ -6156,6 +6249,12 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
   bool _addingStudent = false;
 
   bool _mobileFiltersExpanded = false;
+  bool _mobileSearchExpanded = false;
+
+  final TextEditingController _studentSearchController =
+      TextEditingController();
+
+  String _studentSearchQuery = '';
 
   String? _errorMessage;
 
@@ -6166,8 +6265,59 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
     _bootstrap();
   }
 
+  @override
+  void dispose() {
+    _studentSearchController.dispose();
+    super.dispose();
+  }
+
   String _money(double value) {
     return 'Rs ${_moneyFormat.format(value)}';
+  }
+
+  void _clearStudentSearch() {
+    _studentSearchController.clear();
+    _studentSearchQuery = '';
+  }
+
+  List<FeeStudentEntry> get _visibleEntries {
+    final query = _studentSearchQuery.trim().toLowerCase();
+
+    if (query.isEmpty) {
+      return _entries;
+    }
+
+    return _entries.where((entry) {
+      return entry.name.toLowerCase().contains(query);
+    }).toList();
+  }
+
+  Widget _buildStudentSearchField() {
+    return TextField(
+      controller: _studentSearchController,
+      textInputAction: TextInputAction.search,
+      decoration: InputDecoration(
+        hintText: 'Search student in selected batch',
+        isDense: true,
+        prefixIcon: const Icon(Icons.search_rounded),
+        suffixIcon: _studentSearchQuery.isEmpty
+            ? null
+            : IconButton(
+                tooltip: 'Clear search',
+                onPressed: () {
+                  setState(() {
+                    _clearStudentSearch();
+                  });
+                },
+                icon: const Icon(Icons.close_rounded),
+              ),
+      ),
+      onChanged: (value) {
+        setState(() {
+          _studentSearchQuery = value;
+        });
+      },
+    );
   }
 
   Future<void> _bootstrap() async {
@@ -6572,254 +6722,26 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
 
   Future<void> _showAddStudentDialog() async {
     final currentBatch = _selectedBatch;
-
     final paymentMonth = _selectedMonth;
 
     if (currentBatch == null || paymentMonth == null) {
       _showMessage('Select a batch and fee month first.', error: true);
-
       return;
     }
 
-    FeeBatch dialogBatch = currentBatch;
-
-    final nameController = TextEditingController();
-
-    final feeController = TextEditingController(
-      text: dialogBatch.classLevel <= 10 ? '5500' : '6000',
-    );
-
-    var selectedSubjects = List<String>.from(
-      studentDefaultSubjectsForClass(dialogBatch.classLevel),
-    );
-
-    String? dialogError;
-
-    final request = await showDialog<_NewFeeStudentRequest>(
+    final request = await showAcademyAddStudentDialog(
       context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: Row(
-                children: [
-                  Container(
-                    width: 42,
-                    height: 42,
-                    decoration: BoxDecoration(
-                      color: AppTheme.fgNavyBlue.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(11),
-                    ),
-                    child: const Icon(
-                      Icons.person_add_alt_1,
-                      color: AppTheme.fgNavyBlue,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  const Expanded(child: Text('Add New Student')),
-                ],
-              ),
-              content: SizedBox(
-                width: 520,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      DropdownButtonFormField<String>(
-                        key: ValueKey(dialogBatch.id),
-                        initialValue: dialogBatch.id,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Batch',
-                          prefixIcon: Icon(Icons.class_outlined),
-                        ),
-                        items: _batches
-                            .map(
-                              (batch) => DropdownMenuItem(
-                                value: batch.id,
-                                child: Text(batch.name),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (value) {
-                          if (value == null) {
-                            return;
-                          }
-
-                          final newBatch = _batches.firstWhere(
-                            (batch) => batch.id == value,
-                          );
-
-                          setDialogState(() {
-                            dialogBatch = newBatch;
-
-                            feeController.text = newBatch.classLevel <= 10
-                                ? '5500'
-                                : '6000';
-
-                            selectedSubjects = List<String>.from(
-                              studentDefaultSubjectsForClass(
-                                newBatch.classLevel,
-                              ),
-                            );
-
-                            dialogError = null;
-                          });
-                        },
-                      ),
-
-                      const SizedBox(height: 14),
-
-                      TextFormField(
-                        controller: nameController,
-                        textCapitalization: TextCapitalization.words,
-                        decoration: const InputDecoration(
-                          labelText: 'Student Name',
-                          prefixIcon: Icon(Icons.person),
-                        ),
-                      ),
-
-                      const SizedBox(height: 14),
-
-                      TextFormField(
-                        controller: feeController,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        inputFormatters: [
-                          FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
-                        ],
-                        decoration: InputDecoration(
-                          labelText: 'Default Monthly Fee',
-                          prefixText: 'Rs ',
-                          helperText: dialogBatch.classLevel <= 10
-                              ? 'SSC suggested fee: Rs 5,500'
-                              : 'HSSC suggested fee: Rs 6,000',
-                        ),
-                      ),
-
-                      const SizedBox(height: 20),
-
-                      StudentSubjectSelector(
-                        classLevel: dialogBatch.classLevel,
-                        selectedSubjects: selectedSubjects,
-                        onChanged: (subjects) {
-                          setDialogState(() {
-                            selectedSubjects = subjects;
-
-                            dialogError = null;
-                          });
-                        },
-                        onValidationError: (message) {
-                          setDialogState(() {
-                            dialogError = message;
-                          });
-                        },
-                      ),
-
-                      const SizedBox(height: 18),
-
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: AppTheme.success.withValues(alpha: 0.07),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Text(
-                          'On save: student will be created, today attendance will be Present, and the selected fee month will start as Unpaid.',
-                          style: TextStyle(fontSize: 12.5, height: 1.45),
-                        ),
-                      ),
-
-                      if (dialogError != null) ...[
-                        const SizedBox(height: 12),
-                        Text(
-                          dialogError!,
-                          style: const TextStyle(
-                            color: AppTheme.danger,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    Navigator.pop(dialogContext);
-                  },
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.person_add),
-                  label: const Text('Add Student'),
-                  onPressed: () {
-                    final name = nameController.text.trim();
-
-                    final fee = double.tryParse(feeController.text.trim());
-
-                    if (name.isEmpty) {
-                      setDialogState(() {
-                        dialogError = 'Student name is required.';
-                      });
-
-                      return;
-                    }
-
-                    if (fee == null || fee <= 0) {
-                      setDialogState(() {
-                        dialogError = 'Enter a valid default fee.';
-                      });
-
-                      return;
-                    }
-
-                    final validation = studentSubjectSelectionError(
-                      dialogBatch.classLevel,
-                      selectedSubjects,
-                    );
-
-                    if (validation != null) {
-                      setDialogState(() {
-                        dialogError = validation;
-                      });
-
-                      return;
-                    }
-
-                    Navigator.pop(
-                      dialogContext,
-                      _NewFeeStudentRequest(
-                        name: name,
-                        batch: dialogBatch,
-                        defaultFee: fee,
-                        subjects: List<String>.from(selectedSubjects),
-                      ),
-                    );
-                  },
-                ),
-              ],
-            );
-          },
-        );
-      },
+      batches: _batches,
+      initialBatch: currentBatch,
+      paymentMonth: paymentMonth,
     );
 
-    nameController.dispose();
-    feeController.dispose();
-
-    if (request == null) {
-      return;
-    }
+    if (!mounted || request == null) return;
 
     await _addStudent(request);
   }
 
-  Future<void> _addStudent(_NewFeeStudentRequest request) async {
+  Future<void> _addStudent(NewStudentRequest request) async {
     final month = _selectedMonth;
 
     if (month == null) return;
@@ -6841,6 +6763,7 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
 
       setState(() {
         _selectedBatchId = request.batch.id;
+        _clearStudentSearch();
       });
 
       await _loadEntries();
@@ -7096,12 +7019,42 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+
                 IconButton(
-                  tooltip: 'Show fee filters',
+                  tooltip: _mobileSearchExpanded
+                      ? 'Close student search'
+                      : 'Search students',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () {
+                    setState(() {
+                      _mobileSearchExpanded = !_mobileSearchExpanded;
+
+                      if (_mobileSearchExpanded) {
+                        _mobileFiltersExpanded = false;
+                      } else {
+                        _clearStudentSearch();
+                      }
+                    });
+                  },
+                  icon: Icon(
+                    _mobileSearchExpanded
+                        ? Icons.close_rounded
+                        : Icons.search_rounded,
+                  ),
+                ),
+                IconButton(
+                  tooltip: _mobileFiltersExpanded
+                      ? 'Hide fee filters'
+                      : 'Show fee filters',
                   visualDensity: VisualDensity.compact,
                   onPressed: () {
                     setState(() {
                       _mobileFiltersExpanded = !_mobileFiltersExpanded;
+
+                      if (_mobileFiltersExpanded) {
+                        _mobileSearchExpanded = false;
+                        _clearStudentSearch();
+                      }
                     });
                   },
                   icon: Icon(
@@ -7161,6 +7114,7 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
   }) {
     return Padding(
       padding: const EdgeInsets.all(14),
+
       child: LayoutBuilder(
         builder: (context, constraints) {
           return Wrap(
@@ -7168,6 +7122,8 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
             runSpacing: 12,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
+              if (constraints.maxWidth > 700)
+                SizedBox(width: 260, child: _buildStudentSearchField()),
               SizedBox(
                 width: constraints.maxWidth > 700 ? 280 : constraints.maxWidth,
                 child: DropdownButtonFormField<String>(
@@ -7195,6 +7151,7 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
 
                           setState(() {
                             _selectedBatchId = value;
+                            _clearStudentSearch();
                           });
 
                           await _loadEntries();
@@ -7226,6 +7183,7 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
 
                           setState(() {
                             _selectedMonth = value;
+                            _clearStudentSearch();
                           });
 
                           await _loadEntries();
@@ -7303,16 +7261,40 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
       return ErrorStateView(message: _errorMessage!, onRetry: _loadEntries);
     }
 
-    if (_entries.isEmpty) {
+    final visible = _visibleEntries;
+
+    final isMobile = MediaQuery.sizeOf(context).width < 700;
+
+    final showMobileSearch = isMobile && _mobileSearchExpanded;
+
+    Widget searchRow() {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: _buildStudentSearchField(),
+      );
+    }
+
+    if (visible.isEmpty) {
+      final hasSearch = _studentSearchQuery.trim().isNotEmpty;
+
       return RefreshIndicator(
         onRefresh: _loadEntries,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          children: const [
-            SizedBox(height: 120),
-            Icon(Icons.people_outline, size: 52, color: Colors.black38),
-            SizedBox(height: 12),
-            Center(child: Text('No students found for this batch.')),
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
+          children: [
+            if (showMobileSearch) searchRow(),
+            const SizedBox(height: 75),
+            const Icon(Icons.people_outline, size: 52, color: Colors.black38),
+            const SizedBox(height: 12),
+            Center(
+              child: Text(
+                hasSearch
+                    ? 'No matching student found in this batch.'
+                    : 'No students found for this batch.',
+                textAlign: TextAlign.center,
+              ),
+            ),
           ],
         ),
       );
@@ -7323,9 +7305,15 @@ class _FeeCollectionPanelState extends State<FeeCollectionPanel> {
       child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
-        itemCount: _entries.length,
+        itemCount: visible.length + (showMobileSearch ? 1 : 0),
         itemBuilder: (context, index) {
-          return _buildStudentCard(_entries[index]);
+          if (showMobileSearch && index == 0) {
+            return searchRow();
+          }
+
+          final studentIndex = showMobileSearch ? index - 1 : index;
+
+          return _buildStudentCard(visible[studentIndex]);
         },
       ),
     );
@@ -7947,23 +7935,6 @@ class _FinancialDashboardPanelState extends State<FinancialDashboardPanel> {
 // PRIVATE REQUEST MODEL
 // ============================================================================
 
-class _NewFeeStudentRequest {
-  final String name;
-
-  final FeeBatch batch;
-
-  final double defaultFee;
-
-  final List<String> subjects;
-
-  const _NewFeeStudentRequest({
-    required this.name,
-    required this.batch,
-    required this.defaultFee,
-    required this.subjects,
-  });
-}
-
 // ============================================================================
 // REUSABLE UI
 // ============================================================================
@@ -8367,6 +8338,10 @@ import '../../utils/error_state_view.dart';
 import '../../utils/list_sorting.dart';
 import '../../widgets/academy_background.dart';
 import '../../widgets/student_subject_selector.dart';
+import '../../models/fee_models.dart';
+import '../../services/fee_service.dart';
+import '../../utils/fee_month.dart';
+import '../../widgets/add_student_dialog.dart';
 
 class StudentsTab extends StatefulWidget {
   final Function(Widget screen)? onNavigate;
@@ -8618,11 +8593,27 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
 
   String selectedFilter = 'All';
 
+  final FeeService _feeService = FeeService();
+
+  final TextEditingController _searchController = TextEditingController();
+
+  String _searchQuery = '';
+
+  bool _showSearch = false;
+
+  bool _addingStudent = false;
+
   @override
   void initState() {
     super.initState();
 
     fetchStudents();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   List<String> get filters {
@@ -8701,7 +8692,24 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
     }
   }
 
-  List<dynamic> get visibleStudents => students.where(_matchesFilter).toList();
+  List<dynamic> get visibleStudents {
+    final query = _searchQuery.trim().toLowerCase();
+
+    return students.where((student) {
+      if (!_matchesFilter(student)) {
+        return false;
+      }
+
+      if (query.isEmpty) {
+        return true;
+      }
+
+      final studentName =
+          student['name']?.toString().trim().toLowerCase() ?? '';
+
+      return studentName.contains(query);
+    }).toList();
+  }
 
   Future<void> fetchStudents() async {
     try {
@@ -8730,6 +8738,84 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
 
         errorMessage = 'Unable to load students.';
       });
+    }
+  }
+
+  Future<void> _addStudentFromStudentsTab() async {
+    if (_addingStudent) return;
+
+    final batch = FeeBatch(
+      id: widget.batchId,
+      name: widget.batchName,
+      classLevel: widget.classLevel,
+    );
+
+    final paymentMonth = FeeMonth.fromDate(DateTime.now());
+
+    final request = await showAcademyAddStudentDialog(
+      context: context,
+      batches: [batch],
+      initialBatch: batch,
+      paymentMonth: paymentMonth,
+      lockBatch: true,
+    );
+
+    if (!mounted || request == null) return;
+
+    setState(() {
+      _addingStudent = true;
+    });
+
+    try {
+      await _feeService.addStudent(
+        name: request.name,
+        batchId: request.batch.id,
+        defaultFee: request.defaultFee,
+        subjects: request.subjects,
+        paymentMonth: paymentMonth,
+      );
+
+      if (!mounted) return;
+
+      _searchController.clear();
+
+      setState(() {
+        _searchQuery = '';
+        _showSearch = false;
+        selectedFilter = 'All';
+      });
+
+      await fetchStudents();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${request.name} added successfully.\n'
+            'Today attendance: Present\n'
+            '$paymentMonth fee: Unpaid',
+          ),
+          backgroundColor: AppTheme.success,
+        ),
+      );
+    } catch (e) {
+      debugPrint('Students tab add student error: $e');
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Unable to add student.\n$e'),
+          backgroundColor: AppTheme.danger,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _addingStudent = false;
+        });
+      }
     }
   }
 
@@ -8835,6 +8921,7 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                   ),
                 ),
               ),
+
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(dialogContext, false),
@@ -8846,7 +8933,6 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                       setDialogState(() {
                         dialogError = 'Student name is required.';
                       });
-
                       return;
                     }
 
@@ -8859,7 +8945,6 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                       setDialogState(() {
                         dialogError = validation;
                       });
-
                       return;
                     }
 
@@ -8997,13 +9082,51 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
           },
           icon: const Icon(Icons.arrow_back_rounded),
         ),
-        title: Text(widget.batchName),
+
+        title: Text(
+          widget.batchName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
           IconButton(
-            tooltip: 'Refresh',
-            onPressed: fetchStudents,
-            icon: const Icon(Icons.refresh_rounded),
+            tooltip: _showSearch
+                ? 'Close student search'
+                : 'Search student by name',
+            onPressed: () {
+              setState(() {
+                _showSearch = !_showSearch;
+
+                if (!_showSearch) {
+                  _searchController.clear();
+                  _searchQuery = '';
+                }
+              });
+            },
+            icon: Icon(
+              _showSearch ? Icons.close_rounded : Icons.search_rounded,
+            ),
           ),
+          IconButton(
+            tooltip: 'Add Student',
+            onPressed: _addingStudent ? null : _addStudentFromStudentsTab,
+            icon: _addingStudent
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.person_add_alt_1_rounded),
+          ),
+          if (!narrow)
+            IconButton(
+              tooltip: 'Refresh Students',
+              onPressed: fetchStudents,
+              icon: const Icon(Icons.refresh_rounded),
+            ),
         ],
       ),
 
@@ -9014,9 +9137,53 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
             ? ErrorStateView(message: errorMessage!, onRetry: fetchStudents)
             : RefreshIndicator(
                 onRefresh: fetchStudents,
+
                 child: CustomScrollView(
                   physics: const AlwaysScrollableScrollPhysics(),
                   slivers: [
+                    if (_showSearch)
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(9, 8, 9, 0),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 480),
+                              child: TextField(
+                                controller: _searchController,
+                                autofocus: true,
+                                textInputAction: TextInputAction.search,
+                                decoration: InputDecoration(
+                                  hintText: 'Search student by name',
+                                  isDense: true,
+                                  prefixIcon: const Icon(Icons.search_rounded),
+                                  suffixIcon: _searchQuery.isEmpty
+                                      ? null
+                                      : IconButton(
+                                          tooltip: 'Clear search',
+                                          onPressed: () {
+                                            _searchController.clear();
+
+                                            setState(() {
+                                              _searchQuery = '';
+                                            });
+                                          },
+                                          icon: const Icon(Icons.close_rounded),
+                                        ),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                onChanged: (value) {
+                                  setState(() {
+                                    _searchQuery = value;
+                                  });
+                                },
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                     SliverToBoxAdapter(
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(9, 8, 9, 5),
@@ -9138,12 +9305,21 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                     ),
 
                     if (visible.isEmpty)
-                      const SliverFillRemaining(
+                      SliverFillRemaining(
                         hasScrollBody: false,
                         child: Center(
-                          child: Text(
-                            'No students match this filter.',
-                            style: TextStyle(fontSize: 15),
+                          child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Text(
+                              _searchQuery.trim().isNotEmpty
+                                  ? 'No matching student found in ${widget.batchName}.'
+                                  : 'No students match this filter.',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                color: AppTheme.textSecondary,
+                              ),
+                            ),
                           ),
                         ),
                       )
@@ -10606,7 +10782,11 @@ import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:async';
 
+import '../services/award_draft_store.dart';
+import '../utils/student_group_helper.dart';
+import '../widgets/student_subject_selector.dart';
 import '../app_theme.dart';
 import '../models/fee_models.dart';
 import '../models/portal_user.dart';
@@ -10637,6 +10817,10 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
   List<_AwardStudentRow> _students = [];
 
   final Map<String, String> _draftMarks = {};
+  final Map<String, String> _savedMarkTexts = {};
+  final Map<String, String> _pendingMarkDrafts = {};
+
+  bool _addingStudent = false;
   final Map<String, TextEditingController> _markControllers = {};
 
   final Map<String, FocusNode> _markFocusNodes = {};
@@ -11051,6 +11235,51 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     _markFocusNodes.clear();
   }
 
+  Future<void> _persistMarkDrafts() async {
+    final userId = _supabase.auth.currentUser?.id;
+    final testId = _selectedTestId;
+
+    if (userId == null || testId == null) return;
+
+    final snapshot = Map<String, String>.from(_pendingMarkDrafts);
+
+    try {
+      await AwardDraftStore.save(
+        userId: userId,
+        testId: testId,
+        marks: snapshot,
+      );
+    } catch (e) {
+      debugPrint('Award draft storage error: $e');
+
+      if (mounted) {
+        _showMessage('Draft could not be saved on this device.', error: true);
+      }
+    }
+  }
+
+  void _recordMarkDraft(String studentId, String text) {
+    final value = text.trim().toUpperCase();
+    final savedValue = _savedMarkTexts[studentId] ?? '';
+    final wasEmpty = _pendingMarkDrafts.isEmpty;
+
+    _draftMarks[studentId] = value;
+
+    if (value == savedValue) {
+      _pendingMarkDrafts.remove(studentId);
+    } else {
+      _pendingMarkDrafts[studentId] = value;
+    }
+
+    // Hive is updated on every edit, not just Save Marks.
+    unawaited(_persistMarkDrafts());
+
+    // Refresh the Save button only when necessary.
+    if (mounted && wasEmpty != _pendingMarkDrafts.isEmpty) {
+      setState(() {});
+    }
+  }
+
   void _syncMarkInputs(List<_AwardStudentRow> students) {
     final activeIds = students.map((student) => student.id).toSet();
 
@@ -11070,14 +11299,36 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       _markFocusNodes.remove(id)?.dispose();
     }
 
+    final userId = _supabase.auth.currentUser?.id;
+    final testId = _selectedTestId;
+
+    final storedDrafts = userId != null && testId != null
+        ? AwardDraftStore.load(userId: userId, testId: testId)
+        : <String, String>{};
+
     _draftMarks.clear();
+    _savedMarkTexts.clear();
+    _pendingMarkDrafts.clear();
 
     for (final student in students) {
-      final value = student.isAbsent
+      final savedValue = student.isAbsent
           ? 'A'
           : student.savedMarks == null
           ? ''
           : _formatNumber(student.savedMarks!);
+
+      _savedMarkTexts[student.id] = savedValue;
+
+      // Prefer an unsaved local draft over the cloud value.
+      final localDraft = storedDrafts[student.id];
+
+      final displayValue = localDraft != null && localDraft != savedValue
+          ? localDraft
+          : savedValue;
+
+      if (localDraft != null && localDraft != savedValue) {
+        _pendingMarkDrafts[student.id] = localDraft;
+      }
 
       final controller = _markControllers.putIfAbsent(
         student.id,
@@ -11085,13 +11336,13 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       );
 
       controller.value = TextEditingValue(
-        text: value,
-        selection: TextSelection.collapsed(offset: value.length),
+        text: displayValue,
+        selection: TextSelection.collapsed(offset: displayValue.length),
       );
 
       _markFocusNodes.putIfAbsent(student.id, () => FocusNode());
 
-      _draftMarks[student.id] = value;
+      _draftMarks[student.id] = displayValue;
     }
   }
 
@@ -11174,11 +11425,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     String value,
     double maxMarks,
   ) {
-    final clean = value.trim();
+    _recordMarkDraft(student.id, value);
 
-    _draftMarks[student.id] = clean;
-
-    if (_shouldAutoAdvance(value: clean, maxMarks: maxMarks)) {
+    if (_shouldAutoAdvance(value: value, maxMarks: maxMarks)) {
       _focusNextStudent(student.id);
     }
   }
@@ -11186,18 +11435,356 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
   void _markStudentAbsent(_AwardStudentRow student) {
     final controller = _markControllers[student.id];
 
-    if (controller == null) {
-      return;
-    }
+    if (controller == null) return;
 
     controller.value = const TextEditingValue(
       text: 'A',
       selection: TextSelection.collapsed(offset: 1),
     );
 
-    _draftMarks[student.id] = 'A';
-
+    _recordMarkDraft(student.id, 'A');
     _focusNextStudent(student.id);
+  }
+
+  Future<void> _addStudentFromAwards() async {
+    if (_addingStudent || _saving) return;
+
+    final batchId = _selectedBatchId;
+    final subject = _selectedSubject;
+    final classLevel = _selectedClassLevel;
+
+    if (batchId == null || subject == null || classLevel <= 0) {
+      _showMessage('Select a batch and subject first.', error: true);
+      return;
+    }
+
+    String studentName = '';
+
+    var selectedSubjects = normalizeStudentSubjects(classLevel, [
+      ...studentDefaultSubjectsForClass(classLevel),
+      subject,
+    ]);
+
+    String? dialogError;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Add Student'),
+              content: SizedBox(
+                width: 480,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        _selectedBatch?['name']?.toString() ?? 'Selected batch',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: AppTheme.fgNavyBlue,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text('Award subject: ${feeSubjectLabel(subject)}'),
+                      const SizedBox(height: 14),
+                      TextField(
+                        autofocus: true,
+                        textCapitalization: TextCapitalization.words,
+                        onChanged: (value) {
+                          studentName = value;
+                        },
+                        decoration: const InputDecoration(
+                          labelText: 'Student Name',
+                          prefixIcon: Icon(Icons.person_outline_rounded),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      StudentSubjectSelector(
+                        classLevel: classLevel,
+                        selectedSubjects: selectedSubjects,
+                        onChanged: (subjects) {
+                          setDialogState(() {
+                            selectedSubjects = subjects;
+                            dialogError = null;
+                          });
+                        },
+                        onValidationError: (message) {
+                          setDialogState(() {
+                            dialogError = message;
+                          });
+                        },
+                      ),
+                      if (dialogError != null) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          dialogError!,
+                          style: const TextStyle(color: AppTheme.danger),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    Navigator.pop(dialogContext, false);
+                  },
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    final name = studentName.trim();
+
+                    if (name.isEmpty) {
+                      setDialogState(() {
+                        dialogError = 'Enter student name.';
+                      });
+                      return;
+                    }
+
+                    final validation = studentSubjectSelectionError(
+                      classLevel,
+                      selectedSubjects,
+                    );
+
+                    if (validation != null) {
+                      setDialogState(() {
+                        dialogError = validation;
+                      });
+                      return;
+                    }
+
+                    if (!selectedSubjects.contains(subject)) {
+                      setDialogState(() {
+                        dialogError =
+                            'Keep ${feeSubjectLabel(subject)} selected.';
+                      });
+                      return;
+                    }
+
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    Navigator.pop(dialogContext, true);
+                  },
+                  icon: const Icon(Icons.person_add_alt_1_rounded),
+                  label: const Text('Add'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (!mounted || confirmed != true) return;
+
+    setState(() {
+      _addingStudent = true;
+    });
+
+    try {
+      await _persistMarkDrafts();
+
+      await _supabase.rpc(
+        'portal_add_student_from_attendance_v2',
+        params: {
+          'p_name': studentName.trim(),
+          'p_batch_id': batchId,
+          'p_subjects': selectedSubjects,
+        },
+      );
+
+      if (!mounted) return;
+
+      // Reload students; the test's pending marks
+      // are automatically restored from local storage.
+      await _loadTestStudents();
+
+      _showMessage(
+        '${studentName.trim()} added successfully. '
+        'Existing marks have been preserved.',
+      );
+    } catch (e) {
+      debugPrint('Award Add Student error: $e');
+
+      _showMessage('Student could not be added.\n$e', error: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _addingStudent = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _editAwardStudent(_AwardStudentRow student) async {
+    try {
+      final response = await _supabase
+          .from('students')
+          .select('name, stream')
+          .eq('id', student.id)
+          .single();
+
+      if (!mounted) return;
+
+      String name = response['name']?.toString() ?? '';
+
+      var subjects = normalizeStudentSubjects(
+        _selectedClassLevel,
+        (response['stream'] as List).map((value) => value.toString()),
+      );
+
+      String? error;
+
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                title: const Text('Edit Student'),
+                content: SizedBox(
+                  width: 480,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        TextFormField(
+                          initialValue: name,
+                          textCapitalization: TextCapitalization.words,
+                          onChanged: (value) => name = value,
+                          decoration: const InputDecoration(
+                            labelText: 'Student Name',
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        StudentSubjectSelector(
+                          classLevel: _selectedClassLevel,
+                          selectedSubjects: subjects,
+                          onChanged: (value) {
+                            setDialogState(() {
+                              subjects = value;
+                              error = null;
+                            });
+                          },
+                          onValidationError: (message) {
+                            setDialogState(() {
+                              error = message;
+                            });
+                          },
+                        ),
+                        if (error != null)
+                          Text(
+                            error!,
+                            style: const TextStyle(color: AppTheme.danger),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: const Text('Cancel'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () {
+                      final validation = studentSubjectSelectionError(
+                        _selectedClassLevel,
+                        subjects,
+                      );
+
+                      if (name.trim().isEmpty || validation != null) {
+                        setDialogState(() {
+                          error = validation ?? 'Enter name.';
+                        });
+                        return;
+                      }
+
+                      Navigator.pop(dialogContext, true);
+                    },
+                    child: const Text('Save'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+
+      if (!mounted || confirmed != true) return;
+
+      await _persistMarkDrafts();
+
+      await _supabase.rpc(
+        'portal_edit_award_student',
+        params: {
+          'p_student_id': student.id,
+          'p_name': name.trim(),
+          'p_subjects': subjects,
+        },
+      );
+
+      await _loadTestStudents();
+      _showMessage('Student updated.');
+    } catch (e) {
+      _showMessage('Student edit failed.\n$e', error: true);
+    }
+  }
+
+  Future<void> _deleteAwardStudent(_AwardStudentRow student) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Remove Student?'),
+          content: Text(
+            'Remove ${student.name}?\n\n'
+            'Only newly added students without paid fees, '
+            'saved marks or historical attendance '
+            'can be removed by teachers.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Remove'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (!mounted || confirmed != true) return;
+
+    try {
+      await _persistMarkDrafts();
+
+      await _supabase.rpc(
+        'portal_delete_new_award_student',
+        params: {'p_student_id': student.id},
+      );
+
+      _pendingMarkDrafts.remove(student.id);
+      await _persistMarkDrafts();
+
+      await _loadTestStudents();
+
+      _showMessage('Student removed.');
+    } catch (e) {
+      _showMessage('Student could not be removed.\n$e', error: true);
+    }
   }
 
   Future<void> _createTest() async {
@@ -11373,25 +11960,40 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
   }
 
   Future<void> _saveMarks() async {
-    final test = _selectedTest;
+    if (_saving) return;
 
-    if (test == null) {
+    final test = _selectedTest;
+    if (test == null) return;
+
+    if (_pendingMarkDrafts.isEmpty) {
+      _showMessage('No unsaved changes.');
       return;
     }
 
     final maxMarks = (test['max_marks'] as num).toDouble();
 
     final payload = <Map<String, dynamic>>[];
+    final submittedIds = <String>[];
 
     for (final student in _students) {
-      final controller = _markControllers[student.id];
+      if (!_pendingMarkDrafts.containsKey(student.id)) {
+        continue;
+      }
 
-      final value = (controller?.text ?? _draftMarks[student.id] ?? '')
-          .trim()
-          .toUpperCase();
+      final value =
+          (_markControllers[student.id]?.text ??
+                  _pendingMarkDrafts[student.id] ??
+                  '')
+              .trim()
+              .toUpperCase();
 
       if (value.isEmpty) {
-        continue;
+        _showMessage(
+          '${student.name}: enter marks or select A. '
+          'Use Clear Saved Mark to remove an old result.',
+          error: true,
+        );
+        return;
       }
 
       if (value == 'A') {
@@ -11401,32 +12003,20 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
           'is_absent': true,
         });
 
+        submittedIds.add(student.id);
         continue;
       }
 
       final marks = double.tryParse(value);
 
-      if (marks == null) {
+      if (marks == null || marks < 0 || marks > maxMarks) {
         _showMessage(
-          'Invalid marks for '
-          '${student.name}.',
-          error: true,
-        );
-
-        return;
-      }
-
-      if (marks < 0 || marks > maxMarks) {
-        _showMessage(
-          '${student.name}: '
-          'marks must be between '
-          '0 and '
-          '${_formatNumber(maxMarks)}.',
+          '${student.name}: enter marks between '
+          '0 and ${_formatNumber(maxMarks)}.',
           error: true,
         );
 
         _markFocusNodes[student.id]?.requestFocus();
-
         return;
       }
 
@@ -11435,15 +12025,12 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
         'marks': marks,
         'is_absent': false,
       });
+
+      submittedIds.add(student.id);
     }
 
     if (payload.isEmpty) {
-      _showMessage(
-        'Enter at least one '
-        'student mark.',
-        error: true,
-      );
-
+      _showMessage('No marks to save.', error: true);
       return;
     }
 
@@ -11459,19 +12046,28 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
         params: {'p_test_id': test['id'].toString(), 'p_marks': payload},
       );
 
-      await _loadTestStudents();
-
-      if (!mounted) {
-        return;
+      // Clear only the marks successfully sent.
+      // Other pending drafts remain on this device.
+      for (final id in submittedIds) {
+        _pendingMarkDrafts.remove(id);
       }
 
+      await _persistMarkDrafts();
+      await _loadTestStudents();
+
+      if (!mounted) return;
+
       await _showSavedSuccessSheet(
-        savedCount: result is num ? result.toInt() : payload.length,
+        savedCount: result is num ? result.toInt() : submittedIds.length,
       );
     } catch (e) {
       debugPrint('Save award marks error: $e');
 
-      _showMessage(_friendlyError(e), error: true);
+      _showMessage(
+        'Marks could not be uploaded. '
+        'Your local draft is still available.\n$e',
+        error: true,
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -11648,6 +12244,11 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
         },
       );
 
+      // Remove any older local draft for this student,
+      // otherwise refresh could restore the cleared mark.
+      _pendingMarkDrafts.remove(student.id);
+      await _persistMarkDrafts();
+
       await _loadTestStudents();
 
       _showMessage('Saved mark cleared.');
@@ -11697,6 +12298,27 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          IconButton(
+            tooltip: 'Add Student',
+            color: Colors.white,
+            onPressed:
+                _addingStudent ||
+                    _saving ||
+                    _selectedSubject == null ||
+                    _selectedBatchId == null
+                ? null
+                : _addStudentFromAwards,
+            icon: _addingStudent
+                ? const SizedBox(
+                    width: 19,
+                    height: 19,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.person_add_alt_1_rounded),
+          ),
           IconButton(
             tooltip: 'History',
             color: Colors.white,
@@ -12283,6 +12905,28 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                         ],
                       ),
                     ),
+
+                    PopupMenuButton<String>(
+                      tooltip: 'Student actions',
+                      icon: const Icon(Icons.more_vert_rounded),
+                      onSelected: (action) {
+                        if (action == 'edit') {
+                          _editAwardStudent(student);
+                        } else if (action == 'delete') {
+                          _deleteAwardStudent(student);
+                        }
+                      },
+                      itemBuilder: (context) => const [
+                        PopupMenuItem<String>(
+                          value: 'edit',
+                          child: Text('Edit Student'),
+                        ),
+                        PopupMenuItem<String>(
+                          value: 'delete',
+                          child: Text('Remove New Student'),
+                        ),
+                      ],
+                    ),
                   ],
                 );
 
@@ -12367,7 +13011,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
               ),
             ),
             ElevatedButton.icon(
-              onPressed: _saving ? null : _saveMarks,
+              onPressed: _saving || _pendingMarkDrafts.isEmpty
+                  ? null
+                  : _saveMarks,
               icon: _saving
                   ? const SizedBox(
                       width: 18,
@@ -12715,6 +13361,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import 'award_lists_screen.dart';
 import '../app_theme.dart';
 import '../services/auth_service.dart';
@@ -12725,13 +13372,12 @@ import '../utils/list_sorting.dart';
 import '../widgets/academy_background.dart';
 import 'admin/admin_attendance_tab.dart';
 import 'admin/batches_tab.dart';
-import 'admin/fees/fees_tab.dart';
 import 'admin/students_tab.dart';
 import 'login_screen.dart';
 import 'profile_screen.dart';
 import 'teacher_batches_screen.dart';
-import 'admin/fees/excel_fee_test_screen.dart';
 import 'admin/teachers_tab.dart';
+import '../services/award_draft_store.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String userRole;
@@ -12746,7 +13392,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   int _selectedIndex = 0;
-
   Widget? _activeSubScreen;
 
   int _totalStudents = 0;
@@ -12755,21 +13400,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<Map<String, dynamic>> _batchStrengths = [];
 
   bool _isLoadingStats = true;
-
   String? _statsError;
 
   bool get _isAdmin => widget.userRole == 'admin';
-  bool get _canUseExcelFeeTest {
-    if (!_isAdmin || !isWindowsPlatform) {
-      return false;
-    }
-
-    final email = Hive.box(
-      'settings',
-    ).get('email')?.toString().trim().toLowerCase();
-
-    return email == 'ahmermoonmajid@gmail.com';
-  }
 
   List<_NavigationItem> get _items {
     if (_isAdmin) {
@@ -12797,12 +13430,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           label: 'Attendance',
           icon: Icons.fact_check_outlined,
           selectedIcon: Icons.fact_check_rounded,
-        ),
-        _NavigationItem(
-          index: 4,
-          label: 'Fees',
-          icon: Icons.payments_outlined,
-          selectedIcon: Icons.payments_rounded,
         ),
         _NavigationItem(
           index: 5,
@@ -12844,7 +13471,58 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  void _selectSection(int index) {
+  Future<bool> _confirmLeavingAwardDraft() async {
+    final onAwards = _isAdmin ? _selectedIndex == 5 : _selectedIndex == 1;
+
+    if (!onAwards) return true;
+
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+
+    if (userId == null || !AwardDraftStore.hasPendingDrafts(userId)) {
+      return true;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Award List not submitted'),
+          content: const Text(
+            'Aapke kuch marks abhi Supabase par save '
+            'nahi hue.\n\n'
+            'Draft is phone par saved hai. '
+            'Wapas aakar Save Marks dabana zaroori hai.\n\n'
+            'Kya aap phir bhi tab change karna chahte hain?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Keep Editing'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Leave'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return confirmed == true;
+  }
+
+  void _selectSection(int index) async {
+    if (index == _selectedIndex && _activeSubScreen == null) {
+      return;
+    }
+
+    if (!await _confirmLeavingAwardDraft()) {
+      return;
+    }
+
+    if (!mounted) return;
+
     setState(() {
       _selectedIndex = index;
       _activeSubScreen = null;
@@ -12868,10 +13546,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _openProfile() {
-    setState(() {
-      _activeSubScreen = null;
-      _selectedIndex = _isAdmin ? 7 : 2;
-    });
+    _selectSection(_isAdmin ? 7 : 2);
   }
 
   Future<void> _refreshStats() async {
@@ -12895,7 +13570,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ]);
 
       final students = results[0];
-
       final batches = results[1];
 
       final strengths = <String, int>{};
@@ -12925,7 +13599,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       setState(() {
         _totalStudents = students.length;
-
         _totalBatches = batches.length;
 
         _batchStrengths = sorted
@@ -12933,7 +13606,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             .toList();
 
         _isLoadingStats = false;
-
         _statsError = null;
       });
     } catch (e) {
@@ -12943,22 +13615,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       setState(() {
         _isLoadingStats = false;
-
         _statsError = 'Unable to load academy statistics.';
       });
     }
   }
 
   Future<void> _logout() async {
+    if (!await _confirmLeavingAwardDraft()) {
+      return;
+    }
+
+    if (!mounted) return;
+
     try {
       await AuthService().signOut();
 
       final box = Hive.box('settings');
 
       await box.put('isLoggedIn', false);
-
       await box.put('role', '');
-
       await box.put('username', '');
     } catch (e) {
       debugPrint('Logout error: $e');
@@ -12966,7 +13641,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (!mounted) return;
 
       _showMessage('Could not log out.', error: true);
-
       return;
     }
 
@@ -13037,9 +13711,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             onBack: desktopMode ? _closeSubScreen : null,
           );
 
-        case 4:
-          return const FeesTab();
-
         case 5:
           return AwardListsScreen(userRole: widget.userRole);
 
@@ -13084,7 +13755,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
     }
 
-    return 'FG Academy';
+    return 'Academy Portal';
   }
 
   int get _mobileAdminIndex {
@@ -13098,11 +13769,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       case 3:
         return 2;
 
-      case 4:
-        return 3;
-
       case 7:
-        return 4;
+        return 3;
 
       case 2:
         return 0;
@@ -13127,10 +13795,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         break;
 
       case 3:
-        _selectSection(4);
-        break;
-
-      case 4:
         _openProfile();
         break;
     }
@@ -13143,9 +13807,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final width = constraints.maxWidth;
 
         final desktop = width >= 1180;
-
         final tablet = width >= 720 && width < 1180;
-
         final mobile = width < 720;
 
         final content = AcademyBackground(
@@ -13234,7 +13896,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'FG ACADEMY',
+                    'Academy Portal',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 21,
@@ -13403,6 +14065,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final selectedPosition = _items.indexWhere(
       (item) => item.index == _selectedIndex,
     );
+
     return NavigationRail(
       selectedIndex: selectedPosition >= 0 ? selectedPosition : null,
       labelType: NavigationRailLabelType.all,
@@ -13496,7 +14159,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'FG Academy',
+                          'Academy Portal',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 19,
@@ -13558,7 +14221,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         : null,
                     onTap: () {
                       Navigator.of(context).pop();
-
                       _selectSection(item.index);
                     },
                   );
@@ -13631,11 +14293,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           label: 'Attendance',
         ),
         NavigationDestination(
-          icon: Icon(Icons.payments_outlined),
-          selectedIcon: Icon(Icons.payments_rounded),
-          label: 'Fees',
-        ),
-        NavigationDestination(
           icon: Icon(Icons.person_outline_rounded),
           selectedIcon: Icon(Icons.person_rounded),
           label: 'Profile',
@@ -13656,7 +14313,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         borderRadius: BorderRadius.circular(13),
         onTap: () {
           Navigator.of(context).pop();
-
           _openProfile();
         },
         child: Padding(
@@ -13796,53 +14452,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       );
                     },
                   ),
+
                   const SizedBox(height: 14),
-
                   _strengthCard(),
-
-                  if (_canUseExcelFeeTest) ...[
-                    const SizedBox(height: 12),
-
-                    Card(
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 17,
-                          vertical: 8,
-                        ),
-                        leading: Container(
-                          width: 48,
-                          height: 48,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: AppTheme.warning.withValues(alpha: 0.10),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: const Icon(
-                            Icons.science_rounded,
-                            color: AppTheme.warning,
-                            size: 27,
-                          ),
-                        ),
-                        title: const Text(
-                          'Excel Fees (Test)',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 15,
-                          ),
-                        ),
-                        subtitle: const Text(
-                          'Experimental local Excel '
-                          'fee reports • Ahmer only',
-                        ),
-                        trailing: const Icon(Icons.chevron_right_rounded),
-                        onTap: () {
-                          _navigateToSubScreen(
-                            ExcelFeeTestScreen(onBack: _closeSubScreen),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
 
                   if (isWindowsPlatform) ...[
                     const SizedBox(height: 12),
@@ -15820,6 +16432,7 @@ class _RegisterTeacherScreenState extends State<RegisterTeacherScreen> {
 
 
 lib/screens/splash_screen.dart:
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -15828,6 +16441,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../app_theme.dart';
 import '../services/auth_service.dart';
+import '../services/github_update_service.dart';
 import 'dashboard_screen.dart';
 import 'login_screen.dart';
 
@@ -15846,40 +16460,88 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
-
     _checkVersionAndProceed();
   }
 
   Future<void> _checkVersionAndProceed() async {
-    await Future.delayed(const Duration(milliseconds: 1200));
+    await Future.delayed(const Duration(milliseconds: 800));
 
     if (!mounted) return;
 
-    try {
-      final packageInfo = await PackageInfo.fromPlatform();
+    PackageInfo? packageInfo;
 
+    try {
+      packageInfo = await PackageInfo.fromPlatform();
+    } catch (e) {
+      debugPrint('Package version check failed: $e');
+    }
+
+    final isAndroid =
+        !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+    GithubUpdateInfo? githubUpdate;
+
+    // Automatically check latest GitHub release on Android.
+    if (isAndroid && packageInfo != null) {
+      final installedBuildNumber = int.tryParse(packageInfo.buildNumber);
+
+      if (installedBuildNumber != null) {
+        githubUpdate = await GithubUpdateService().checkForUpdate(
+          installedBuildNumber,
+        );
+      }
+    }
+
+    if (!mounted) return;
+
+    // Preserve existing Supabase force-update behavior.
+    // No SQL changes are needed for normal GitHub updates.
+    try {
       final response = await supabase
           .from('app_settings')
-          .select(
-            'min_apk_version, '
-            'apk_download_url',
-          )
+          .select('min_apk_version, apk_download_url')
           .eq('id', 1)
           .single();
 
       final requiredVersion = response['min_apk_version']?.toString() ?? '';
 
-      final downloadUrl = response['apk_download_url']?.toString() ?? '';
+      final oldDownloadUrl = response['apk_download_url']?.toString() ?? '';
 
-      if (_isUpdateRequired(packageInfo.version, requiredVersion)) {
-        _showUpdateDialog(downloadUrl);
+      if (packageInfo != null &&
+          _isUpdateRequired(packageInfo.version, requiredVersion)) {
+        final downloadUrl = isAndroid
+            ? (githubUpdate?.apkUrl.toString() ??
+                  GithubUpdateService.latestApkUrl?.toString() ??
+                  oldDownloadUrl)
+            : oldDownloadUrl;
 
+        if (!mounted) return;
+
+        _showForceUpdateDialog(downloadUrl);
         return;
       }
     } catch (e) {
-      debugPrint('Version check failed: $e');
+      debugPrint('Supabase version check failed: $e');
     }
 
+    // Optional update popup: Update Now or Later.
+    if (githubUpdate != null && mounted) {
+      final updateNow = await _showOptionalUpdateDialog(githubUpdate);
+
+      if (!mounted) return;
+
+      if (updateNow) {
+        await _openApkDownload(githubUpdate.apkUrl.toString());
+
+        if (!mounted) return;
+      }
+    }
+
+    // Continue normal login / session restoration.
+    await _restoreSessionAndProceed();
+  }
+
+  Future<void> _restoreSessionAndProceed() async {
     try {
       final portalUser = await _authService.restoreSession();
 
@@ -15887,7 +16549,6 @@ class _SplashScreenState extends State<SplashScreen> {
 
       if (portalUser == null) {
         _open(const LoginScreen());
-
         return;
       }
 
@@ -15909,7 +16570,6 @@ class _SplashScreenState extends State<SplashScreen> {
 
   bool _isUpdateRequired(String current, String required) {
     final curr = _parseVersion(current);
-
     final req = _parseVersion(required);
 
     if (curr == null || req == null) {
@@ -15917,13 +16577,8 @@ class _SplashScreenState extends State<SplashScreen> {
     }
 
     for (int i = 0; i < 3; i++) {
-      if (req[i] > curr[i]) {
-        return true;
-      }
-
-      if (req[i] < curr[i]) {
-        return false;
-      }
+      if (req[i] > curr[i]) return true;
+      if (req[i] < curr[i]) return false;
     }
 
     return false;
@@ -15936,23 +16591,69 @@ class _SplashScreenState extends State<SplashScreen> {
       return null;
     }
 
-    final parsed = <int>[];
+    final result = <int>[];
 
     for (final part in parts.take(3)) {
       final value = int.tryParse(part);
 
-      if (value == null) {
-        return null;
-      }
+      if (value == null) return null;
 
-      parsed.add(value);
+      result.add(value);
     }
 
-    return parsed;
+    return result;
   }
 
-  void _showUpdateDialog(String url) {
-    showDialog(
+  Future<bool> _showOptionalUpdateDialog(GithubUpdateInfo update) async {
+    if (!mounted) return false;
+
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          icon: const Icon(
+            Icons.system_update_alt_rounded,
+            size: 40,
+            color: AppTheme.fgNavyBlue,
+          ),
+          title: const Text(
+            'New Update Available!',
+            textAlign: TextAlign.center,
+          ),
+          content: const Text(
+            'FG Academy Portal ka naya update '
+            'available hai.\n\n'
+            'Update Now dabane par APK download '
+            'hogi. Download hone ke baad file '
+            'open karke Update/Install confirm karein.',
+            textAlign: TextAlign.center,
+          ),
+          actionsAlignment: MainAxisAlignment.center,
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext, false);
+              },
+              child: const Text('Later'),
+            ),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.download_rounded),
+              label: const Text('Update Now'),
+              onPressed: () {
+                Navigator.pop(dialogContext, true);
+              },
+            ),
+          ],
+        );
+      },
+    );
+
+    return result ?? false;
+  }
+
+  void _showForceUpdateDialog(String downloadUrl) {
+    showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) {
@@ -15961,37 +16662,62 @@ class _SplashScreenState extends State<SplashScreen> {
           child: AlertDialog(
             icon: const Icon(
               Icons.system_update_alt_rounded,
-              size: 36,
+              size: 40,
               color: AppTheme.fgNavyBlue,
             ),
-            title: const Text('Update Required'),
+            title: const Text('Update Required', textAlign: TextAlign.center),
             content: const Text(
-              'A newer FG Academy Portal version is required before continuing.',
+              'A newer Academy Portal version '
+              'is required before continuing.',
               textAlign: TextAlign.center,
             ),
             actionsAlignment: MainAxisAlignment.center,
             actions: [
               ElevatedButton.icon(
-                onPressed: () async {
-                  final uri = Uri.tryParse(url);
-
-                  if (uri == null) {
-                    return;
-                  }
-
-                  try {
-                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                  } catch (e) {
-                    debugPrint('Update URL error: $e');
-                  }
-                },
                 icon: const Icon(Icons.download_rounded),
                 label: const Text('Download Update'),
+                onPressed: () {
+                  _openApkDownload(downloadUrl);
+                },
               ),
             ],
           ),
         );
       },
+    );
+  }
+
+  Future<void> _openApkDownload(String url) async {
+    final uri = Uri.tryParse(url);
+
+    if (uri == null || uri.scheme != 'https') {
+      _showDownloadError();
+      return;
+    }
+
+    try {
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+
+      if (!opened) {
+        _showDownloadError();
+      }
+    } catch (e) {
+      debugPrint('APK download link failed: $e');
+      _showDownloadError();
+    }
+  }
+
+  void _showDownloadError() {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Could not open the update link. '
+          'Please check your internet connection.',
+        ),
+        backgroundColor: AppTheme.danger,
+      ),
     );
   }
 
@@ -16002,7 +16728,6 @@ class _SplashScreenState extends State<SplashScreen> {
         fit: StackFit.expand,
         children: [
           Image.asset('assets/images/school_bg.png', fit: BoxFit.cover),
-
           Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
@@ -16015,12 +16740,10 @@ class _SplashScreenState extends State<SplashScreen> {
               ),
             ),
           ),
-
           SafeArea(
             child: Column(
               children: [
                 const Spacer(),
-
                 Container(
                   width: 140,
                   height: 140,
@@ -16032,11 +16755,9 @@ class _SplashScreenState extends State<SplashScreen> {
                   ),
                   child: Image.asset('assets/images/app_logo_bg.png'),
                 ).animate().fadeIn().scale(begin: const Offset(0.9, 0.9)),
-
                 const SizedBox(height: 25),
-
                 const Text(
-                  'FG Academy Portal',
+                  'Academy Portal',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.white,
@@ -16044,9 +16765,7 @@ class _SplashScreenState extends State<SplashScreen> {
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-
                 const SizedBox(height: 5),
-
                 const Text(
                   'Evening Coaching Classes',
                   style: TextStyle(
@@ -16055,23 +16774,17 @@ class _SplashScreenState extends State<SplashScreen> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-
                 const Spacer(),
-
                 const SizedBox(
                   width: 280,
                   child: LinearProgressIndicator(minHeight: 3),
                 ),
-
                 const SizedBox(height: 13),
-
                 const Text(
                   'Securing your academy workspace…',
                   style: TextStyle(color: Colors.white70, fontSize: 13),
                 ),
-
                 const SizedBox(height: 18),
-
                 const Text(
                   'Developed by Ahmer Moon Majid',
                   textAlign: TextAlign.center,
@@ -16082,9 +16795,7 @@ class _SplashScreenState extends State<SplashScreen> {
                     letterSpacing: 0.2,
                   ),
                 ),
-
                 const SizedBox(height: 3),
-
                 const Text(
                   'ahmermoonmajid@gmail.com',
                   textAlign: TextAlign.center,
@@ -16094,7 +16805,6 @@ class _SplashScreenState extends State<SplashScreen> {
                     fontWeight: FontWeight.w500,
                   ),
                 ),
-
                 const SizedBox(height: 24),
               ],
             ),
@@ -16243,6 +16953,13 @@ class _StudentsScreenState extends State<StudentsScreen> {
   }
 
   Future<void> fetchStudentsAndAttendance() async {
+    // Keep a temporary copy of all unsaved attendance.
+    // Refreshing the student list must NOT discard marks.
+    final pendingAttendance = <String, String?>{
+      for (final studentId in modifiedStudents)
+        studentId: attendanceStatus[studentId],
+    };
+
     if (mounted) {
       setState(() {
         isLoading = true;
@@ -16413,6 +17130,17 @@ class _StudentsScreenState extends State<StudentsScreen> {
       setState(() {
         students = studentRows;
 
+        // Restore locally marked attendance after refresh.
+        // Only restore IDs still visible in this batch.
+        for (final entry in pendingAttendance.entries) {
+          if (!visibleIds.contains(entry.key)) {
+            continue;
+          }
+
+          attendanceStatus[entry.key] = entry.value;
+          modifiedStudents.add(entry.key);
+        }
+
         _classLevel = classLevel;
 
         _teacherSubjectCode = teacherSubject;
@@ -16457,34 +17185,28 @@ class _StudentsScreenState extends State<StudentsScreen> {
   }
 
   Future<void> _openAddStudentDialog() async {
-    if (hasUnsavedChanges) {
-      _showMessage(
-        'Please save the current attendance changes before adding a new student.',
-        error: true,
-      );
+    if (_isAddingStudent) return;
 
-      return;
-    }
-
+    // Attendance may already contain unsaved marks.
+    // Teacher must still be able to add a new student.
     final classLevel = _classLevel;
 
     if (classLevel == null) {
       _showMessage('Class information is unavailable.', error: true);
-
       return;
     }
 
-    final nameController = TextEditingController();
+    // No manually managed TextEditingController.
+    // TextField will manage its own internal controller.
+    String studentName = '';
 
     var selectedSubjects = List<String>.from(
       studentDefaultSubjectsForClass(classLevel),
     );
 
-    // If teacher is adding from their
-    // own attendance screen, automatically
-    // include their teaching subject.
     final teacherSubject = _teacherSubjectCode;
 
+    // Automatically include the teacher's own subject.
     if (teacherSubject != null &&
         studentSubjectCodesForClass(classLevel).contains(teacherSubject) &&
         !selectedSubjects.contains(teacherSubject)) {
@@ -16513,6 +17235,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
                   Expanded(child: Text('Add New Student')),
                 ],
               ),
+
               content: SizedBox(
                 width: 500,
                 child: SingleChildScrollView(
@@ -16563,10 +17286,15 @@ class _StudentsScreenState extends State<StudentsScreen> {
 
                       const SizedBox(height: 16),
 
+                      // No external controller to dispose
+                      // while the dialog is closing.
                       TextField(
-                        controller: nameController,
-                        textCapitalization: TextCapitalization.words,
                         autofocus: true,
+                        textCapitalization: TextCapitalization.words,
+                        textInputAction: TextInputAction.done,
+                        onChanged: (value) {
+                          studentName = value;
+                        },
                         decoration: const InputDecoration(
                           labelText: 'Student Name',
                           prefixIcon: Icon(Icons.person_outline_rounded),
@@ -16581,7 +17309,6 @@ class _StudentsScreenState extends State<StudentsScreen> {
                         onChanged: (subjects) {
                           setDialogState(() {
                             selectedSubjects = subjects;
-
                             dialogError = null;
                           });
                         },
@@ -16601,7 +17328,10 @@ class _StudentsScreenState extends State<StudentsScreen> {
                           borderRadius: BorderRadius.circular(11),
                         ),
                         child: const Text(
-                          'On save: student will be enrolled, today attendance will be Present, and current month fee will start as Unpaid.',
+                          'On save: student will be enrolled, '
+                          'today attendance will be Present, '
+                          'and current month fee will start '
+                          'as Unpaid.',
                           style: TextStyle(
                             fontSize: 13,
                             height: 1.45,
@@ -16624,22 +17354,25 @@ class _StudentsScreenState extends State<StudentsScreen> {
                   ),
                 ),
               ),
+
               actions: [
                 TextButton(
                   onPressed: () {
+                    FocusManager.instance.primaryFocus?.unfocus();
+
                     Navigator.of(dialogContext).pop();
                   },
                   child: const Text('Cancel'),
                 ),
+
                 ElevatedButton.icon(
                   onPressed: () {
-                    final name = nameController.text.trim();
+                    final name = studentName.trim();
 
                     if (name.isEmpty) {
                       setDialogState(() {
                         dialogError = 'Student name is required.';
                       });
-
                       return;
                     }
 
@@ -16652,22 +17385,22 @@ class _StudentsScreenState extends State<StudentsScreen> {
                       setDialogState(() {
                         dialogError = validation;
                       });
-
                       return;
                     }
 
-                    // Teacher must not add a
-                    // student who does not
-                    // study teacher's own subject.
+                    // Teacher's subject must be included.
                     if (teacherSubject != null &&
                         !selectedSubjects.contains(teacherSubject)) {
                       setDialogState(() {
                         dialogError =
-                            'Keep your teaching subject selected when adding a student from Attendance.';
+                            'Keep your teaching subject '
+                            'selected when adding a student '
+                            'from Attendance.';
                       });
-
                       return;
                     }
+
+                    FocusManager.instance.primaryFocus?.unfocus();
 
                     Navigator.of(dialogContext).pop(
                       _NewAttendanceStudentDraft(
@@ -16686,12 +17419,13 @@ class _StudentsScreenState extends State<StudentsScreen> {
       },
     );
 
-    nameController.dispose();
-
-    if (request == null || !mounted) {
+    // Cancel: do nothing, leave attendance untouched.
+    if (!mounted || request == null) {
       return;
     }
 
+    // Only actual Add Student confirmation
+    // calls Supabase.
     await _addNewStudent(request);
   }
 
@@ -16844,15 +17578,28 @@ class _StudentsScreenState extends State<StudentsScreen> {
     });
 
     try {
-      await supabase
+      final savedRows = await supabase
           .from('attendance')
-          .upsert(payload, onConflict: 'student_id, date');
+          .upsert(payload, onConflict: 'student_id, date')
+          .select('student_id, status');
 
       if (!mounted) return;
 
       setState(() {
-        modifiedStudents.clear();
+        // Show the actual saved database result.
+        // If Present was protected by the trigger,
+        // the screen will also show Present.
+        for (final row in savedRows) {
+          final studentId = row['student_id']?.toString();
+          final savedStatus = row['status']?.toString();
 
+          if (studentId != null &&
+              (savedStatus == 'present' || savedStatus == 'absent')) {
+            attendanceStatus[studentId] = savedStatus;
+          }
+        }
+
+        modifiedStudents.clear();
         isSaving = false;
       });
 
@@ -18533,6 +19280,64 @@ class AuthService {
 }
 
 
+lib/services/award_draft_store.dart:
+import 'package:hive_flutter/hive_flutter.dart';
+
+class AwardDraftStore {
+  static const String _prefix = 'fg_award_draft_v1:';
+
+  static String _key(String userId, String testId) {
+    return '$_prefix$userId:$testId';
+  }
+
+  static Map<String, String> load({
+    required String userId,
+    required String testId,
+  }) {
+    final raw = Hive.box('settings').get(_key(userId, testId));
+
+    if (raw is! Map) return {};
+
+    return {
+      for (final entry in raw.entries)
+        entry.key.toString(): entry.value.toString(),
+    };
+  }
+
+  static Future<void> save({
+    required String userId,
+    required String testId,
+    required Map<String, String> marks,
+  }) async {
+    final box = Hive.box('settings');
+    final key = _key(userId, testId);
+
+    if (marks.isEmpty) {
+      await box.delete(key);
+    } else {
+      await box.put(key, Map<String, String>.from(marks));
+    }
+  }
+
+  static bool hasPendingDrafts(String userId) {
+    final prefix = '$_prefix$userId:';
+    final box = Hive.box('settings');
+
+    for (final key in box.keys) {
+      if (!key.toString().startsWith(prefix)) continue;
+
+      final value = box.get(key);
+
+      if (value is Map && value.isNotEmpty) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+}
+
+
 lib/services/award_progress_service.dart:
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -19380,6 +20185,135 @@ class FeeService {
 }
 
 
+lib/services/github_update_service.dart:
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+
+class GithubUpdateInfo {
+  final int buildNumber;
+  final Uri apkUrl;
+
+  const GithubUpdateInfo({required this.buildNumber, required this.apkUrl});
+}
+
+class GithubUpdateService {
+  // GitHub Actions fills this automatically during APK build.
+  // No username, repository name or secret to enter manually.
+  static const String _repository = String.fromEnvironment('GITHUB_REPOSITORY');
+
+  static bool get _hasValidRepository {
+    return RegExp(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$').hasMatch(_repository);
+  }
+
+  // Permanent link which always points to the latest APK.
+  static Uri? get latestApkUrl {
+    if (!_hasValidRepository) return null;
+
+    return Uri.https(
+      'github.com',
+      '/$_repository/releases/latest/download/'
+          'FG_Academy_Portal.apk',
+    );
+  }
+
+  Future<GithubUpdateInfo?> checkForUpdate(int installedBuildNumber) async {
+    if (!_hasValidRepository) {
+      debugPrint('GitHub update repository not configured.');
+      return null;
+    }
+
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
+
+    try {
+      final apiUrl = Uri.https(
+        'api.github.com',
+        '/repos/$_repository/releases/latest',
+      );
+
+      final request = await client
+          .getUrl(apiUrl)
+          .timeout(const Duration(seconds: 5));
+
+      request.headers.set(
+        HttpHeaders.acceptHeader,
+        'application/vnd.github+json',
+      );
+
+      request.headers.set(HttpHeaders.userAgentHeader, 'FG-Academy-Portal');
+
+      final response = await request.close().timeout(
+        const Duration(seconds: 5),
+      );
+
+      if (response.statusCode != HttpStatus.ok) {
+        debugPrint('GitHub update HTTP ${response.statusCode}');
+        return null;
+      }
+
+      final responseText = await utf8.decoder
+          .bind(response)
+          .join()
+          .timeout(const Duration(seconds: 6));
+
+      final data = jsonDecode(responseText);
+
+      if (data is! Map<String, dynamic>) {
+        return null;
+      }
+
+      // GitHub Actions produces tags like android-10035.
+      final tag = data['tag_name']?.toString() ?? '';
+
+      final match = RegExp(r'^android-(\d+)$').firstMatch(tag);
+
+      if (match == null) {
+        return null;
+      }
+
+      final latestBuild = int.tryParse(match.group(1)!);
+
+      if (latestBuild == null || latestBuild <= installedBuildNumber) {
+        return null;
+      }
+
+      final assets = data['assets'];
+
+      if (assets is! List) {
+        return null;
+      }
+
+      for (final asset in assets) {
+        if (asset is! Map) continue;
+
+        if (asset['name'] != 'FG_Academy_Portal.apk') {
+          continue;
+        }
+
+        final url = Uri.tryParse(
+          asset['browser_download_url']?.toString() ?? '',
+        );
+
+        if (url == null || url.scheme != 'https' || url.host != 'github.com') {
+          continue;
+        }
+
+        return GithubUpdateInfo(buildNumber: latestBuild, apkUrl: url);
+      }
+
+      return null;
+    } catch (e) {
+      // Weak internet must not break normal app startup.
+      debugPrint('GitHub update check unavailable: $e');
+      return null;
+    } finally {
+      client.close(force: true);
+    }
+  }
+}
+
+
 lib/services/student_alert_service.dart:
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -19514,14 +20448,10 @@ import 'dart:io';
 
 bool get isWindowsPlatform => Platform.isWindows;
 
-Future<bool> launchAutomation() async {
-  if (!Platform.isWindows) {
-    return false;
-  }
+Future<bool> launchAutomation({String? batchId}) async {
+  if (!Platform.isWindows) return false;
 
   try {
-    // Always use the actual Flutter EXE directory,
-    // not whatever Windows happens to use as current directory.
     final exeDirectory = File(Platform.resolvedExecutable).parent;
 
     final batchFile = File('${exeDirectory.path}\\FGEI_Backend\\main.bat');
@@ -19530,12 +20460,17 @@ Future<bool> launchAutomation() async {
       return false;
     }
 
-    await Process.start('cmd.exe', [
-      '/c',
-      'start',
-      '',
-      batchFile.path,
-    ], workingDirectory: batchFile.parent.path);
+    final args = <String>['/c', 'start', '', batchFile.path];
+
+    if (batchId != null && batchId.trim().isNotEmpty) {
+      args.addAll(['--batch-id', batchId.trim()]);
+    }
+
+    await Process.start(
+      'cmd.exe',
+      args,
+      workingDirectory: batchFile.parent.path,
+    );
 
     return true;
   } catch (e) {
@@ -19547,7 +20482,9 @@ Future<bool> launchAutomation() async {
 lib/utils/automation_launcher_stub.dart:
 bool get isWindowsPlatform => false;
 
-Future<bool> launchAutomation() async => false;
+Future<bool> launchAutomation({String? batchId}) async {
+  return false;
+}
 
 
 lib/utils/award_list_image_generator.dart:
@@ -22348,10 +23285,26 @@ String? studentSubjectSelectionError(
     return 'Class $classLevel students can study maximum $max subjects.';
   }
 
-  if ((classLevel == 9 || classLevel == 10) &&
-      values.contains('Comp') &&
-      values.contains('Bio')) {
-    return 'Classes 9/10 cannot have both Computer and Biology.';
+  // Classes 9/10: Computer and Biology are alternatives.
+  if (classLevel == 9 || classLevel == 10) {
+    if (values.contains('Comp') && values.contains('Bio')) {
+      return 'Classes 9/10 cannot have both Computer and Biology.';
+    }
+  }
+
+  // Classes 11/12: enforce valid HSSC combinations.
+  if (classLevel == 11 || classLevel == 12) {
+    if (values.contains('Bio') && values.contains('Math')) {
+      return 'Biology and Mathematics cannot be selected together.';
+    }
+
+    if (values.contains('Bio') && values.contains('Comp')) {
+      return 'Biology and Computer cannot be selected together.';
+    }
+
+    if (values.contains('Comp') && values.contains('Chem')) {
+      return 'Computer and Chemistry cannot be selected together.';
+    }
   }
 
   return null;
@@ -22494,6 +23447,257 @@ class AcademyBackground extends StatelessWidget {
 }
 
 
+lib/widgets/add_student_dialog.dart:
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../app_theme.dart';
+import '../models/fee_models.dart';
+import '../utils/student_group_helper.dart';
+import 'student_subject_selector.dart';
+
+class NewStudentRequest {
+  final String name;
+  final FeeBatch batch;
+  final double defaultFee;
+  final List<String> subjects;
+
+  const NewStudentRequest({
+    required this.name,
+    required this.batch,
+    required this.defaultFee,
+    required this.subjects,
+  });
+}
+
+Future<NewStudentRequest?> showAcademyAddStudentDialog({
+  required BuildContext context,
+  required List<FeeBatch> batches,
+  required FeeBatch initialBatch,
+  required String paymentMonth,
+  bool lockBatch = false,
+}) async {
+  FeeBatch dialogBatch = initialBatch;
+
+  final nameController = TextEditingController();
+  final feeController = TextEditingController(
+    text: dialogBatch.classLevel <= 10 ? '5500' : '6000',
+  );
+
+  var selectedSubjects = List<String>.from(
+    studentDefaultSubjectsForClass(dialogBatch.classLevel),
+  );
+
+  String? dialogError;
+
+  try {
+    return await showDialog<NewStudentRequest>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              scrollable: true,
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 14,
+              ),
+              title: const Row(
+                children: [
+                  Icon(Icons.person_add_alt_1, color: AppTheme.fgNavyBlue),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Add New Student',
+                      style: TextStyle(fontSize: 19),
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 520,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      key: ValueKey(dialogBatch.id),
+                      initialValue: dialogBatch.id,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Batch',
+                        prefixIcon: Icon(Icons.class_outlined),
+                      ),
+                      items: batches.map((batch) {
+                        return DropdownMenuItem(
+                          value: batch.id,
+                          child: Text(
+                            batch.name,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: lockBatch
+                          ? null
+                          : (value) {
+                              if (value == null) return;
+
+                              final newBatch = batches.firstWhere(
+                                (batch) => batch.id == value,
+                              );
+
+                              setDialogState(() {
+                                dialogBatch = newBatch;
+
+                                feeController.text = newBatch.classLevel <= 10
+                                    ? '5500'
+                                    : '6000';
+
+                                selectedSubjects = List<String>.from(
+                                  studentDefaultSubjectsForClass(
+                                    newBatch.classLevel,
+                                  ),
+                                );
+
+                                dialogError = null;
+                              });
+                            },
+                    ),
+                    const SizedBox(height: 14),
+                    TextFormField(
+                      controller: nameController,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: const InputDecoration(
+                        labelText: 'Student Name',
+                        prefixIcon: Icon(Icons.person_outline),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    TextFormField(
+                      controller: feeController,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                      ],
+                      decoration: InputDecoration(
+                        labelText: 'Default Monthly Fee',
+                        prefixText: 'Rs ',
+                        helperText: dialogBatch.classLevel <= 10
+                            ? 'SSC suggested fee: Rs 5,500'
+                            : 'HSSC suggested fee: Rs 6,000',
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    StudentSubjectSelector(
+                      classLevel: dialogBatch.classLevel,
+                      selectedSubjects: selectedSubjects,
+                      onChanged: (subjects) {
+                        setDialogState(() {
+                          selectedSubjects = subjects;
+                          dialogError = null;
+                        });
+                      },
+                      onValidationError: (message) {
+                        setDialogState(() {
+                          dialogError = message;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppTheme.success.withValues(alpha: 0.07),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        'On save: student will be created, '
+                        'today attendance will be Present, '
+                        'and $paymentMonth fee will start as Unpaid.',
+                        style: const TextStyle(fontSize: 12.5, height: 1.45),
+                      ),
+                    ),
+                    if (dialogError != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        dialogError!,
+                        style: const TextStyle(
+                          color: AppTheme.danger,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(dialogContext);
+                  },
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.person_add),
+                  label: const Text('Add Student'),
+                  onPressed: () {
+                    final name = nameController.text.trim();
+
+                    final fee = double.tryParse(feeController.text.trim());
+
+                    if (name.isEmpty) {
+                      setDialogState(() {
+                        dialogError = 'Student name is required.';
+                      });
+                      return;
+                    }
+
+                    if (fee == null || fee <= 0) {
+                      setDialogState(() {
+                        dialogError = 'Enter a valid default fee.';
+                      });
+                      return;
+                    }
+
+                    final validation = studentSubjectSelectionError(
+                      dialogBatch.classLevel,
+                      selectedSubjects,
+                    );
+
+                    if (validation != null) {
+                      setDialogState(() {
+                        dialogError = validation;
+                      });
+                      return;
+                    }
+
+                    Navigator.pop(
+                      dialogContext,
+                      NewStudentRequest(
+                        name: name,
+                        batch: dialogBatch,
+                        defaultFee: fee,
+                        subjects: List<String>.from(selectedSubjects),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  } finally {
+    nameController.dispose();
+    feeController.dispose();
+  }
+}
+
+
 lib/widgets/student_subject_selector.dart:
 import 'package:flutter/material.dart';
 
@@ -22528,8 +23732,8 @@ class StudentSubjectSelector extends StatelessWidget {
     final next = selectedSubjects.toSet();
 
     if (selected) {
-      // SSC Computer / Biology are
-      // alternatives.
+      // SSC: Computer and Biology remain alternatives.
+      // Selecting one automatically removes the other.
       if (classLevel == 9 || classLevel == 10) {
         if (code == 'Comp') {
           next.remove('Bio');
@@ -22541,18 +23745,19 @@ class StudentSubjectSelector extends StatelessWidget {
       }
 
       next.add(code);
+
+      // Prevent invalid HSSC combinations
+      // and exceeding the maximum subjects.
+      final validation = studentSubjectSelectionError(classLevel, next);
+
+      if (validation != null) {
+        onValidationError?.call(validation);
+        return;
+      }
     } else {
+      // Allow unchecking subjects, including
+      // when a student studies only selected subjects.
       next.remove(code);
-    }
-
-    final max = studentMaxSubjectsForClass(classLevel);
-
-    if (next.length > max) {
-      onValidationError?.call(
-        'Maximum $max subjects allowed for Class $classLevel.',
-      );
-
-      return;
     }
 
     onChanged(normalizeStudentSubjects(classLevel, next));
@@ -22651,6 +23856,20 @@ class StudentSubjectSelector extends StatelessWidget {
         ...allowed.map((code) {
           final checked = selectedSubjects.contains(code);
 
+          final isHssc = classLevel == 11 || classLevel == 12;
+
+          // An unchecked subject is disabled if selecting
+          // it would create an invalid HSSC combination
+          // or exceed the 4-subject limit.
+          final blocked =
+              isHssc &&
+              !checked &&
+              studentSubjectSelectionError(classLevel, [
+                    ...selectedSubjects,
+                    code,
+                  ]) !=
+                  null;
+
           return CheckboxListTile(
             value: checked,
             dense: true,
@@ -22664,9 +23883,11 @@ class StudentSubjectSelector extends StatelessWidget {
                 fontWeight: FontWeight.w700,
               ),
             ),
-            onChanged: (value) {
-              _toggleSubject(code, value ?? false);
-            },
+            onChanged: blocked
+                ? null
+                : (value) {
+                    _toggleSubject(code, value ?? false);
+                  },
           );
         }),
 
@@ -22675,7 +23896,7 @@ class StudentSubjectSelector extends StatelessWidget {
         Text(
           classLevel <= 10
               ? 'SSC: maximum 5 subjects. Computer and Biology cannot both be selected.'
-              : 'HSSC: maximum 4 subjects. Custom 1, 2 or 3 subject combinations are allowed.',
+              : 'HSSC: maximum 4 subjects. Biology cannot combine with Math or Computer. Computer cannot combine with Chemistry. Invalid options are disabled.',
           style: const TextStyle(
             color: AppTheme.textSecondary,
             fontSize: 12,
@@ -22708,7 +23929,7 @@ publish_to: "none" # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+2
+version: 1.0.1+3
 
 environment:
   sdk: ^3.10.1

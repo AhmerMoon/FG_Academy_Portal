@@ -28,28 +28,35 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
   bool _startingAutomation = false;
   String? errorMessage;
 
+  String get _today => DateTime.now().toIso8601String().split('T').first;
+
   @override
   void initState() {
     super.initState();
     fetchBatches();
   }
 
-  String get _today => DateTime.now().toIso8601String().split('T').first;
-
   Future<void> fetchBatches() async {
     try {
       final results = await Future.wait([
         supabase.from('batches').select('id, name, class_level'),
-        supabase.from('students').select('batch_id'),
+        supabase
+            .from('students')
+            .select('id, batch_id')
+            .eq('is_archived', false),
         supabase
             .from('attendance')
-            .select('batch_id, status')
+            .select('batch_id, student_id, status')
             .eq('date', _today),
       ]);
 
       final batchRows = results[0];
       final studentRows = results[1];
       final attendanceRows = results[2];
+
+      final activeIds = studentRows
+          .map((student) => student['id'].toString())
+          .toSet();
 
       final total = <String, int>{};
       final present = <String, int>{};
@@ -58,22 +65,22 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
       for (final student in studentRows) {
         final id = student['batch_id']?.toString();
 
-        if (id != null) {
-          total[id] = (total[id] ?? 0) + 1;
-        }
+        if (id == null) continue;
+        total[id] = (total[id] ?? 0) + 1;
       }
 
       for (final row in attendanceRows) {
-        final id = row['batch_id']?.toString();
+        final studentId = row['student_id']?.toString();
 
-        if (id == null) continue;
+        if (!activeIds.contains(studentId)) continue;
+
+        final batchId = row['batch_id']?.toString();
+        if (batchId == null) continue;
 
         if (row['status'] == 'present') {
-          present[id] = (present[id] ?? 0) + 1;
-        }
-
-        if (row['status'] == 'absent') {
-          absent[id] = (absent[id] ?? 0) + 1;
+          present[batchId] = (present[batchId] ?? 0) + 1;
+        } else if (row['status'] == 'absent') {
+          absent[batchId] = (absent[batchId] ?? 0) + 1;
         }
       }
 
@@ -175,9 +182,7 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
 
     if (!mounted || confirmed != true) return;
 
-    setState(() {
-      _startingAutomation = true;
-    });
+    setState(() => _startingAutomation = true);
 
     try {
       final started = await launchAutomation(batchId: batchId);
@@ -198,9 +203,7 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
       );
     } finally {
       if (mounted) {
-        setState(() {
-          _startingAutomation = false;
-        });
+        setState(() => _startingAutomation = false);
       }
     }
   }
@@ -264,8 +267,8 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
     final total = (batch['student_count'] as num?)?.toInt() ?? 0;
     final present = (batch['present_count'] as num?)?.toInt() ?? 0;
     final absent = (batch['absent_count'] as num?)?.toInt() ?? 0;
-    final unmarked = total - present - absent;
 
+    final unmarked = total - present - absent;
     final batchId = batch['id'].toString();
     final batchName = batch['name']?.toString() ?? 'Batch';
 
@@ -376,8 +379,6 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
                           ),
                   ),
                 ),
-
-                // WhatsApp automation is desktop-only.
                 if (isWindowsPlatform) ...[
                   const SizedBox(height: 10),
                   const Divider(height: 1),
@@ -479,15 +480,14 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
   final SupabaseClient supabase = Supabase.instance.client;
 
   List<dynamic> students = [];
-
   final Map<String, String> attendanceData = {};
   final Map<String, int> _priorAbsenceStreak = {};
   final Set<String> modifiedStudents = {};
 
   bool isLoading = true;
   bool isSaving = false;
-
   String? errorMessage;
+
   late DateTime currentDate;
 
   @override
@@ -502,15 +502,16 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
   bool get canGoForward {
     final today = DateTime.now();
     final cleanToday = DateTime(today.year, today.month, today.day);
-
     return currentDate.isBefore(cleanToday);
   }
 
-  int get presentCount =>
-      attendanceData.values.where((status) => status == 'present').length;
+  int get presentCount => students.where((student) {
+    return attendanceData[student['id'].toString()] == 'present';
+  }).length;
 
-  int get absentCount =>
-      attendanceData.values.where((status) => status == 'absent').length;
+  int get absentCount => students.where((student) {
+    return attendanceData[student['id'].toString()] == 'absent';
+  }).length;
 
   int get unmarkedCount => students.length - presentCount - absentCount;
 
@@ -554,6 +555,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
             .from('students')
             .select('id, name')
             .eq('batch_id', widget.batchId)
+            .eq('is_archived', false)
             .order('name', ascending: true),
         supabase
             .from('attendance')
@@ -573,6 +575,10 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
       final attendanceRows = results[1];
       final historyRows = results[2];
 
+      final activeIds = studentRows
+          .map((student) => student['id'].toString())
+          .toSet();
+
       final fetchedAttendance = <String, String>{};
       final fetchedStreaks = <String, int>{};
 
@@ -581,8 +587,11 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
       }
 
       for (final row in attendanceRows) {
-        fetchedAttendance[row['student_id'].toString()] = row['status']
-            .toString();
+        final id = row['student_id'].toString();
+
+        if (!activeIds.contains(id)) continue;
+
+        fetchedAttendance[id] = row['status'].toString();
       }
 
       final historyByStudent = <String, List<Map<String, dynamic>>>{};
@@ -591,7 +600,9 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
         final row = Map<String, dynamic>.from(rawRow);
         final id = row['student_id']?.toString();
 
-        if (id == null) continue;
+        if (id == null || !activeIds.contains(id)) {
+          continue;
+        }
 
         historyByStudent.putIfAbsent(id, () => []).add(row);
       }
@@ -611,9 +622,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
             continue;
           }
 
-          if (status == 'present') {
-            break;
-          }
+          if (status == 'present') break;
         }
 
         fetchedStreaks[entry.key] = streak;
@@ -662,7 +671,6 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
     setState(() {
       for (final student in students) {
         final id = student['id'].toString();
-
         attendanceData[id] = status;
         modifiedStudents.add(id);
       }
@@ -677,11 +685,16 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
       return;
     }
 
+    final activeIds = students
+        .map((student) => student['id'].toString())
+        .toSet();
+
     final updates = <Map<String, dynamic>>[];
 
     for (final id in modifiedStudents) {
-      final status = attendanceData[id];
+      if (!activeIds.contains(id)) continue;
 
+      final status = attendanceData[id];
       if (status == null) continue;
 
       updates.add({
@@ -694,13 +707,9 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
 
     if (updates.isEmpty) return;
 
-    setState(() {
-      isSaving = true;
-    });
+    setState(() => isSaving = true);
 
     try {
-      // Read back the actual server statuses.
-      // This respects the Present-wins DB trigger.
       final savedRows = await supabase
           .from('attendance')
           .upsert(updates, onConflict: 'student_id, date')
@@ -728,9 +737,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
 
       if (!mounted) return;
 
-      setState(() {
-        isSaving = false;
-      });
+      setState(() => isSaving = false);
 
       _showMessage('Unable to save attendance.', error: true);
     }
@@ -744,7 +751,8 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
           title: const Text('Unsaved Changes'),
           content: Text(
             '${modifiedStudents.length} attendance '
-            'change(s) have not been saved. Discard them?',
+            'change(s) have not been saved. '
+            'Discard them?',
           ),
           actions: [
             TextButton(
@@ -771,10 +779,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
       if (!discard || !mounted) return;
     }
 
-    setState(() {
-      currentDate = date;
-    });
-
+    setState(() => currentDate = date);
     await fetchStudentsAndAttendance();
   }
 
@@ -807,9 +812,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
       return;
     }
 
-    if (mounted) {
-      Navigator.of(context).pop();
-    }
+    if (mounted) Navigator.of(context).pop();
   }
 
   void _showMessage(String message, {bool error = false}) {
@@ -830,9 +833,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
     return PopScope(
       canPop: modifiedStudents.isEmpty,
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop) {
-          _attemptBack();
-        }
+        if (!didPop) _attemptBack();
       },
       child: Scaffold(
         backgroundColor: Colors.transparent,

@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../utils/student_group_helper.dart';
+
 import '../../app_theme.dart';
+import '../../models/fee_models.dart';
 import '../../utils/dashboard_section_header.dart';
 import '../../utils/error_state_view.dart';
 import '../../utils/list_sorting.dart';
+import '../../utils/student_group_helper.dart';
 import '../../widgets/academy_background.dart';
-import '../../widgets/student_subject_selector.dart';
-import '../../models/fee_models.dart';
-import '../../services/fee_service.dart';
-import '../../utils/fee_month.dart';
 import '../../widgets/add_student_dialog.dart';
+import '../../widgets/student_subject_selector.dart';
+import 'archive_students_view.dart';
+
+// ============================================================
+// ADMIN STUDENTS: ACTIVE BATCHES + ARCHIVE
+// ============================================================
 
 class StudentsTab extends StatefulWidget {
   final Function(Widget screen)? onNavigate;
@@ -26,15 +30,13 @@ class _StudentsTabState extends State<StudentsTab> {
   final SupabaseClient supabase = Supabase.instance.client;
 
   List<dynamic> batches = [];
-
   bool isLoading = true;
-
   String? errorMessage;
+  bool _archiveMode = false;
 
   @override
   void initState() {
     super.initState();
-
     fetchBatches();
   }
 
@@ -42,12 +44,10 @@ class _StudentsTabState extends State<StudentsTab> {
     try {
       final results = await Future.wait([
         supabase.from('batches').select('id, name, class_level'),
-
-        supabase.from('students').select('batch_id'),
+        supabase.from('students').select('batch_id').eq('is_archived', false),
       ]);
 
       final batchRows = results[0];
-
       final studentRows = results[1];
 
       final counts = <String, int>{};
@@ -62,9 +62,7 @@ class _StudentsTabState extends State<StudentsTab> {
 
       final mapped = batchRows.map((batch) {
         final copy = Map<String, dynamic>.from(batch);
-
         copy['student_count'] = counts[batch['id'].toString()] ?? 0;
-
         return copy;
       }).toList();
 
@@ -72,9 +70,7 @@ class _StudentsTabState extends State<StudentsTab> {
 
       setState(() {
         batches = sortBatches(mapped);
-
         isLoading = false;
-
         errorMessage = null;
       });
     } catch (e) {
@@ -84,7 +80,6 @@ class _StudentsTabState extends State<StudentsTab> {
 
       setState(() {
         isLoading = false;
-
         errorMessage = 'Unable to load students.';
       });
     }
@@ -92,9 +87,7 @@ class _StudentsTabState extends State<StudentsTab> {
 
   void _openBatch(Map<String, dynamic> batch) {
     final id = batch['id'].toString();
-
     final name = batch['name']?.toString() ?? 'Batch';
-
     final classLevel = (batch['class_level'] as num?)?.toInt() ?? 0;
 
     if (widget.onNavigate != null && widget.onBack != null) {
@@ -106,7 +99,6 @@ class _StudentsTabState extends State<StudentsTab> {
           onBack: widget.onBack,
         ),
       );
-
       return;
     }
 
@@ -121,9 +113,7 @@ class _StudentsTabState extends State<StudentsTab> {
           ),
         )
         .then((_) {
-          if (mounted) {
-            fetchBatches();
-          }
+          if (mounted) fetchBatches();
         });
   }
 
@@ -137,101 +127,131 @@ class _StudentsTabState extends State<StudentsTab> {
       return ErrorStateView(message: errorMessage!, onRetry: fetchBatches);
     }
 
-    return RefreshIndicator(
-      onRefresh: fetchBatches,
-      child: CustomScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        slivers: [
-          const SliverToBoxAdapter(
-            child: DashboardSectionHeader(
-              title: 'Students',
-              subtitle: 'Active academy students by batch',
-            ),
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+          child: Row(
+            children: [
+              ChoiceChip(
+                label: const Text('Active Batches'),
+                selected: !_archiveMode,
+                onSelected: (_) {
+                  setState(() => _archiveMode = false);
+                },
+              ),
+              const SizedBox(width: 10),
+              ChoiceChip(
+                label: const Text('Archive'),
+                selected: _archiveMode,
+                onSelected: (_) {
+                  setState(() => _archiveMode = true);
+                },
+              ),
+            ],
           ),
-
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(9, 6, 9, 24),
-            sliver: SliverList.builder(
-              itemCount: batches.length,
-              itemBuilder: (context, index) {
-                final batch = Map<String, dynamic>.from(batches[index]);
-
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 9),
-                  child: Card(
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(16),
-                      onTap: () => _openBatch(batch),
-                      child: Padding(
-                        padding: const EdgeInsets.all(15),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 52,
-                              height: 52,
-                              decoration: BoxDecoration(
-                                gradient: AppTheme.brandGradient,
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              child: const Icon(
-                                Icons.groups_2_rounded,
-                                color: Colors.white,
-                                size: 27,
-                              ),
-                            ),
-
-                            const SizedBox(width: 13),
-
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    batch['name']?.toString() ?? 'Batch',
-                                    style: const TextStyle(
-                                      color: AppTheme.textPrimary,
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-
-                                  const SizedBox(height: 3),
-
-                                  Text(
-                                    '${batch['student_count'] ?? 0} students',
-                                    style: const TextStyle(
-                                      color: AppTheme.textSecondary,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-
-                            const Icon(
-                              Icons.chevron_right_rounded,
-                              color: AppTheme.fgNavyBlue,
-                              size: 27,
-                            ),
-                          ],
+        ),
+        Expanded(
+          child: _archiveMode
+              ? ArchiveStudentsView(onRestored: fetchBatches)
+              : RefreshIndicator(
+                  onRefresh: fetchBatches,
+                  child: CustomScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    slivers: [
+                      const SliverToBoxAdapter(
+                        child: DashboardSectionHeader(
+                          title: 'Students',
+                          subtitle: 'Active academy students by batch',
                         ),
                       ),
-                    ),
+                      SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(9, 6, 9, 24),
+                        sliver: SliverList.builder(
+                          itemCount: batches.length,
+                          itemBuilder: (context, index) {
+                            final batch = Map<String, dynamic>.from(
+                              batches[index],
+                            );
+
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 9),
+                              child: Card(
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(16),
+                                  onTap: () => _openBatch(batch),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(15),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          width: 52,
+                                          height: 52,
+                                          decoration: BoxDecoration(
+                                            gradient: AppTheme.brandGradient,
+                                            borderRadius: BorderRadius.circular(
+                                              14,
+                                            ),
+                                          ),
+                                          child: const Icon(
+                                            Icons.groups_2_rounded,
+                                            color: Colors.white,
+                                            size: 27,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 13),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                batch['name']?.toString() ??
+                                                    'Batch',
+                                                style: const TextStyle(
+                                                  color: AppTheme.textPrimary,
+                                                  fontSize: 16,
+                                                  fontWeight: FontWeight.w800,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 3),
+                                              Text(
+                                                '${batch['student_count'] ?? 0} students',
+                                                style: const TextStyle(
+                                                  color: AppTheme.textSecondary,
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        const Icon(
+                                          Icons.chevron_right_rounded,
+                                          color: AppTheme.fgNavyBlue,
+                                          size: 27,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
                   ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
+                ),
+        ),
+      ],
     );
   }
 }
 
-// =============================================================================
-// BATCH STUDENTS SCREEN
-// =============================================================================
+// ============================================================
+// INDIVIDUAL BATCH STUDENTS
+// ============================================================
 
 class BatchStudentsScreen extends StatefulWidget {
   final String batchId;
@@ -255,27 +275,20 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
   final SupabaseClient supabase = Supabase.instance.client;
 
   List<dynamic> students = [];
-
   bool isLoading = true;
-
   String? errorMessage;
 
   String selectedFilter = 'All';
 
-  final FeeService _feeService = FeeService();
-
   final TextEditingController _searchController = TextEditingController();
 
   String _searchQuery = '';
-
   bool _showSearch = false;
-
   bool _addingStudent = false;
 
   @override
   void initState() {
     super.initState();
-
     fetchStudents();
   }
 
@@ -307,55 +320,23 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
     if (raw is List) {
       return raw.map((item) => item.toString()).toList();
     }
-
     return [];
   }
 
-  String _subjectLabel(String code) {
-    switch (code) {
-      case 'Phy':
-        return 'Physics';
-
-      case 'Chem':
-        return 'Chemistry';
-
-      case 'Math':
-        return 'Math';
-
-      case 'Eng':
-        return 'English';
-
-      case 'Comp':
-        return 'Computer';
-
-      case 'Bio':
-        return 'Biology';
-
-      default:
-        return code;
-    }
-  }
-
   bool _matchesFilter(dynamic student) {
-    if (selectedFilter == 'All') {
-      return true;
-    }
+    if (selectedFilter == 'All') return true;
 
     final subjects = _subjects(student['stream']);
 
     switch (selectedFilter) {
       case 'Computer':
         return subjects.contains('Comp');
-
       case 'Biology':
         return subjects.contains('Bio');
-
       case 'Chemistry':
         return subjects.contains('Chem');
-
       case 'Single Subject':
         return subjects.length == 1;
-
       default:
         return true;
     }
@@ -365,13 +346,9 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
     final query = _searchQuery.trim().toLowerCase();
 
     return students.where((student) {
-      if (!_matchesFilter(student)) {
-        return false;
-      }
+      if (!_matchesFilter(student)) return false;
 
-      if (query.isEmpty) {
-        return true;
-      }
+      if (query.isEmpty) return true;
 
       final studentName =
           student['name']?.toString().trim().toLowerCase() ?? '';
@@ -386,15 +363,14 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
           .from('students')
           .select('id, name, stream, status, default_fee')
           .eq('batch_id', widget.batchId)
+          .eq('is_archived', false)
           .order('name', ascending: true);
 
       if (!mounted) return;
 
       setState(() {
         students = sortStudents(response);
-
         isLoading = false;
-
         errorMessage = null;
       });
     } catch (e) {
@@ -404,11 +380,14 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
 
       setState(() {
         isLoading = false;
-
         errorMessage = 'Unable to load students.';
       });
     }
   }
+
+  // ==========================================================
+  // ADD STUDENT - COMPACT FORM / MANDATORY STREAM
+  // ==========================================================
 
   Future<void> _addStudentFromStudentsTab() async {
     if (_addingStudent) return;
@@ -419,29 +398,26 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
       classLevel: widget.classLevel,
     );
 
-    final paymentMonth = FeeMonth.fromDate(DateTime.now());
-
     final request = await showAcademyAddStudentDialog(
       context: context,
       batches: [batch],
       initialBatch: batch,
-      paymentMonth: paymentMonth,
+      paymentMonth: '',
       lockBatch: true,
     );
 
     if (!mounted || request == null) return;
 
-    setState(() {
-      _addingStudent = true;
-    });
+    setState(() => _addingStudent = true);
 
     try {
-      await _feeService.addStudent(
-        name: request.name,
-        batchId: request.batch.id,
-        defaultFee: request.defaultFee,
-        subjects: request.subjects,
-        paymentMonth: paymentMonth,
+      await supabase.rpc(
+        'portal_add_student_simple',
+        params: {
+          'p_name': request.name,
+          'p_batch_id': request.batch.id,
+          'p_group_code': request.groupCode,
+        },
       );
 
       if (!mounted) return;
@@ -463,13 +439,13 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
           content: Text(
             '${request.name} added successfully.\n'
             'Today attendance: Present\n'
-            '$paymentMonth fee: Unpaid',
+            'Student is ready for attendance.',
           ),
           backgroundColor: AppTheme.success,
         ),
       );
     } catch (e) {
-      debugPrint('Students tab add student error: $e');
+      debugPrint('Students add error: $e');
 
       if (!mounted) return;
 
@@ -481,12 +457,14 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
       );
     } finally {
       if (mounted) {
-        setState(() {
-          _addingStudent = false;
-        });
+        setState(() => _addingStudent = false);
       }
     }
   }
+
+  // ==========================================================
+  // EDIT STUDENT - EXISTING SUBJECT EDITING PRESERVED
+  // ==========================================================
 
   Future<void> _editStudent(Map<String, dynamic> student) async {
     final controller = TextEditingController(
@@ -527,9 +505,7 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                           prefixIcon: Icon(Icons.person_outline_rounded),
                         ),
                       ),
-
                       const SizedBox(height: 14),
-
                       DropdownButtonFormField<String>(
                         initialValue: status,
                         decoration: const InputDecoration(
@@ -547,25 +523,20 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                           ),
                         ],
                         onChanged: (value) {
-                          if (value == null) {
-                            return;
-                          }
+                          if (value == null) return;
 
                           setDialogState(() {
                             status = value;
                           });
                         },
                       ),
-
                       const SizedBox(height: 20),
-
                       StudentSubjectSelector(
                         classLevel: widget.classLevel,
                         selectedSubjects: selectedSubjects,
                         onChanged: (subjects) {
                           setDialogState(() {
                             selectedSubjects = subjects;
-
                             dialogError = null;
                           });
                         },
@@ -575,7 +546,6 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                           });
                         },
                       ),
-
                       if (dialogError != null) ...[
                         const SizedBox(height: 12),
                         Text(
@@ -590,7 +560,6 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                   ),
                 ),
               ),
-
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(dialogContext, false),
@@ -630,16 +599,11 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
     );
 
     final name = controller.text.trim();
-
     controller.dispose();
 
-    if (confirmed != true) {
-      return;
-    }
+    if (confirmed != true) return;
 
-    setState(() {
-      isLoading = true;
-    });
+    setState(() => isLoading = true);
 
     try {
       await supabase.rpc(
@@ -663,13 +627,11 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
         ),
       );
     } catch (e) {
-      debugPrint('Student update: $e');
+      debugPrint('Student update error: $e');
 
       if (!mounted) return;
 
-      setState(() {
-        isLoading = false;
-      });
+      setState(() => isLoading = false);
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -680,16 +642,41 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
     }
   }
 
-  Future<void> _deleteStudent(dynamic student) async {
+  // ==========================================================
+  // ARCHIVE INSTEAD OF PERMANENT DELETE
+  // ==========================================================
+
+  Future<void> _archiveStudent(dynamic student) async {
     final name = student['name']?.toString() ?? 'Student';
+    String reason = 'Left academy';
 
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('Delete Student?'),
-          content: Text(
-            'Delete "$name"? Linked attendance and fee records may also be removed.',
+          title: const Text('Archive Student?'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Archive "$name"?\n\n'
+                  'Historical attendance and award marks '
+                  'will be preserved.',
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  maxLines: 2,
+                  maxLength: 500,
+                  decoration: const InputDecoration(
+                    labelText: 'Reason (optional)',
+                    hintText: 'Left academy',
+                  ),
+                  onChanged: (value) => reason = value,
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -697,47 +684,60 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
               child: const Text('Cancel'),
             ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger),
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Delete'),
+              child: const Text('Archive'),
             ),
           ],
         );
       },
     );
 
-    if (confirmed != true) {
-      return;
-    }
-
-    setState(() {
-      isLoading = true;
-    });
+    if (confirmed != true) return;
 
     try {
-      await supabase.from('students').delete().eq('id', student['id']);
-
-      await fetchStudents();
-    } catch (e) {
-      debugPrint('Delete student: $e');
+      await supabase.rpc(
+        'archive_student',
+        params: {
+          'p_student_id': student['id'],
+          'p_reason': reason.trim().isEmpty ? 'Left academy' : reason.trim(),
+        },
+      );
 
       if (!mounted) return;
 
-      setState(() {
-        isLoading = false;
-      });
+      await fetchStudents();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Student archived. Historical records preserved.'),
+          backgroundColor: AppTheme.success,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Archive failed: $e'),
+          backgroundColor: AppTheme.danger,
+        ),
+      );
     }
   }
+
+  // ==========================================================
+  // STUDENTS LIST UI
+  // ==========================================================
 
   @override
   Widget build(BuildContext context) {
     final visible = visibleStudents;
-
     final narrow = MediaQuery.sizeOf(context).width < 600;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-
       appBar: AppBar(
         automaticallyImplyLeading: false,
         leading: IconButton(
@@ -751,7 +751,6 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
           },
           icon: const Icon(Icons.arrow_back_rounded),
         ),
-
         title: Text(
           widget.batchName,
           maxLines: 1,
@@ -798,7 +797,6 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
             ),
         ],
       ),
-
       body: AcademyBackground(
         child: isLoading
             ? const Center(child: CircularProgressIndicator())
@@ -806,7 +804,6 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
             ? ErrorStateView(message: errorMessage!, onRetry: fetchStudents)
             : RefreshIndicator(
                 onRefresh: fetchStudents,
-
                 child: CustomScrollView(
                   physics: const AlwaysScrollableScrollPhysics(),
                   slivers: [
@@ -814,41 +811,35 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                       SliverToBoxAdapter(
                         child: Padding(
                           padding: const EdgeInsets.fromLTRB(9, 8, 9, 0),
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 480),
-                              child: TextField(
-                                controller: _searchController,
-                                autofocus: true,
-                                textInputAction: TextInputAction.search,
-                                decoration: InputDecoration(
-                                  hintText: 'Search student by name',
-                                  isDense: true,
-                                  prefixIcon: const Icon(Icons.search_rounded),
-                                  suffixIcon: _searchQuery.isEmpty
-                                      ? null
-                                      : IconButton(
-                                          tooltip: 'Clear search',
-                                          onPressed: () {
-                                            _searchController.clear();
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 480),
+                            child: TextField(
+                              controller: _searchController,
+                              autofocus: true,
+                              textInputAction: TextInputAction.search,
+                              decoration: InputDecoration(
+                                hintText: 'Search student by name',
+                                isDense: true,
+                                prefixIcon: const Icon(Icons.search_rounded),
+                                suffixIcon: _searchQuery.isEmpty
+                                    ? null
+                                    : IconButton(
+                                        tooltip: 'Clear search',
+                                        onPressed: () {
+                                          _searchController.clear();
 
-                                            setState(() {
-                                              _searchQuery = '';
-                                            });
-                                          },
-                                          icon: const Icon(Icons.close_rounded),
-                                        ),
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                                onChanged: (value) {
-                                  setState(() {
-                                    _searchQuery = value;
-                                  });
-                                },
+                                          setState(() {
+                                            _searchQuery = '';
+                                          });
+                                        },
+                                        icon: const Icon(Icons.close_rounded),
+                                      ),
                               ),
+                              onChanged: (value) {
+                                setState(() {
+                                  _searchQuery = value;
+                                });
+                              },
                             ),
                           ),
                         ),
@@ -892,9 +883,7 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                                           },
                                         ),
                                       ),
-
                                       const SizedBox(width: 10),
-
                                       Container(
                                         constraints: const BoxConstraints(
                                           minWidth: 55,
@@ -972,7 +961,6 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                         ),
                       ),
                     ),
-
                     if (visible.isEmpty)
                       SliverFillRemaining(
                         hasScrollBody: false,
@@ -1033,9 +1021,7 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                                           ),
                                         ),
                                       ),
-
                                       const SizedBox(width: 12),
-
                                       Expanded(
                                         child: Column(
                                           crossAxisAlignment:
@@ -1050,12 +1036,10 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                                                 fontWeight: FontWeight.w800,
                                               ),
                                             ),
-
                                             const SizedBox(height: 4),
-
                                             Text(
                                               subjects
-                                                  .map(_subjectLabel)
+                                                  .map(studentSubjectLabel)
                                                   .join(' • '),
                                               maxLines: 2,
                                               overflow: TextOverflow.ellipsis,
@@ -1068,7 +1052,6 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                                           ],
                                         ),
                                       ),
-
                                       IconButton(
                                         tooltip: 'Edit',
                                         onPressed: () => _editStudent(
@@ -1077,13 +1060,12 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                                         icon: const Icon(Icons.edit_outlined),
                                         color: AppTheme.fgNavyBlue,
                                       ),
-
                                       IconButton(
-                                        tooltip: 'Delete',
+                                        tooltip: 'Archive',
                                         onPressed: () =>
-                                            _deleteStudent(student),
+                                            _archiveStudent(student),
                                         icon: const Icon(
-                                          Icons.delete_outline_rounded,
+                                          Icons.archive_outlined,
                                         ),
                                         color: AppTheme.danger,
                                       ),

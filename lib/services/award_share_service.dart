@@ -30,7 +30,6 @@ class AwardShareService {
     required String subjectCode,
   }) async {
     final batchId = batch['id'].toString();
-
     final testId = test['id'].toString();
 
     final results = await Future.wait<dynamic>([
@@ -38,6 +37,7 @@ class AwardShareService {
           .from('students')
           .select('id, name, stream')
           .eq('batch_id', batchId)
+          .eq('is_archived', false)
           .order('name', ascending: true),
 
       supabase
@@ -51,11 +51,9 @@ class AwardShareService {
     ]);
 
     final rawStudents = results[0] as List;
-
     final rawMarks = results[1] as List;
 
     final marksByStudent = <String, double>{};
-
     final absentByStudent = <String, bool>{};
 
     for (final raw in rawMarks) {
@@ -68,7 +66,6 @@ class AwardShareService {
       }
 
       final isAbsent = row['is_absent'] == true;
-
       absentByStudent[studentId] = isAbsent;
 
       final marks = (row['marks'] as num?)?.toDouble();
@@ -86,7 +83,6 @@ class AwardShareService {
       final row = Map<String, dynamic>.from(raw);
 
       final studentId = row['id'].toString();
-
       final studentName = row['name']?.toString() ?? 'Student';
 
       final rawStream = row['stream'];
