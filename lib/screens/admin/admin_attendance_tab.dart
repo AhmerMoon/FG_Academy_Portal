@@ -815,6 +815,89 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
     if (mounted) Navigator.of(context).pop();
   }
 
+  Future<void> _archiveStudent(Map<String, dynamic> student) async {
+    final name = student['name']?.toString() ?? 'Student';
+    String reason = 'Left academy';
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Archive Student?'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Archive "$name"?\n\n'
+                  'Historical attendance and award marks '
+                  'will be preserved.',
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  maxLines: 2,
+                  maxLength: 500,
+                  decoration: const InputDecoration(
+                    labelText: 'Reason (optional)',
+                    hintText: 'Left academy',
+                  ),
+                  onChanged: (value) => reason = value,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Archive'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await supabase.rpc(
+        'archive_student',
+        params: {
+          'p_student_id': student['id'],
+          'p_reason': reason.trim().isEmpty ? 'Left academy' : reason.trim(),
+        },
+      );
+
+      if (!mounted) return;
+
+      modifiedStudents.remove(student['id'].toString());
+
+      await fetchStudentsAndAttendance();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Student archived. Historical records preserved.'),
+          backgroundColor: AppTheme.success,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Archive failed: $e'),
+          backgroundColor: AppTheme.danger,
+        ),
+      );
+    }
+  }
+
   void _showMessage(String message, {bool error = false}) {
     if (!mounted) return;
 
@@ -1010,95 +1093,122 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
 
                           final followUp = _needsParentFollowUp(id);
 
-                          return Card(
-                            margin: const EdgeInsets.only(bottom: 8),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                              side: BorderSide(
-                                color: followUp
-                                    ? AppTheme.danger.withValues(alpha: 0.55)
-                                    : AppTheme.border,
-                                width: followUp ? 1.4 : 1,
+                          return Dismissible(
+                            key: ValueKey('archive-$id'),
+                            background: Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              decoration: BoxDecoration(
+                                color: AppTheme.danger,
+                                borderRadius: BorderRadius.circular(14),
                               ),
+                              alignment: Alignment.centerLeft,
+                              padding: const EdgeInsets.only(left: 20),
+                              child: const Icon(Icons.archive_outlined, color: Colors.white, size: 28),
                             ),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 8,
+                            secondaryBackground: Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              decoration: BoxDecoration(
+                                color: AppTheme.danger,
+                                borderRadius: BorderRadius.circular(14),
                               ),
-                              child: Row(
-                                children: [
-                                  CircleAvatar(
-                                    radius: 18,
-                                    backgroundColor: followUp
-                                        ? AppTheme.danger.withValues(
-                                            alpha: 0.10,
-                                          )
-                                        : AppTheme.fgNavyBlue.withValues(
-                                            alpha: 0.08,
-                                          ),
-                                    foregroundColor: followUp
-                                        ? AppTheme.danger
-                                        : AppTheme.fgNavyBlue,
-                                    child: Text(
-                                      '${index + 1}',
-                                      style: const TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w700,
+                              alignment: Alignment.centerRight,
+                              padding: const EdgeInsets.only(right: 20),
+                              child: const Icon(Icons.archive_outlined, color: Colors.white, size: 28),
+                            ),
+                            confirmDismiss: (direction) async {
+                              await _archiveStudent(Map<String, dynamic>.from(student));
+                              return false;
+                            },
+                            child: Card(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                side: BorderSide(
+                                  color: followUp
+                                      ? AppTheme.danger.withValues(alpha: 0.55)
+                                      : AppTheme.border,
+                                  width: followUp ? 1.4 : 1,
+                                ),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 8,
+                                ),
+                                child: Row(
+                                  children: [
+                                    CircleAvatar(
+                                      radius: 18,
+                                      backgroundColor: followUp
+                                          ? AppTheme.danger.withValues(
+                                              alpha: 0.10,
+                                            )
+                                          : AppTheme.fgNavyBlue.withValues(
+                                              alpha: 0.08,
+                                            ),
+                                      foregroundColor: followUp
+                                          ? AppTheme.danger
+                                          : AppTheme.fgNavyBlue,
+                                      child: Text(
+                                        '${index + 1}',
+                                        style: const TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w700,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 11),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          student['name']?.toString() ??
-                                              'Student',
-                                          style: TextStyle(
-                                            color: followUp
-                                                ? AppTheme.danger
-                                                : AppTheme.textPrimary,
-                                            fontSize: 15.5,
-                                            fontWeight: FontWeight.w800,
-                                          ),
-                                        ),
-                                        if (followUp) ...[
-                                          const SizedBox(height: 3),
+                                    const SizedBox(width: 11),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
                                           Text(
-                                            'Absent $streak '
-                                            'consecutive attendance '
-                                            'days • Parent follow-up',
-                                            style: const TextStyle(
-                                              color: AppTheme.danger,
-                                              fontSize: 12.5,
-                                              fontWeight: FontWeight.w700,
+                                            student['name']?.toString() ??
+                                                'Student',
+                                            style: TextStyle(
+                                              color: followUp
+                                                  ? AppTheme.danger
+                                                  : AppTheme.textPrimary,
+                                              fontSize: 15.5,
+                                              fontWeight: FontWeight.w800,
                                             ),
                                           ),
+                                          if (followUp) ...[
+                                            const SizedBox(height: 3),
+                                            Text(
+                                              'Absent $streak '
+                                              'consecutive attendance '
+                                              'days • Parent follow-up',
+                                              style: const TextStyle(
+                                                color: AppTheme.danger,
+                                                fontSize: 12.5,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ],
                                         ],
-                                      ],
+                                      ),
                                     ),
-                                  ),
-                                  _StatusButton(
-                                    label: 'P',
-                                    selected: status == 'present',
-                                    selectedColor: AppTheme.success,
-                                    onTap: isSaving
-                                        ? null
-                                        : () => _setStatus(id, 'present'),
-                                  ),
-                                  const SizedBox(width: 7),
-                                  _StatusButton(
-                                    label: 'A',
-                                    selected: status == 'absent',
-                                    selectedColor: AppTheme.danger,
-                                    onTap: isSaving
-                                        ? null
-                                        : () => _setStatus(id, 'absent'),
-                                  ),
-                                ],
+                                    _StatusButton(
+                                      label: 'P',
+                                      selected: status == 'present',
+                                      selectedColor: AppTheme.success,
+                                      onTap: isSaving
+                                          ? null
+                                          : () => _setStatus(id, 'present'),
+                                    ),
+                                    const SizedBox(width: 7),
+                                    _StatusButton(
+                                      label: 'A',
+                                      selected: status == 'absent',
+                                      selectedColor: AppTheme.danger,
+                                      onTap: isSaving
+                                          ? null
+                                          : () => _setStatus(id, 'absent'),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           );
