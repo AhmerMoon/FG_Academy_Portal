@@ -38,6 +38,7 @@ class AwardShareService {
           .from('students')
           .select('id, name, stream')
           .eq('batch_id', batchId)
+          .eq('is_archived', false)
           .order('name', ascending: true),
 
       supabase

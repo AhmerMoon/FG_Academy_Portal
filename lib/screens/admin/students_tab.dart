@@ -96,7 +96,10 @@ class _StudentsTabState extends State<StudentsTab> {
           batchId: id,
           batchName: name,
           classLevel: classLevel,
-          onBack: widget.onBack,
+          onBack: () {
+            widget.onBack!();
+            if (mounted) fetchBatches();
+          },
         ),
       );
       return;

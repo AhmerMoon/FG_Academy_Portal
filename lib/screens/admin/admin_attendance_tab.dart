@@ -126,7 +126,10 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
           batchId: id,
           batchName: name,
           initialDate: _today,
-          onBack: widget.onBack,
+          onBack: () {
+            widget.onBack!();
+            if (mounted) fetchBatches();
+          },
         ),
       );
       return;

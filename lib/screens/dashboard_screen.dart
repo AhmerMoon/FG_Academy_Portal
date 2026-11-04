@@ -185,6 +185,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     setState(() {
       _activeSubScreen = null;
     });
+    if (_isAdmin) {
+      _refreshStats();
+    }
   }
 
   void _openProfile() {
