@@ -1,0 +1,2 @@
+[functions.cleanup-printables]
+verify_jwt = false
