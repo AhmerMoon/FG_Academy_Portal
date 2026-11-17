@@ -14,6 +14,7 @@ import '../../utils/error_state_view.dart';
 import '../../utils/list_sorting.dart';
 import '../../widgets/academy_background.dart';
 import '../../widgets/student_profile_link.dart';
+import '../attendance_report_preview_screen.dart';
 
 class AdminAttendanceTab extends StatefulWidget {
   final Function(Widget screen)? onNavigate;
@@ -530,6 +531,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
 
   bool isLoading = true;
   bool isSaving = false;
+  bool _isGeneratingReport = false;
   String? errorMessage;
 
   late DateTime currentDate;
@@ -729,6 +731,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
       return;
     }
 
+    final shouldOpenReport = unmarkedCount == 0;
     final activeIds = students
         .map((student) => student['id'].toString())
         .toSet();
@@ -775,7 +778,14 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
         isSaving = false;
       });
 
-      _showMessage('Attendance saved successfully.');
+      if (shouldOpenReport) {
+        _showMessage('Attendance saved. Generating monthly report…');
+        await _openMonthlyReport();
+      } else {
+        _showMessage(
+          'Attendance saved. $unmarkedCount student(s) are still unmarked.',
+        );
+      }
     } catch (e) {
       debugPrint('Attendance save error: $e');
 
@@ -786,6 +796,46 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
       _showMessage('Unable to save attendance.', error: true);
     }
   }
+
+  Future<void> _openMonthlyReport() async {
+    if (_isGeneratingReport || students.isEmpty) return;
+    setState(() => _isGeneratingReport = true);
+    try {
+      final data = await AttendanceReportService().loadBatchMonth(
+        batchId: widget.batchId,
+        batchName: widget.batchName,
+        month: currentDate,
+      );
+      final bytes = await AttendanceReportGenerator.generatePng(data);
+      if (!mounted) return;
+      final monthKey = DateFormat('MMM_yyyy').format(currentDate);
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => AttendanceReportPreviewScreen(
+            pngBytes: bytes,
+            title: '${widget.batchName} Attendance',
+            fileName:
+                '${_safeFileName(widget.batchName)}_Attendance_$monthKey.png',
+          ),
+        ),
+      );
+    } catch (error) {
+      debugPrint('Admin attendance report error: $error');
+      if (mounted) {
+        _showMessage(
+          'Attendance was saved, but the monthly report could not be generated.',
+          error: true,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isGeneratingReport = false);
+    }
+  }
+
+  String _safeFileName(String value) => value
+      .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
+      .trim()
+      .replaceAll(RegExp(r'\s+'), '_');
 
   Future<bool> _confirmDiscard() async {
     final result = await showDialog<bool>(
@@ -977,6 +1027,26 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
             overflow: TextOverflow.ellipsis,
           ),
           actions: [
+            IconButton(
+              tooltip: 'Monthly Attendance Report',
+              onPressed:
+                  isLoading ||
+                      isSaving ||
+                      _isGeneratingReport ||
+                      students.isEmpty
+                  ? null
+                  : _openMonthlyReport,
+              icon: _isGeneratingReport
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : const Icon(Icons.image_outlined),
+            ),
             IconButton(
               tooltip: 'Choose Date',
               onPressed: isLoading ? null : _pickDate,
