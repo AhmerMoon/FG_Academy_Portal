@@ -1,10 +1,14 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../app_theme.dart';
-import '../../utils/automation_launcher.dart';
+import '../../models/attendance_report_models.dart';
+import '../../services/attendance_report_service.dart';
+import '../../utils/attendance_archive_actions.dart';
+import '../../utils/attendance_report_generator.dart';
 import '../../utils/dashboard_section_header.dart';
 import '../../utils/error_state_view.dart';
 import '../../utils/list_sorting.dart';
@@ -26,7 +30,7 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
 
   List<dynamic> batches = [];
   bool isLoading = true;
-  bool _startingAutomation = false;
+  bool _generatingArchive = false;
   String? errorMessage;
 
   String get _today => DateTime.now().toIso8601String().split('T').first;
@@ -151,65 +155,59 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
         });
   }
 
-  Future<void> _startAutomation({String? batchId, String? batchName}) async {
-    if (_startingAutomation) return;
+  DateTime get _previousMonth {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month - 1);
+  }
 
-    final isAll = batchId == null;
-    final target = isAll ? 'ALL batches' : (batchName ?? 'selected batch');
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Send Attendance Report?'),
-          content: Text(
-            'Target: $target\n\n'
-            'The Windows WhatsApp automation will '
-            'generate this month\'s report and send '
-            'it to the configured WhatsApp group.\n\n'
-            'Continue?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton.icon(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 17),
-              label: const Text('Start'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (!mounted || confirmed != true) return;
-
-    setState(() => _startingAutomation = true);
-
+  Future<void> _generatePreviousMonthArchive() async {
+    if (_generatingArchive) return;
+    setState(() => _generatingArchive = true);
     try {
-      final started = await launchAutomation(batchId: batchId);
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            started
-                ? 'Automation started for $target. '
-                      'Check the Python window for progress.'
-                : 'Automation could not start. '
-                      'Check the backend files.',
-          ),
-          backgroundColor: started ? AppTheme.success : AppTheme.danger,
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _startingAutomation = false);
+      final month = _previousMonth;
+      final service = AttendanceReportService();
+      final reports = <MapEntry<AttendanceReportData, Uint8List>>[];
+      for (final raw in batches) {
+        final batch = Map<String, dynamic>.from(raw);
+        final strength = (batch['student_count'] as num?)?.toInt() ?? 0;
+        if (strength == 0) continue;
+        final data = await service.loadBatchMonth(
+          batchId: batch['id'].toString(),
+          batchName: batch['name']?.toString() ?? 'Batch',
+          month: month,
+        );
+        if (data.rows.isEmpty) continue;
+        final png = await AttendanceReportGenerator.generatePng(data);
+        reports.add(MapEntry(data, png));
       }
+      final pdf = await AttendanceReportGenerator.generateCombinedPdf(reports);
+      final label = DateFormat('MMMM_yyyy').format(month);
+      final fileName = 'FGEIs_Attendance_$label.pdf';
+      final savedAt = await saveAttendanceArchivePdf(pdf, fileName);
+      if (!mounted) return;
+      if (savedAt == null) {
+        _message('Attendance archive was not saved.', error: true);
+      } else {
+        _message('Attendance archive saved: $savedAt');
+      }
+    } catch (error) {
+      debugPrint('Attendance archive error: $error');
+      if (mounted) {
+        _message('Could not generate the attendance archive.', error: true);
+      }
+    } finally {
+      if (mounted) setState(() => _generatingArchive = false);
     }
+  }
+
+  void _message(String value, {bool error = false}) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(value),
+        backgroundColor: error ? AppTheme.danger : AppTheme.success,
+      ),
+    );
   }
 
   @override
@@ -231,21 +229,10 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
             child: DashboardSectionHeader(
               title: 'Attendance',
               subtitle: 'Today\'s batch strength and attendance overview',
-              trailing: isWindowsPlatform
-                  ? ElevatedButton.icon(
-                      onPressed: _startingAutomation
-                          ? null
-                          : () => _startAutomation(),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF25D366),
-                        foregroundColor: Colors.white,
-                      ),
-                      icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 17),
-                      label: const Text('Send All Reports'),
-                    )
-                  : null,
             ),
           ),
+          if (supportsAttendanceArchive)
+            SliverToBoxAdapter(child: _buildArchiveCard()),
           if (batches.isEmpty)
             const SliverFillRemaining(
               child: Center(child: Text('No batches found.')),
@@ -273,7 +260,6 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
     final absent = (batch['absent_count'] as num?)?.toInt() ?? 0;
 
     final unmarked = total - present - absent;
-    final batchId = batch['id'].toString();
     final batchName = batch['name']?.toString() ?? 'Batch';
 
     return Card(
@@ -383,30 +369,84 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
                           ),
                   ),
                 ),
-                if (isWindowsPlatform) ...[
-                  const SizedBox(height: 10),
-                  const Divider(height: 1),
-                  const SizedBox(height: 10),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: OutlinedButton.icon(
-                      onPressed: _startingAutomation
-                          ? null
-                          : () => _startAutomation(
-                              batchId: batchId,
-                              batchName: batchName,
-                            ),
-                      icon: const FaIcon(FontAwesomeIcons.whatsapp, size: 16),
-                      label: const Text('Send WhatsApp Report'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF188A45),
-                      ),
-                    ),
-                  ),
-                ],
               ],
             );
           },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildArchiveCard() {
+    final label = DateFormat('MMMM yyyy').format(_previousMonth);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+      child: Card(
+        color: AppTheme.fgNavyBlue.withValues(alpha: 0.04),
+        child: Padding(
+          padding: const EdgeInsets.all(15),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final content = Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '$label Attendance Archive',
+                    style: const TextStyle(
+                      color: AppTheme.fgNavyBlue,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Generate one printable PDF containing every active class before clearing previous-month attendance.',
+                    style: TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 12.5,
+                    ),
+                  ),
+                ],
+              );
+              final button = ElevatedButton.icon(
+                onPressed: _generatingArchive
+                    ? null
+                    : _generatePreviousMonthArchive,
+                icon: _generatingArchive
+                    ? const SizedBox(
+                        width: 17,
+                        height: 17,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : const Icon(Icons.picture_as_pdf_outlined),
+                label: Text(
+                  _generatingArchive ? 'Generating…' : 'Generate Combined PDF',
+                ),
+              );
+              if (constraints.maxWidth < 680) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [content, const SizedBox(height: 12), button],
+                );
+              }
+              return Row(
+                children: [
+                  const Icon(
+                    Icons.archive_outlined,
+                    color: AppTheme.fgNavyBlue,
+                    size: 32,
+                  ),
+                  const SizedBox(width: 13),
+                  Expanded(child: content),
+                  const SizedBox(width: 14),
+                  button,
+                ],
+              );
+            },
+          ),
         ),
       ),
     );

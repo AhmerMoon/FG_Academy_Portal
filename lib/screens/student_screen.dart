@@ -4,6 +4,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../app_theme.dart';
 import '../models/fee_models.dart';
+import '../screens/attendance_report_preview_screen.dart';
+import '../services/attendance_report_service.dart';
+import '../utils/attendance_report_generator.dart';
 import '../utils/error_state_view.dart';
 import '../utils/list_sorting.dart';
 import '../widgets/academy_background.dart';
@@ -36,6 +39,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
   bool isLoading = true;
   bool isSaving = false;
   bool _isAddingStudent = false;
+  bool _isGeneratingReport = false;
 
   String? errorMessage;
   int? _classLevel;
@@ -399,12 +403,18 @@ class _StudentsScreenState extends State<StudentsScreen> {
                   _ConfirmationRow(label: 'Present', value: '$presentCount'),
                   _ConfirmationRow(label: 'Absent', value: '$absentCount'),
                   _ConfirmationRow(
+                    label: 'Unmarked',
+                    value: '${unmarkedCount < 0 ? 0 : unmarkedCount}',
+                  ),
+                  _ConfirmationRow(
                     label: 'Changed',
                     value: '${modifiedStudents.length}',
                   ),
                   const SizedBox(height: 10),
-                  const Text(
-                    'Please verify the class count before saving.',
+                  Text(
+                    unmarkedCount == 0
+                        ? 'Attendance is complete. The monthly report will open automatically after saving.'
+                        : 'Marked attendance will be saved. Complete the remaining students later to generate the monthly report.',
                     style: TextStyle(
                       color: AppTheme.textSecondary,
                       fontSize: 13,
@@ -437,19 +447,11 @@ class _StudentsScreenState extends State<StudentsScreen> {
       return;
     }
 
-    if (unmarkedCount > 0) {
-      _showMessage(
-        '$unmarkedCount student(s) are still unmarked. '
-        'Mark everyone Present or Absent before submitting.',
-        error: true,
-      );
-      return;
-    }
-
     final confirmed = await _confirmSubmit();
 
     if (!confirmed || !mounted) return;
 
+    final shouldOpenReport = unmarkedCount == 0;
     final activeIds = students
         .map((student) => student['id'].toString())
         .toSet();
@@ -501,7 +503,14 @@ class _StudentsScreenState extends State<StudentsScreen> {
         isSaving = false;
       });
 
-      _showMessage('Attendance saved successfully.');
+      if (shouldOpenReport) {
+        _showMessage('Attendance saved. Generating monthly report…');
+        await _openMonthlyReport();
+      } else {
+        _showMessage(
+          'Attendance saved. $unmarkedCount student(s) are still unmarked.',
+        );
+      }
     } catch (e) {
       debugPrint('Attendance save error: $e');
 
@@ -517,6 +526,47 @@ class _StudentsScreenState extends State<StudentsScreen> {
       );
     }
   }
+
+  Future<void> _openMonthlyReport() async {
+    if (_isGeneratingReport || students.isEmpty) return;
+    setState(() => _isGeneratingReport = true);
+    try {
+      final month = DateTime.parse(todayDate);
+      final data = await AttendanceReportService().loadBatchMonth(
+        batchId: widget.batchId,
+        batchName: widget.batchName,
+        month: month,
+      );
+      final bytes = await AttendanceReportGenerator.generatePng(data);
+      if (!mounted) return;
+      final monthKey = DateFormat('MMM_yyyy').format(month);
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => AttendanceReportPreviewScreen(
+            pngBytes: bytes,
+            title: '${widget.batchName} Attendance',
+            fileName:
+                '${_safeFileName(widget.batchName)}_Attendance_$monthKey.png',
+          ),
+        ),
+      );
+    } catch (error) {
+      debugPrint('Attendance report error: $error');
+      if (mounted) {
+        _showMessage(
+          'Attendance was saved, but the monthly report could not be generated.',
+          error: true,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isGeneratingReport = false);
+    }
+  }
+
+  String _safeFileName(String value) => value
+      .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
+      .trim()
+      .replaceAll(RegExp(r'\s+'), '_');
 
   Future<bool> _confirmDiscardChanges() async {
     return await showDialog<bool>(
@@ -604,6 +654,26 @@ class _StudentsScreenState extends State<StudentsScreen> {
             overflow: TextOverflow.ellipsis,
           ),
           actions: [
+            IconButton(
+              tooltip: 'Monthly Attendance Report',
+              onPressed:
+                  isSaving ||
+                      _isAddingStudent ||
+                      _isGeneratingReport ||
+                      students.isEmpty
+                  ? null
+                  : _openMonthlyReport,
+              icon: _isGeneratingReport
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : const Icon(Icons.image_outlined),
+            ),
             IconButton(
               tooltip: 'Add New Student',
               onPressed: isSaving || _isAddingStudent
