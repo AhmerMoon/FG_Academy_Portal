@@ -10,6 +10,7 @@ import '../../utils/student_group_helper.dart';
 import '../../widgets/academy_background.dart';
 import '../../widgets/add_student_dialog.dart';
 import '../../widgets/student_subject_selector.dart';
+import '../../widgets/student_profile_link.dart';
 import 'archive_students_view.dart';
 
 // ============================================================
@@ -278,6 +279,7 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
   final SupabaseClient supabase = Supabase.instance.client;
 
   List<dynamic> students = [];
+  Set<String> _longAbsenceStudentIds = {};
   bool isLoading = true;
   String? errorMessage;
 
@@ -303,12 +305,23 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
 
   List<String> get filters {
     if (widget.classLevel == 9 || widget.classLevel == 10) {
-      return const ['All', 'Computer', 'Biology', 'Single Subject'];
+      return const [
+        'All',
+        'New Admissions',
+        'Missing Contact',
+        'Attendance Alert',
+        'Computer',
+        'Biology',
+        'Single Subject',
+      ];
     }
 
     if (widget.classLevel == 11 || widget.classLevel == 12) {
       return const [
         'All',
+        'New Admissions',
+        'Missing Contact',
+        'Attendance Alert',
         'Computer',
         'Biology',
         'Chemistry',
@@ -332,6 +345,12 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
     final subjects = _subjects(student['stream']);
 
     switch (selectedFilter) {
+      case 'New Admissions':
+        return _isNewAdmission(student);
+      case 'Missing Contact':
+        return _isContactMissing(student);
+      case 'Attendance Alert':
+        return _longAbsenceStudentIds.contains(student['id']?.toString());
       case 'Computer':
         return subjects.contains('Comp');
       case 'Biology':
@@ -343,6 +362,59 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
       default:
         return true;
     }
+  }
+
+  bool _isNewAdmission(dynamic student) {
+    final created = DateTime.tryParse(
+      student['created_at']?.toString() ?? '',
+    )?.toLocal();
+    if (created == null) return false;
+
+    final now = DateTime.now();
+    final createdDay = DateTime(created.year, created.month, created.day);
+    final today = DateTime(now.year, now.month, now.day);
+    final ageInDays = today.difference(createdDay).inDays;
+    return ageInDays >= 0 && ageInDays < 7;
+  }
+
+  bool _isContactMissing(dynamic student) =>
+      (student['contact_number']?.toString().trim() ?? '').isEmpty;
+
+  List<Widget> _trackingBadges(dynamic student) {
+    final badges = <Widget>[];
+
+    if (_isNewAdmission(student)) {
+      badges.add(
+        const _StudentTrackingBadge(
+          label: 'NEW',
+          icon: Icons.fiber_new_rounded,
+          color: AppTheme.info,
+          tooltip: 'New admission: joined within the last 7 days',
+        ),
+      );
+    }
+    if (_isContactMissing(student)) {
+      badges.add(
+        const _StudentTrackingBadge(
+          label: 'NO CONTACT',
+          icon: Icons.phone_disabled_outlined,
+          color: AppTheme.warning,
+          tooltip: 'Parent or guardian contact number is missing',
+        ),
+      );
+    }
+    if (_longAbsenceStudentIds.contains(student['id']?.toString())) {
+      badges.add(
+        const _StudentTrackingBadge(
+          label: '4+ ABSENT',
+          icon: Icons.warning_amber_rounded,
+          color: AppTheme.danger,
+          tooltip: 'Latest recorded attendance has 4 or more absences in a row',
+        ),
+      );
+    }
+
+    return badges;
   }
 
   List<dynamic> get visibleStudents {
@@ -362,17 +434,65 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
 
   Future<void> fetchStudents() async {
     try {
-      final response = await supabase
-          .from('students')
-          .select('id, name, stream, status, default_fee')
-          .eq('batch_id', widget.batchId)
-          .eq('is_archived', false)
-          .order('name', ascending: true);
+      final historyStart = DateTime.now()
+          .subtract(const Duration(days: 60))
+          .toIso8601String()
+          .split('T')
+          .first;
+      final results = await Future.wait([
+        supabase
+            .from('students')
+            .select(
+              'id, name, stream, status, default_fee, '
+              'created_at, contact_number',
+            )
+            .eq('batch_id', widget.batchId)
+            .eq('is_archived', false)
+            .order('name', ascending: true),
+        supabase
+            .from('attendance')
+            .select('student_id, date, status')
+            .eq('batch_id', widget.batchId)
+            .gte('date', historyStart)
+            .order('date', ascending: false),
+      ]);
+
+      final response = results[0];
+      final activeIds = response
+          .map((student) => student['id']?.toString())
+          .whereType<String>()
+          .toSet();
+      final history = <String, List<Map<String, dynamic>>>{};
+
+      for (final rawRow in results[1]) {
+        final row = Map<String, dynamic>.from(rawRow);
+        final id = row['student_id']?.toString();
+        if (id == null || !activeIds.contains(id)) continue;
+        history.putIfAbsent(id, () => []).add(row);
+      }
+
+      final longAbsences = <String>{};
+      for (final entry in history.entries) {
+        var streak = 0;
+        for (final row in entry.value) {
+          final status = row['status']?.toString();
+          if (status == 'absent') {
+            streak++;
+            if (streak >= 4) {
+              longAbsences.add(entry.key);
+              break;
+            }
+          } else if (status == 'present') {
+            break;
+          }
+        }
+      }
 
       if (!mounted) return;
 
       setState(() {
         students = sortStudents(response);
+        _longAbsenceStudentIds = longAbsences;
         isLoading = false;
         errorMessage = null;
       });
@@ -1030,14 +1150,27 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
                                           children: [
-                                            Text(
-                                              student['name']?.toString() ??
-                                                  'Student',
-                                              style: const TextStyle(
-                                                color: AppTheme.textPrimary,
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.w800,
-                                              ),
+                                            Wrap(
+                                              spacing: 6,
+                                              runSpacing: 5,
+                                              crossAxisAlignment:
+                                                  WrapCrossAlignment.center,
+                                              children: [
+                                                StudentProfileLink(
+                                                  studentId: student['id']
+                                                      .toString(),
+                                                  name:
+                                                      student['name']
+                                                          ?.toString() ??
+                                                      'Student',
+                                                  style: const TextStyle(
+                                                    color: AppTheme.textPrimary,
+                                                    fontSize: 16,
+                                                    fontWeight: FontWeight.w800,
+                                                  ),
+                                                ),
+                                                ..._trackingBadges(student),
+                                              ],
                                             ),
                                             const SizedBox(height: 4),
                                             Text(
@@ -1086,4 +1219,47 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
       ),
     );
   }
+}
+
+class _StudentTrackingBadge extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final String tooltip;
+
+  const _StudentTrackingBadge({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.tooltip,
+  });
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: tooltip,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.28)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.25,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../app_theme.dart';
@@ -33,6 +34,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _loading = true;
 
   bool _changingPassword = false;
+
+  bool _managingData = false;
 
   String? _error;
 
@@ -186,6 +189,154 @@ class _ProfileScreenState extends State<ProfileScreen> {
     widget.onLogout();
   }
 
+  void _showMessage(String message, {bool error = false}) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: error ? AppTheme.danger : AppTheme.success,
+      ),
+    );
+  }
+
+  Future<void> _clearPreviousMonthAttendance() async {
+    final now = DateTime.now();
+    final month = DateTime(now.year, now.month - 1);
+    final label = DateFormat('MMMM yyyy').format(month);
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Clear previous month attendance?'),
+        content: Text(
+          'This will permanently remove all $label attendance records. '
+          'Please take and file the attendance print first.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.delete_sweep_outlined),
+            label: const Text('Clear Attendance'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _managingData = true);
+    try {
+      final deleted = await Supabase.instance.client.rpc(
+        'admin_clear_attendance_month',
+        params: {'p_month': DateFormat('yyyy-MM-dd').format(month)},
+      );
+      if (!mounted) return;
+      _showMessage('$label attendance cleared ($deleted records).');
+    } on PostgrestException catch (error) {
+      if (!mounted) return;
+      _showMessage(error.message, error: true);
+    } catch (error) {
+      debugPrint('Clear attendance error: $error');
+      if (!mounted) return;
+      _showMessage('Attendance could not be cleared.', error: true);
+    } finally {
+      if (mounted) setState(() => _managingData = false);
+    }
+  }
+
+  Future<void> _endSession() async {
+    final controller = TextEditingController();
+    final route = DialogRoute<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final enabled = controller.text.trim().toUpperCase() == 'END SESSION';
+          return AlertDialog(
+            title: const Text('End academic session?'),
+            content: SizedBox(
+              width: 480,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'This permanent action will:\n'
+                    '- clear all attendance, award-list and Test Session data\n'
+                    '- move 9th to 10th, 10th to 11th and 11th to 12th\n'
+                    '- keep only English and Physics for promoted 10th students\n'
+                    '- archive current 12th students from active lists\n\n'
+                    'Set each new 11th student stream later from their profile. '
+                    'Fee/payment history will remain safe. Take required prints first.',
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    onChanged: (_) => setDialogState(() {}),
+                    decoration: const InputDecoration(
+                      labelText: 'Type END SESSION to confirm',
+                      prefixIcon: Icon(Icons.warning_amber_rounded),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.danger,
+                ),
+                onPressed: enabled
+                    ? () => Navigator.pop(dialogContext, true)
+                    : null,
+                icon: const Icon(Icons.restart_alt_rounded),
+                label: const Text('End Session'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    final confirmed = await Navigator.of(context).push(route);
+    await route.completed;
+    controller.dispose();
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _managingData = true);
+    try {
+      final result = await Supabase.instance.client.rpc('admin_end_session');
+      if (!mounted) return;
+      final values = result is Map ? result : const {};
+      final promoted = values['promoted'] ?? 0;
+      final graduated = values['graduated'] ?? 0;
+      _showMessage(
+        'Session completed: $promoted students promoted, '
+        '$graduated 12th students archived.',
+      );
+    } on PostgrestException catch (error) {
+      if (!mounted) return;
+      _showMessage(error.message, error: true);
+    } catch (error) {
+      debugPrint('End session error: $error');
+      if (!mounted) return;
+      _showMessage('Session could not be completed.', error: true);
+    } finally {
+      if (mounted) setState(() => _managingData = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -327,6 +478,58 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                           ),
 
+                          if (user.isAdmin) ...[
+                            const SizedBox(height: 24),
+                            const Divider(),
+                            const SizedBox(height: 14),
+                            const Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                'Data Management',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 5),
+                            const Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                'Print required records before clearing data.',
+                                style: TextStyle(
+                                  color: AppTheme.textSecondary,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            _DataActionTile(
+                              icon: Icons.delete_sweep_outlined,
+                              title: 'Clear Previous Month Attendance',
+                              subtitle:
+                                  'Remove last month attendance after printing it.',
+                              buttonLabel: 'Clear',
+                              onPressed: _managingData
+                                  ? null
+                                  : _clearPreviousMonthAttendance,
+                            ),
+                            const SizedBox(height: 10),
+                            _DataActionTile(
+                              icon: Icons.restart_alt_rounded,
+                              title: 'End Academic Session',
+                              subtitle:
+                                  'Promote classes, archive 12th and clear attendance/awards.',
+                              buttonLabel: 'Session End',
+                              danger: true,
+                              onPressed: _managingData ? null : _endSession,
+                            ),
+                            if (_managingData) ...[
+                              const SizedBox(height: 14),
+                              const LinearProgressIndicator(),
+                            ],
+                          ],
+
                           const SizedBox(height: 9),
 
                           SizedBox(
@@ -352,6 +555,93 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ],
     );
   }
+}
+
+class _DataActionTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String buttonLabel;
+  final bool danger;
+  final VoidCallback? onPressed;
+
+  const _DataActionTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.buttonLabel,
+    required this.onPressed,
+    this.danger = false,
+  });
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: danger
+          ? AppTheme.danger.withValues(alpha: 0.05)
+          : AppTheme.surfaceSoft,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(
+        color: danger
+            ? AppTheme.danger.withValues(alpha: 0.25)
+            : AppTheme.border,
+      ),
+    ),
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 500;
+        final details = Row(
+          children: [
+            Icon(icon, color: danger ? AppTheme.danger : AppTheme.fgNavyBlue),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+        final button = OutlinedButton(
+          onPressed: onPressed,
+          style: danger
+              ? OutlinedButton.styleFrom(foregroundColor: AppTheme.danger)
+              : null,
+          child: Text(buttonLabel),
+        );
+        if (compact) {
+          return Column(
+            children: [
+              details,
+              const SizedBox(height: 10),
+              SizedBox(width: double.infinity, child: button),
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: details),
+            const SizedBox(width: 14),
+            button,
+          ],
+        );
+      },
+    ),
+  );
 }
 
 class _PasswordChangeRequest {

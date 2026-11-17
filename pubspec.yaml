@@ -48,8 +48,13 @@ dependencies:
   intl: ^0.20.3
   share_plus: ^13.3.1
   web: ^1.1.1
+  file_picker: ^13.3.3
+  file_picker_web: ^4.2.1
+  open_filex: ^5.0.0
 
 dev_dependencies:
+  flutter_web_plugins:
+    sdk: flutter
   flutter_test:
     sdk: flutter
   flutter_launcher_icons: ^0.14.4

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../app_theme.dart';
+import '../../widgets/student_profile_link.dart';
 
 class ArchiveStudentsView extends StatefulWidget {
   final VoidCallback? onRestored;
@@ -283,7 +284,10 @@ class _ArchiveStudentsViewState extends State<ArchiveStudentsView> {
                   ),
                   child: ListTile(
                     isThreeLine: true,
-                    title: Text(student['name']?.toString() ?? 'Student'),
+                    title: StudentProfileLink(
+                      studentId: student['id'].toString(),
+                      name: student['name']?.toString() ?? 'Student',
+                    ),
                     subtitle: Text(
                       '${_batch(student)} · '
                       '${_archivedDate(student)}\n'

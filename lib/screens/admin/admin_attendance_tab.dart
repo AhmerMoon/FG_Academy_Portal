@@ -9,6 +9,7 @@ import '../../utils/dashboard_section_header.dart';
 import '../../utils/error_state_view.dart';
 import '../../utils/list_sorting.dart';
 import '../../widgets/academy_background.dart';
+import '../../widgets/student_profile_link.dart';
 
 class AdminAttendanceTab extends StatefulWidget {
   final Function(Widget screen)? onNavigate;
@@ -1106,7 +1107,11 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
                               ),
                               alignment: Alignment.centerLeft,
                               padding: const EdgeInsets.only(left: 20),
-                              child: const Icon(Icons.archive_outlined, color: Colors.white, size: 28),
+                              child: const Icon(
+                                Icons.archive_outlined,
+                                color: Colors.white,
+                                size: 28,
+                              ),
                             ),
                             secondaryBackground: Container(
                               margin: const EdgeInsets.only(bottom: 8),
@@ -1116,10 +1121,16 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
                               ),
                               alignment: Alignment.centerRight,
                               padding: const EdgeInsets.only(right: 20),
-                              child: const Icon(Icons.archive_outlined, color: Colors.white, size: 28),
+                              child: const Icon(
+                                Icons.archive_outlined,
+                                color: Colors.white,
+                                size: 28,
+                              ),
                             ),
                             confirmDismiss: (direction) async {
-                              await _archiveStudent(Map<String, dynamic>.from(student));
+                              await _archiveStudent(
+                                Map<String, dynamic>.from(student),
+                              );
                               return false;
                             },
                             child: Card(
@@ -1166,8 +1177,10 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
                                         children: [
-                                          Text(
-                                            student['name']?.toString() ??
+                                          StudentProfileLink(
+                                            studentId: student['id'].toString(),
+                                            name:
+                                                student['name']?.toString() ??
                                                 'Student',
                                             style: TextStyle(
                                               color: followUp

@@ -53,6 +53,8 @@ Fee_Data/*.xlsm
 .pub-cache/
 .pub/
 /coverage/
+/build/
+/android/.kotlin/
 
 # Symbolication related
 app.*.symbols

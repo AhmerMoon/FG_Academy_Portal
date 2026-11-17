@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -5,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'award_lists_screen.dart';
+import 'printables_screen.dart';
 import '../app_theme.dart';
 import '../services/auth_service.dart';
 import '../utils/automation_launcher.dart';
@@ -18,6 +21,7 @@ import 'admin/students_tab.dart';
 import 'login_screen.dart';
 import 'profile_screen.dart';
 import 'teacher_batches_screen.dart';
+import 'test_session_screen.dart';
 import 'admin/teachers_tab.dart';
 import '../services/award_draft_store.dart';
 
@@ -30,7 +34,8 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends State<DashboardScreen>
+    with WidgetsBindingObserver {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   int _selectedIndex = 0;
@@ -43,6 +48,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   bool _isLoadingStats = true;
   String? _statsError;
+  int _pendingPrintables = 0;
+  int _unmarkedAttendanceBatches = 0;
+  Timer? _printablesTimer;
+  bool _countLoading = false;
 
   bool get _isAdmin => widget.userRole == 'admin';
 
@@ -85,6 +94,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
           icon: Icons.co_present_outlined,
           selectedIcon: Icons.co_present_rounded,
         ),
+        _NavigationItem(
+          index: 8,
+          label: 'Printables',
+          icon: Icons.print_outlined,
+          selectedIcon: Icons.print_rounded,
+        ),
+        _NavigationItem(
+          index: 9,
+          label: 'Test Session',
+          icon: Icons.assignment_outlined,
+          selectedIcon: Icons.assignment_rounded,
+        ),
       ];
     }
 
@@ -101,6 +122,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
         icon: Icons.emoji_events_outlined,
         selectedIcon: Icons.emoji_events_rounded,
       ),
+      _NavigationItem(
+        index: 3,
+        label: 'Printables',
+        icon: Icons.print_outlined,
+        selectedIcon: Icons.print_rounded,
+      ),
+      _NavigationItem(
+        index: 4,
+        label: 'Test Session',
+        icon: Icons.assignment_outlined,
+        selectedIcon: Icons.assignment_rounded,
+      ),
     ];
   }
 
@@ -110,7 +143,77 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     if (_isAdmin) {
       _fetchDashboardStats();
+      WidgetsBinding.instance.addObserver(this);
+      _refreshPrintableCount();
+      _printablesTimer = Timer.periodic(
+        const Duration(seconds: 30),
+        (_) => _refreshPrintableCount(),
+      );
     }
+  }
+
+  @override
+  void dispose() {
+    _printablesTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_isAdmin && state == AppLifecycleState.resumed) {
+      _refreshPrintableCount();
+      _fetchDashboardStats();
+    }
+  }
+
+  Future<void> _refreshPrintableCount() async {
+    if (!_isAdmin || _countLoading) return;
+    _countLoading = true;
+    try {
+      final count = await Supabase.instance.client
+          .from('printable_requests')
+          .count(CountOption.exact)
+          .eq('status', 'pending')
+          .gt('expires_at', DateTime.now().toUtc().toIso8601String());
+      if (mounted && count != _pendingPrintables) {
+        setState(() => _pendingPrintables = count);
+      }
+    } catch (error) {
+      debugPrint('Printable badge refresh failed: $error');
+    } finally {
+      _countLoading = false;
+    }
+  }
+
+  Widget _printableBadge({Widget? child}) => Tooltip(
+    message: '$_pendingPrintables pending printables',
+    child: Badge.count(
+      count: _pendingPrintables,
+      isLabelVisible: _pendingPrintables > 0,
+      backgroundColor: AppTheme.danger,
+      textColor: Colors.white,
+      child: child,
+    ),
+  );
+
+  Widget _attendanceBadge({Widget? child}) => Tooltip(
+    message:
+        '$_unmarkedAttendanceBatches classes have unmarked attendance today',
+    child: Badge.count(
+      count: _unmarkedAttendanceBatches,
+      isLabelVisible: _unmarkedAttendanceBatches > 0,
+      backgroundColor: AppTheme.danger,
+      textColor: Colors.white,
+      child: child,
+    ),
+  );
+
+  Widget _navigationIcon(_NavigationItem item, {bool selected = false}) {
+    final icon = Icon(selected ? item.selectedIcon : item.icon);
+    if (_isAdmin && item.index == 8) return _printableBadge(child: icon);
+    if (_isAdmin && item.index == 3) return _attendanceBadge(child: icon);
+    return icon;
   }
 
   Future<bool> _confirmLeavingAwardDraft() async {
@@ -134,7 +237,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             'Aapke kuch marks abhi Supabase par save '
             'nahi hue.\n\n'
             'Draft is phone par saved hai. '
-            'Wapas aakar Save Marks dabana zaroori hai.\n\n'
+            'Wapas aakar Submit Results dabana zaroori hai.\n\n'
             'Kya aap phir bhi tab change karna chahte hain?',
           ),
           actions: [
@@ -170,9 +273,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _activeSubScreen = null;
     });
 
-    if (_isAdmin && index == 0) {
-      _refreshStats();
+    if (_isAdmin) {
+      if (index == 0) {
+        _refreshStats();
+      } else {
+        _fetchDashboardStats();
+      }
     }
+    if (_isAdmin) _refreshPrintableCount();
   }
 
   void _navigateToSubScreen(Widget screen) {
@@ -215,10 +323,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
             .select('id, batch_id')
             .eq('is_archived', false),
         supabase.from('batches').select('id, name, class_level'),
+        supabase
+            .from('attendance')
+            .select('student_id,batch_id')
+            .eq('date', DateFormat('yyyy-MM-dd').format(DateTime.now())),
       ]);
 
       final students = results[0];
       final batches = results[1];
+      final attendance = results[2];
 
       final strengths = <String, int>{};
 
@@ -229,6 +342,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
           strengths[id] = (strengths[id] ?? 0) + 1;
         }
       }
+
+      final activeIds = students
+          .map((student) => student['id']?.toString())
+          .whereType<String>()
+          .toSet();
+      final markedByBatch = <String, Set<String>>{};
+      for (final row in attendance) {
+        final studentId = row['student_id']?.toString();
+        final batchId = row['batch_id']?.toString();
+        if (studentId == null ||
+            batchId == null ||
+            !activeIds.contains(studentId)) {
+          continue;
+        }
+        markedByBatch.putIfAbsent(batchId, () => {}).add(studentId);
+      }
+      final unmarkedBatchCount = strengths.entries
+          .where(
+            (entry) =>
+                entry.value > 0 &&
+                (markedByBatch[entry.key]?.length ?? 0) < entry.value,
+          )
+          .length;
 
       final mapped = batches.map<Map<String, dynamic>>((batch) {
         final id = batch['id'].toString();
@@ -248,6 +384,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       setState(() {
         _totalStudents = students.length;
         _totalBatches = batches.length;
+        _unmarkedAttendanceBatches = unmarkedBatchCount;
 
         _batchStrengths = sorted
             .map((item) => Map<String, dynamic>.from(item))
@@ -368,6 +505,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
         case 7:
           return _profile();
 
+        case 8:
+          return PrintablesScreen(
+            isAdmin: true,
+            onChanged: _refreshPrintableCount,
+          );
+
+        case 9:
+          return TestSessionScreen(userRole: widget.userRole);
+
         default:
           return _adminDashboard();
       }
@@ -382,6 +528,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       case 2:
         return _profile();
+
+      case 3:
+        return const PrintablesScreen(isAdmin: false);
+
+      case 4:
+        return TestSessionScreen(userRole: widget.userRole);
 
       default:
         return const TeacherBatchesScreen();
@@ -418,7 +570,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return 2;
 
       case 7:
+        return 0;
+
+      case 8:
         return 3;
+
+      case 9:
+        return 4;
 
       case 2:
         return 0;
@@ -443,7 +601,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
         break;
 
       case 3:
-        _openProfile();
+        _selectSection(8);
+        break;
+
+      case 4:
+        _selectSection(9);
         break;
     }
   }
@@ -616,6 +778,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   ),
                                 ),
                               ),
+                              if (_isAdmin &&
+                                  item.index == 8 &&
+                                  _pendingPrintables > 0)
+                                _printableBadge(),
+                              if (_isAdmin &&
+                                  item.index == 3 &&
+                                  _unmarkedAttendanceBatches > 0)
+                                _attendanceBadge(),
                             ],
                           ),
                         ),
@@ -764,8 +934,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       },
       destinations: _items.map((item) {
         return NavigationRailDestination(
-          icon: Icon(item.icon),
-          selectedIcon: Icon(item.selectedIcon),
+          icon: _navigationIcon(item),
+          selectedIcon: _navigationIcon(item, selected: true),
           label: Text(
             item.label,
             style: const TextStyle(
@@ -857,15 +1027,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             : FontWeight.w600,
                       ),
                     ),
-                    trailing: item.label == 'Award Lists'
-                        ? const Text(
-                            'SOON',
-                            style: TextStyle(
-                              color: AppTheme.fgGold,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          )
+                    trailing:
+                        _isAdmin && item.index == 8 && _pendingPrintables > 0
+                        ? _printableBadge()
+                        : _isAdmin &&
+                              item.index == 3 &&
+                              _unmarkedAttendanceBatches > 0
+                        ? _attendanceBadge()
                         : null,
                     onTap: () {
                       Navigator.of(context).pop();
@@ -898,9 +1066,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _mobileNavigation() {
     if (!_isAdmin) {
+      const order = [0, 1, 3, 4, 2];
       return NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: _selectSection,
+        selectedIndex: order.indexOf(_selectedIndex),
+        onDestinationSelected: (index) => _selectSection(order[index]),
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.folder_open_outlined),
@@ -911,6 +1080,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
             icon: Icon(Icons.emoji_events_outlined),
             selectedIcon: Icon(Icons.emoji_events_rounded),
             label: 'Awards',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.print_outlined),
+            selectedIcon: Icon(Icons.print_rounded),
+            label: 'Printables',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.assignment_outlined),
+            selectedIcon: Icon(Icons.assignment_rounded),
+            label: 'Tests',
           ),
           NavigationDestination(
             icon: Icon(Icons.person_outline_rounded),
@@ -924,26 +1103,33 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return NavigationBar(
       selectedIndex: _mobileAdminIndex,
       onDestinationSelected: _selectMobileAdmin,
-      destinations: const [
-        NavigationDestination(
+      destinations: [
+        const NavigationDestination(
           icon: Icon(Icons.dashboard_outlined),
           selectedIcon: Icon(Icons.dashboard_rounded),
           label: 'Home',
         ),
-        NavigationDestination(
+        const NavigationDestination(
           icon: Icon(Icons.people_outline_rounded),
           selectedIcon: Icon(Icons.people_rounded),
           label: 'Students',
         ),
         NavigationDestination(
-          icon: Icon(Icons.fact_check_outlined),
-          selectedIcon: Icon(Icons.fact_check_rounded),
+          icon: _attendanceBadge(child: const Icon(Icons.fact_check_outlined)),
+          selectedIcon: _attendanceBadge(
+            child: const Icon(Icons.fact_check_rounded),
+          ),
           label: 'Attendance',
         ),
         NavigationDestination(
-          icon: Icon(Icons.person_outline_rounded),
-          selectedIcon: Icon(Icons.person_rounded),
-          label: 'Profile',
+          icon: _printableBadge(child: const Icon(Icons.print_outlined)),
+          selectedIcon: _printableBadge(child: const Icon(Icons.print_rounded)),
+          label: 'Printables',
+        ),
+        const NavigationDestination(
+          icon: Icon(Icons.assignment_outlined),
+          selectedIcon: Icon(Icons.assignment_rounded),
+          label: 'Tests',
         ),
       ],
     );

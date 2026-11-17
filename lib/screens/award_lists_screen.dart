@@ -52,6 +52,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
   bool _loadingTests = false;
   bool _loadingStudents = false;
   bool _saving = false;
+  bool _deletingTest = false;
   bool _creatingTest = false;
   bool _addingStudent = false;
   String? _error;
@@ -92,6 +93,13 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
   double get _selectedMaxMarks =>
       (_selectedTest?['max_marks'] as num?)?.toDouble() ?? 0;
+
+  bool get _canDeleteSelectedTest {
+    final test = _selectedTest;
+    final user = _user;
+    if (test == null || user == null) return false;
+    return user.isAdmin || test['created_by']?.toString() == user.userId;
+  }
 
   @override
   void initState() {
@@ -936,7 +944,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
   }
 
   Future<void> _saveMarks() async {
-    if (_saving || _pendingMarkDrafts.isEmpty) return;
+    if (_saving || _students.isEmpty) return;
 
     final test = _selectedTest;
     if (test == null) return;
@@ -945,12 +953,9 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
 
     final payload = <Map<String, dynamic>>[];
     final submitted = <String>[];
+    var automaticAbsences = 0;
 
     for (final student in _students) {
-      if (!_pendingMarkDrafts.containsKey(student.id)) {
-        continue;
-      }
-
       final value =
           (_markControllers[student.id]?.text ??
                   _pendingMarkDrafts[student.id] ??
@@ -959,12 +964,14 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
               .toUpperCase();
 
       if (value.isEmpty) {
-        _showMessage(
-          '${student.name}: enter marks or A. '
-          'Use Clear Saved Mark to remove an old mark.',
-          error: true,
-        );
-        return;
+        payload.add({
+          'student_id': student.id,
+          'marks': null,
+          'is_absent': true,
+        });
+        submitted.add(student.id);
+        automaticAbsences++;
+        continue;
       }
 
       if (value == 'A') {
@@ -1001,6 +1008,31 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     if (payload.isEmpty) {
       _showMessage('No marks to save.');
       return;
+    }
+
+    if (automaticAbsences > 0) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Submit Award List?'),
+          content: Text(
+            '$automaticAbsences blank student result(s) will automatically '
+            'be marked Absent. Entered numeric marks, including 0, will '
+            'remain numeric results.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Review'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Submit Results'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
     }
 
     FocusScope.of(context).unfocus();
@@ -1137,6 +1169,62 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
       _showMessage('Saved mark cleared.');
     } catch (e) {
       _showMessage(_friendlyError(e), error: true);
+    }
+  }
+
+  Future<void> _deleteSelectedTest() async {
+    final test = _selectedTest;
+    final user = _user;
+    if (test == null || user == null || !_canDeleteSelectedTest) return;
+
+    final testNo = (test['test_no'] as num?)?.toInt() ?? 0;
+    final savedResults = _students
+        .where((student) => student.savedMarks != null || student.isAbsent)
+        .length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Delete T$testNo award list?'),
+        content: Text(
+          'This will permanently delete this test and all $savedResults saved '
+          'result(s). Use this for an empty or incorrectly created award list.\n\n'
+          'This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.delete_forever_outlined),
+            label: const Text('Delete Test'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _deletingTest = true);
+    try {
+      await _supabase.rpc(
+        'delete_award_test',
+        params: {'p_test_id': test['id'].toString()},
+      );
+      await AwardDraftStore.save(
+        userId: user.userId,
+        testId: test['id'].toString(),
+        marks: const {},
+      );
+      _selectedTestId = null;
+      await _loadTests();
+      if (mounted) _showMessage('T$testNo award list deleted.');
+    } catch (error) {
+      if (mounted) _showMessage(_friendlyError(error), error: true);
+    } finally {
+      if (mounted) setState(() => _deletingTest = false);
     }
   }
 
@@ -1541,6 +1629,28 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                         ),
                         label: const Text('Preview & Share'),
                       ),
+                      if (_canDeleteSelectedTest)
+                        OutlinedButton.icon(
+                          onPressed: _saving || _deletingTest
+                              ? null
+                              : _deleteSelectedTest,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppTheme.danger,
+                          ),
+                          icon: _deletingTest
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.delete_outline_rounded,
+                                  size: 18,
+                                ),
+                          label: const Text('Delete Test'),
+                        ),
                     ],
                   );
 
@@ -1769,7 +1879,8 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
             Expanded(
               child: Text(
                 '${_students.length} students'
-                '${_pendingMarkDrafts.isEmpty ? '' : ' • Unsaved changes'}',
+                '${_pendingMarkDrafts.isEmpty ? '' : ' • Unsaved changes'}'
+                ' • blanks become Absent',
                 style: const TextStyle(
                   color: AppTheme.textSecondary,
                   fontSize: 12,
@@ -1778,9 +1889,7 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
               ),
             ),
             ElevatedButton.icon(
-              onPressed: _saving || _pendingMarkDrafts.isEmpty
-                  ? null
-                  : _saveMarks,
+              onPressed: _saving || _students.isEmpty ? null : _saveMarks,
               icon: _saving
                   ? const SizedBox(
                       width: 17,
@@ -1790,8 +1899,8 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
                         color: Colors.white,
                       ),
                     )
-                  : const Icon(Icons.save_outlined),
-              label: Text(_saving ? 'Saving...' : 'Save Marks'),
+                  : const Icon(Icons.task_alt_outlined),
+              label: Text(_saving ? 'Submitting...' : 'Submit Results'),
             ),
           ],
         ),

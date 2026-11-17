@@ -8,6 +8,7 @@ import '../utils/error_state_view.dart';
 import '../utils/list_sorting.dart';
 import '../widgets/academy_background.dart';
 import '../widgets/add_student_dialog.dart';
+import '../widgets/student_profile_link.dart';
 
 class StudentsScreen extends StatefulWidget {
   final String batchId;
@@ -848,8 +849,12 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                             crossAxisAlignment:
                                                 CrossAxisAlignment.start,
                                             children: [
-                                              Text(
-                                                student['name']?.toString() ??
+                                              StudentProfileLink(
+                                                studentId: student['id']
+                                                    .toString(),
+                                                name:
+                                                    student['name']
+                                                        ?.toString() ??
                                                     'Student',
                                                 style: TextStyle(
                                                   fontSize: 16,

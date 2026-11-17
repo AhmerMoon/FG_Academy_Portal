@@ -6,6 +6,7 @@ import '../app_theme.dart';
 import '../utils/error_state_view.dart';
 import '../utils/list_sorting.dart';
 import '../widgets/academy_background.dart';
+import '../widgets/student_profile_link.dart';
 
 class TeacherAttendanceHistoryScreen extends StatefulWidget {
   final String batchId;
@@ -355,8 +356,9 @@ class _TeacherAttendanceHistoryScreenState
                                       : Icons.help_outline_rounded,
                                 ),
                               ),
-                              title: Text(
-                                name,
+                              title: StudentProfileLink(
+                                studentId: id,
+                                name: name,
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w700,
                                 ),
