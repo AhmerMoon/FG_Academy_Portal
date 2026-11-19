@@ -11,6 +11,7 @@ import '../models/fee_models.dart';
 import '../models/portal_user.dart';
 import '../services/auth_service.dart';
 import '../services/award_draft_store.dart';
+import '../services/student_creation_service.dart';
 import '../utils/dashboard_section_header.dart';
 import '../utils/error_state_view.dart';
 import '../utils/list_sorting.dart';
@@ -604,13 +605,11 @@ class _AwardListsScreenState extends State<AwardListsScreen> {
     try {
       await _persistMarkDrafts();
 
-      await _supabase.rpc(
-        'portal_add_student_simple',
-        params: {
-          'p_name': request.name,
-          'p_batch_id': batchId,
-          'p_group_code': request.groupCode,
-        },
+      await StudentCreationService(_supabase).create(
+        name: request.name,
+        batchId: batchId,
+        groupCode: request.groupCode,
+        contact: request.contact,
       );
 
       if (!mounted) return;

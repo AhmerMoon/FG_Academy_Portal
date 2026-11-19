@@ -16,3 +16,9 @@ Future<void> shareAttendancePng(
     ),
   );
 }
+
+Future<void> shareAttendanceLink(String link, String title) async {
+  await SharePlus.instance.share(
+    ShareParams(text: '$title has been updated.\n$link', subject: title),
+  );
+}

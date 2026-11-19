@@ -20,6 +20,7 @@ class _ArchiveStudentsViewState extends State<ArchiveStudentsView> {
   Map<String, String> _batchNames = {};
 
   bool _loading = true;
+  bool _deleting = false;
   String? _error;
   String _query = '';
 
@@ -234,6 +235,67 @@ class _ArchiveStudentsViewState extends State<ArchiveStudentsView> {
     }
   }
 
+  Future<void> _deleteArchived({Map<String, dynamic>? student}) async {
+    if (_deleting) return;
+    final deletingAll = student == null;
+    final title = deletingAll
+        ? 'Permanently delete all archived students?'
+        : 'Permanently delete ${student['name']}?';
+    final message = deletingAll
+        ? 'This will permanently remove all ${_rows.length} archived students and their linked records. This cannot be undone.'
+        : 'This will permanently remove this student and all linked records. This cannot be undone.';
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.delete_forever_outlined),
+            label: Text(deletingAll ? 'Delete All' : 'Delete Permanently'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _deleting = true);
+    try {
+      final deleted = await _db.rpc(
+        'admin_delete_archived_students',
+        params: {'p_student_id': student?['id']},
+      );
+      await _load();
+      widget.onRestored?.call();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$deleted archived student(s) permanently deleted.'),
+            backgroundColor: AppTheme.success,
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Permanent delete failed: $error'),
+            backgroundColor: AppTheme.danger,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -258,14 +320,29 @@ class _ArchiveStudentsViewState extends State<ArchiveStudentsView> {
       children: [
         Padding(
           padding: const EdgeInsets.all(12),
-          child: TextField(
-            decoration: const InputDecoration(
-              prefixIcon: Icon(Icons.search),
-              labelText: 'Search archived students',
-            ),
-            onChanged: (value) {
-              setState(() => _query = value);
-            },
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.search),
+                    labelText: 'Search archived students',
+                  ),
+                  onChanged: (value) => setState(() => _query = value),
+                ),
+              ),
+              const SizedBox(width: 10),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.danger,
+                ),
+                onPressed: _rows.isEmpty || _deleting
+                    ? null
+                    : () => _deleteArchived(),
+                icon: const Icon(Icons.delete_sweep_outlined),
+                label: const Text('Delete All'),
+              ),
+            ],
           ),
         ),
         Expanded(
@@ -294,10 +371,28 @@ class _ArchiveStudentsViewState extends State<ArchiveStudentsView> {
                       '${student['archive_reason'] ?? 'Left academy'}',
                     ),
                     onTap: () => _details(student),
-                    trailing: IconButton(
-                      tooltip: 'Restore student',
-                      icon: const Icon(Icons.restore, color: AppTheme.success),
-                      onPressed: () => _restore(student),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          tooltip: 'Restore student',
+                          icon: const Icon(
+                            Icons.restore,
+                            color: AppTheme.success,
+                          ),
+                          onPressed: _deleting ? null : () => _restore(student),
+                        ),
+                        IconButton(
+                          tooltip: 'Delete permanently',
+                          icon: const Icon(
+                            Icons.delete_forever_outlined,
+                            color: AppTheme.danger,
+                          ),
+                          onPressed: _deleting
+                              ? null
+                              : () => _deleteArchived(student: student),
+                        ),
+                      ],
                     ),
                   ),
                 );

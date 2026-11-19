@@ -3,6 +3,7 @@
   "outputDirectory": "build/web",
   "installCommand": "git clone https://github.com/flutter/flutter.git --depth 1 -b stable flutter",
   "framework": null,
+  "git": { "deploymentEnabled": false },
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ]

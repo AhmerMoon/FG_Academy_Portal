@@ -1,6 +1,5 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -12,12 +11,14 @@ class AttendanceReportPreviewScreen extends StatefulWidget {
   final Uint8List pngBytes;
   final String title;
   final String fileName;
+  final String? permanentLink;
 
   const AttendanceReportPreviewScreen({
     super.key,
     required this.pngBytes,
     required this.title,
     required this.fileName,
+    this.permanentLink,
   });
 
   @override
@@ -62,6 +63,26 @@ class _AttendanceReportPreviewScreenState
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _shareLink() async {
+    final link = widget.permanentLink;
+    if (link == null) return;
+    setState(() => _busy = true);
+    try {
+      await shareAttendanceLink(link, widget.title);
+    } catch (error) {
+      if (mounted) _message('Could not share attendance link.', error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _copyLink() async {
+    final link = widget.permanentLink;
+    if (link == null) return;
+    await Clipboard.setData(ClipboardData(text: link));
+    if (mounted) _message('Attendance link copied.');
   }
 
   void _message(String value, {bool error = false}) {
@@ -127,6 +148,33 @@ class _AttendanceReportPreviewScreenState
             ),
           ),
         ),
+        if (widget.permanentLink != null)
+          SafeArea(
+            top: false,
+            child: Container(
+              color: Colors.white,
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _busy ? null : _copyLink,
+                      icon: const Icon(Icons.link_rounded),
+                      label: const Text('Copy Permanent Link'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _busy ? null : _shareLink,
+                      icon: const Icon(Icons.send_outlined),
+                      label: const Text('Share Link'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
       ],
     ),
   );

@@ -3,6 +3,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../app_theme.dart';
 import '../../models/fee_models.dart';
+import '../../services/student_creation_service.dart';
+import '../../services/student_profile_service.dart';
 import '../../utils/dashboard_section_header.dart';
 import '../../utils/error_state_view.dart';
 import '../../utils/list_sorting.dart';
@@ -534,13 +536,11 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
     setState(() => _addingStudent = true);
 
     try {
-      await supabase.rpc(
-        'portal_add_student_simple',
-        params: {
-          'p_name': request.name,
-          'p_batch_id': request.batch.id,
-          'p_group_code': request.groupCode,
-        },
+      await StudentCreationService(supabase).create(
+        name: request.name,
+        batchId: request.batch.id,
+        groupCode: request.groupCode,
+        contact: request.contact,
       );
 
       if (!mounted) return;
@@ -593,6 +593,9 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
     final controller = TextEditingController(
       text: student['name']?.toString() ?? '',
     );
+    final contactController = TextEditingController(
+      text: student['contact_number']?.toString() ?? '',
+    );
 
     var selectedSubjects = normalizeStudentSubjects(
       widget.classLevel,
@@ -626,6 +629,15 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                         decoration: const InputDecoration(
                           labelText: 'Student Name',
                           prefixIcon: Icon(Icons.person_outline_rounded),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: contactController,
+                        keyboardType: TextInputType.phone,
+                        decoration: const InputDecoration(
+                          labelText: 'Parent Contact (optional)',
+                          prefixIcon: Icon(Icons.phone_outlined),
                         ),
                       ),
                       const SizedBox(height: 14),
@@ -697,6 +709,18 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                       return;
                     }
 
+                    final contact = contactController.text.trim().replaceAll(
+                      RegExp(r'[\s()\-]'),
+                      '',
+                    );
+                    if (contact.isNotEmpty &&
+                        !RegExp(r'^\+?[0-9]{7,15}$').hasMatch(contact)) {
+                      setDialogState(() {
+                        dialogError = 'Please enter a valid contact number.';
+                      });
+                      return;
+                    }
+
                     final validation = studentSubjectSelectionError(
                       widget.classLevel,
                       selectedSubjects,
@@ -722,21 +746,25 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
     );
 
     final name = controller.text.trim();
+    final contact = contactController.text.trim().replaceAll(
+      RegExp(r'[\s()\-]'),
+      '',
+    );
     controller.dispose();
+    contactController.dispose();
 
     if (confirmed != true) return;
 
     setState(() => isLoading = true);
 
     try {
-      await supabase.rpc(
-        'admin_update_student_details',
-        params: {
-          'p_student_id': student['id'].toString(),
-          'p_name': name,
-          'p_status': status,
-          'p_stream': selectedSubjects,
-        },
+      await StudentProfileService(client: supabase).saveProfile(
+        studentId: student['id'].toString(),
+        name: name,
+        batchId: widget.batchId,
+        status: status,
+        subjects: selectedSubjects,
+        contact: contact.isEmpty ? null : contact,
       );
 
       await fetchStudents();

@@ -6,12 +6,15 @@ import '../app_theme.dart';
 import '../models/fee_models.dart';
 import '../screens/attendance_report_preview_screen.dart';
 import '../services/attendance_report_service.dart';
+import '../services/attendance_report_publisher.dart';
+import '../services/student_creation_service.dart';
 import '../utils/attendance_report_generator.dart';
 import '../utils/error_state_view.dart';
 import '../utils/list_sorting.dart';
 import '../widgets/academy_background.dart';
 import '../widgets/add_student_dialog.dart';
 import '../widgets/student_profile_link.dart';
+import '../widgets/student_tracking_badges.dart';
 
 class StudentsScreen extends StatefulWidget {
   final String batchId;
@@ -148,7 +151,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
       final results = await Future.wait<dynamic>([
         supabase
             .from('students')
-            .select('id, name, stream')
+            .select('id, name, stream, created_at, contact_number')
             .eq('batch_id', widget.batchId)
             .eq('is_archived', false)
             .order('name', ascending: true),
@@ -341,13 +344,11 @@ class _StudentsScreenState extends State<StudentsScreen> {
     });
 
     try {
-      await supabase.rpc(
-        'portal_add_student_simple',
-        params: {
-          'p_name': request.name,
-          'p_batch_id': widget.batchId,
-          'p_group_code': request.groupCode,
-        },
+      await StudentCreationService(supabase).create(
+        name: request.name,
+        batchId: widget.batchId,
+        groupCode: request.groupCode,
+        contact: request.contact,
       );
 
       if (!mounted) return;
@@ -539,6 +540,15 @@ class _StudentsScreenState extends State<StudentsScreen> {
       );
       final bytes = await AttendanceReportGenerator.generatePng(data);
       if (!mounted) return;
+      String? permanentLink;
+      try {
+        permanentLink = await AttendanceReportPublisher(
+          supabase,
+        ).publish(batchId: widget.batchId, pngBytes: bytes);
+      } catch (error) {
+        debugPrint('Attendance link publish skipped: $error');
+      }
+      if (!mounted) return;
       final monthKey = DateFormat('MMM_yyyy').format(month);
       await Navigator.of(context).push(
         MaterialPageRoute(
@@ -547,6 +557,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
             title: '${widget.batchName} Attendance',
             fileName:
                 '${_safeFileName(widget.batchName)}_Attendance_$monthKey.png',
+            permanentLink: permanentLink,
           ),
         ),
       );
@@ -933,6 +944,10 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                                       ? AppTheme.danger
                                                       : AppTheme.textPrimary,
                                                 ),
+                                              ),
+                                              StudentTrackingBadges(
+                                                student: student,
+                                                longAbsent: followUp,
                                               ),
                                               if (followUp) ...[
                                                 const SizedBox(height: 3),

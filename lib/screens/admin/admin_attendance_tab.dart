@@ -6,14 +6,19 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../app_theme.dart';
 import '../../models/attendance_report_models.dart';
+import '../../models/fee_models.dart';
 import '../../services/attendance_report_service.dart';
+import '../../services/attendance_report_publisher.dart';
+import '../../services/student_creation_service.dart';
 import '../../utils/attendance_archive_actions.dart';
 import '../../utils/attendance_report_generator.dart';
 import '../../utils/dashboard_section_header.dart';
 import '../../utils/error_state_view.dart';
 import '../../utils/list_sorting.dart';
 import '../../widgets/academy_background.dart';
+import '../../widgets/add_student_dialog.dart';
 import '../../widgets/student_profile_link.dart';
+import '../../widgets/student_tracking_badges.dart';
 import '../attendance_report_preview_screen.dart';
 
 class AdminAttendanceTab extends StatefulWidget {
@@ -125,12 +130,14 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
   void _openAttendance(Map<String, dynamic> batch) {
     final id = batch['id'].toString();
     final name = batch['name']?.toString() ?? 'Batch';
+    final classLevel = (batch['class_level'] as num?)?.toInt() ?? 0;
 
     if (widget.onNavigate != null && widget.onBack != null) {
       widget.onNavigate!(
         EditAttendanceScreen(
           batchId: id,
           batchName: name,
+          classLevel: classLevel,
           initialDate: _today,
           onBack: () {
             widget.onBack!();
@@ -147,6 +154,7 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
             builder: (_) => EditAttendanceScreen(
               batchId: id,
               batchName: name,
+              classLevel: classLevel,
               initialDate: _today,
             ),
           ),
@@ -507,6 +515,7 @@ class EditAttendanceScreen extends StatefulWidget {
   final String batchId;
   final String batchName;
   final String initialDate;
+  final int classLevel;
   final VoidCallback? onBack;
 
   const EditAttendanceScreen({
@@ -514,6 +523,7 @@ class EditAttendanceScreen extends StatefulWidget {
     required this.batchId,
     required this.batchName,
     required this.initialDate,
+    required this.classLevel,
     this.onBack,
   });
 
@@ -532,6 +542,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
   bool isLoading = true;
   bool isSaving = false;
   bool _isGeneratingReport = false;
+  bool _isAddingStudent = false;
   String? errorMessage;
 
   late DateTime currentDate;
@@ -599,7 +610,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
       final results = await Future.wait([
         supabase
             .from('students')
-            .select('id, name')
+            .select('id, name, created_at, contact_number')
             .eq('batch_id', widget.batchId)
             .eq('is_archived', false)
             .order('name', ascending: true),
@@ -723,6 +734,43 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
     });
   }
 
+  Future<void> _openAddStudentDialog() async {
+    if (_isAddingStudent || isSaving) return;
+
+    final batch = FeeBatch(
+      id: widget.batchId,
+      name: widget.batchName,
+      classLevel: widget.classLevel,
+    );
+    final request = await showAcademyAddStudentDialog(
+      context: context,
+      batches: [batch],
+      initialBatch: batch,
+      paymentMonth: '',
+      lockBatch: true,
+    );
+    if (!mounted || request == null) return;
+
+    setState(() => _isAddingStudent = true);
+    try {
+      await StudentCreationService(supabase).create(
+        name: request.name,
+        batchId: widget.batchId,
+        groupCode: request.groupCode,
+        contact: request.contact,
+      );
+      await fetchStudentsAndAttendance();
+      if (mounted) {
+        _showMessage('${request.name} added. Today attendance is Present.');
+      }
+    } catch (error) {
+      debugPrint('Admin attendance Add Student error: $error');
+      if (mounted) _showMessage('Could not add student.', error: true);
+    } finally {
+      if (mounted) setState(() => _isAddingStudent = false);
+    }
+  }
+
   Future<void> _saveChanges() async {
     if (modifiedStudents.isEmpty || isSaving) {
       if (modifiedStudents.isEmpty) {
@@ -808,6 +856,15 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
       );
       final bytes = await AttendanceReportGenerator.generatePng(data);
       if (!mounted) return;
+      String? permanentLink;
+      try {
+        permanentLink = await AttendanceReportPublisher(
+          supabase,
+        ).publish(batchId: widget.batchId, pngBytes: bytes);
+      } catch (error) {
+        debugPrint('Admin attendance link publish skipped: $error');
+      }
+      if (!mounted) return;
       final monthKey = DateFormat('MMM_yyyy').format(currentDate);
       await Navigator.of(context).push(
         MaterialPageRoute(
@@ -816,6 +873,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
             title: '${widget.batchName} Attendance',
             fileName:
                 '${_safeFileName(widget.batchName)}_Attendance_$monthKey.png',
+            permanentLink: permanentLink,
           ),
         ),
       );
@@ -1027,6 +1085,22 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
             overflow: TextOverflow.ellipsis,
           ),
           actions: [
+            IconButton(
+              tooltip: 'Add Student',
+              onPressed: isLoading || isSaving || _isAddingStudent
+                  ? null
+                  : _openAddStudentDialog,
+              icon: _isAddingStudent
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : const Icon(Icons.person_add_alt_1_rounded),
+            ),
             IconButton(
               tooltip: 'Monthly Attendance Report',
               onPressed:
@@ -1299,6 +1373,10 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
                                               fontSize: 15.5,
                                               fontWeight: FontWeight.w800,
                                             ),
+                                          ),
+                                          StudentTrackingBadges(
+                                            student: student,
+                                            longAbsent: followUp,
                                           ),
                                           if (followUp) ...[
                                             const SizedBox(height: 3),

@@ -14,6 +14,7 @@ class NewStudentRequest {
 
   // New simple Add Student RPC uses this.
   final String groupCode;
+  final String? contact;
 
   const NewStudentRequest({
     required this.name,
@@ -21,6 +22,7 @@ class NewStudentRequest {
     required this.defaultFee,
     required this.subjects,
     required this.groupCode,
+    required this.contact,
   });
 }
 
@@ -50,6 +52,7 @@ Future<NewStudentRequest?> showAcademyAddStudentDialog({
   }
 
   final nameController = TextEditingController();
+  final contactController = TextEditingController();
 
   // Stream is intentionally not preselected.
   // User must explicitly choose one.
@@ -180,6 +183,23 @@ Future<NewStudentRequest?> showAcademyAddStudentDialog({
                           setDialogState(() {
                             dialogError = null;
                           });
+                        }
+                      },
+                    ),
+
+                    const SizedBox(height: 15),
+
+                    TextField(
+                      controller: contactController,
+                      keyboardType: TextInputType.phone,
+                      decoration: const InputDecoration(
+                        labelText: 'Parent Contact (optional)',
+                        hintText: 'e.g. 03001234567',
+                        prefixIcon: Icon(Icons.phone_outlined),
+                      ),
+                      onChanged: (_) {
+                        if (dialogError != null) {
+                          setDialogState(() => dialogError = null);
                         }
                       },
                     ),
@@ -385,10 +405,25 @@ Future<NewStudentRequest?> showAcademyAddStudentDialog({
 
                   onPressed: () {
                     final name = nameController.text.trim();
+                    final rawContact = contactController.text.trim();
 
                     if (name.isEmpty) {
                       setDialogState(() {
                         dialogError = 'Student name is required.';
+                      });
+                      return;
+                    }
+
+                    final normalizedContact = rawContact.replaceAll(
+                      RegExp(r'[\s()\-]'),
+                      '',
+                    );
+                    if (normalizedContact.isNotEmpty &&
+                        !RegExp(
+                          r'^\+?[0-9]{7,15}$',
+                        ).hasMatch(normalizedContact)) {
+                      setDialogState(() {
+                        dialogError = 'Please enter a valid contact number.';
                       });
                       return;
                     }
@@ -436,6 +471,9 @@ Future<NewStudentRequest?> showAcademyAddStudentDialog({
                         defaultFee: fee,
                         subjects: List<String>.from(subjects),
                         groupCode: selectedPreset.code,
+                        contact: normalizedContact.isEmpty
+                            ? null
+                            : normalizedContact,
                       ),
                     );
                   },
@@ -448,5 +486,6 @@ Future<NewStudentRequest?> showAcademyAddStudentDialog({
     );
   } finally {
     nameController.dispose();
+    contactController.dispose();
   }
 }

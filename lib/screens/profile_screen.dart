@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../app_theme.dart';
@@ -200,17 +199,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _clearPreviousMonthAttendance() async {
-    final now = DateTime.now();
-    final month = DateTime(now.year, now.month - 1);
-    final label = DateFormat('MMMM yyyy').format(month);
-
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Clear previous month attendance?'),
-        content: Text(
-          'This will permanently remove all $label attendance records. '
-          'Please take and file the attendance print first.',
+        title: const Text('Clear all previous attendance?'),
+        content: const Text(
+          'This will permanently remove every attendance record before the current month. Current-month attendance will remain safe. Please download and file the required monthly PDF first.',
         ),
         actions: [
           TextButton(
@@ -232,11 +226,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     setState(() => _managingData = true);
     try {
       final deleted = await Supabase.instance.client.rpc(
-        'admin_clear_attendance_month',
-        params: {'p_month': DateFormat('yyyy-MM-dd').format(month)},
+        'admin_clear_old_attendance',
       );
       if (!mounted) return;
-      _showMessage('$label attendance cleared ($deleted records).');
+      _showMessage('Previous attendance cleared ($deleted records).');
     } on PostgrestException catch (error) {
       if (!mounted) return;
       _showMessage(error.message, error: true);
@@ -506,9 +499,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             const SizedBox(height: 14),
                             _DataActionTile(
                               icon: Icons.delete_sweep_outlined,
-                              title: 'Clear Previous Month Attendance',
+                              title: 'Clear All Previous Attendance',
                               subtitle:
-                                  'Remove last month attendance after printing it.',
+                                  'Remove all attendance before this month after archiving it.',
                               buttonLabel: 'Clear',
                               onPressed: _managingData
                                   ? null
