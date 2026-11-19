@@ -28,6 +28,7 @@ __pycache__/
 Fee_Data/*.xlsx
 Fee_Data/*.xls
 Fee_Data/*.xlsm
+FGEI_Backend/Fee_Register_Generator/output/
 # Android signing secrets
 /android/key.properties
 /android/app/*.jks

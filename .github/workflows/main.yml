@@ -214,6 +214,9 @@ jobs:
           Copy-Item "FGEI_Backend\fee_excel_bridge.py" `
             "$backend\fee_excel_bridge.py" -Force
 
+          Copy-Item "FGEI_Backend\Fee_Register_Generator" `
+            "$backend\Fee_Register_Generator" -Recurse -Force
+
           @"
           Academy Portal - Local Fee Data
 
@@ -297,6 +300,7 @@ jobs:
             - WhatsApp Attendance Automation
             - Individual Batch Reporting
             - Excel Fees Backend
+            - Print-ready PDF Fee Register Generator
             - Empty Fee_Data folder
 
             Local .env files and financial Excel workbooks
