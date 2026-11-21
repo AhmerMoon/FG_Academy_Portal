@@ -13,6 +13,7 @@ import '../../widgets/academy_background.dart';
 import '../../widgets/add_student_dialog.dart';
 import '../../widgets/student_subject_selector.dart';
 import '../../widgets/student_profile_link.dart';
+import '../../widgets/student_stream_badge.dart';
 import 'archive_students_view.dart';
 
 // ============================================================
@@ -1196,6 +1197,10 @@ class _BatchStudentsScreenState extends State<BatchStudentsScreen> {
                                                     fontSize: 16,
                                                     fontWeight: FontWeight.w800,
                                                   ),
+                                                ),
+                                                StudentStreamBadge(
+                                                  classLevel: widget.classLevel,
+                                                  subjects: subjects,
                                                 ),
                                                 ..._trackingBadges(student),
                                               ],

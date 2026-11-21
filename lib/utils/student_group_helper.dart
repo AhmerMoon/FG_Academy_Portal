@@ -229,3 +229,15 @@ String? inferStudentGroupCode(int classLevel, Iterable<String> subjects) {
   // Partial/custom student = no fake stream label.
   return null;
 }
+
+String? studentStreamLabelForSubjects(
+  int classLevel,
+  Iterable<String> subjects,
+) {
+  final normalized = normalizeStudentSubjects(classLevel, subjects);
+  if (normalized.isEmpty) return null;
+
+  final code = inferStudentGroupCode(classLevel, normalized);
+  if (code == null) return 'Custom';
+  return studentGroupLabel(classLevel, code);
+}

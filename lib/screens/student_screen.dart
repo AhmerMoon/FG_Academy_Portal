@@ -773,32 +773,40 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                 ],
                               ),
                               const Divider(height: 22),
-                              Wrap(
-                                alignment: WrapAlignment.center,
-                                spacing: 7,
-                                runSpacing: 7,
+                              Row(
                                 children: [
-                                  _TeacherCountBadge(
-                                    label: 'Total',
-                                    value: students.length,
-                                    color: AppTheme.info,
+                                  Expanded(
+                                    child: _TeacherCountBadge(
+                                      label: 'Total',
+                                      value: students.length,
+                                      color: AppTheme.info,
+                                    ),
                                   ),
-                                  _TeacherCountBadge(
-                                    label: 'Present',
-                                    value: presentCount,
-                                    color: AppTheme.success,
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: _TeacherCountBadge(
+                                      label: 'Present',
+                                      value: presentCount,
+                                      color: AppTheme.success,
+                                    ),
                                   ),
-                                  _TeacherCountBadge(
-                                    label: 'Absent',
-                                    value: absentCount,
-                                    color: AppTheme.danger,
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: _TeacherCountBadge(
+                                      label: 'Absent',
+                                      value: absentCount,
+                                      color: AppTheme.danger,
+                                    ),
                                   ),
-                                  _TeacherCountBadge(
-                                    label: 'Unmarked',
-                                    value: unmarkedCount < 0
-                                        ? 0
-                                        : unmarkedCount,
-                                    color: AppTheme.warning,
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: _TeacherCountBadge(
+                                      label: 'Unmarked',
+                                      value: unmarkedCount < 0
+                                          ? 0
+                                          : unmarkedCount,
+                                      color: AppTheme.warning,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -948,6 +956,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
                                               StudentTrackingBadges(
                                                 student: student,
                                                 longAbsent: followUp,
+                                                classLevel: _classLevel,
                                               ),
                                               if (followUp) ...[
                                                 const SizedBox(height: 3),
@@ -1035,8 +1044,7 @@ class _TeacherCountBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      constraints: const BoxConstraints(minWidth: 72),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 6),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(10),
@@ -1048,7 +1056,7 @@ class _TeacherCountBadge extends StatelessWidget {
             '$value',
             style: TextStyle(
               color: color,
-              fontSize: 16,
+              fontSize: 14,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -1056,7 +1064,7 @@ class _TeacherCountBadge extends StatelessWidget {
             label,
             style: const TextStyle(
               color: AppTheme.textSecondary,
-              fontSize: 13,
+              fontSize: 10.5,
               fontWeight: FontWeight.w600,
             ),
           ),

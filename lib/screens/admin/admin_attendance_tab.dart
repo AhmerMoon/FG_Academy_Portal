@@ -476,8 +476,7 @@ class _AttendanceBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      constraints: const BoxConstraints(minWidth: 66),
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 6),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(10),
@@ -490,14 +489,14 @@ class _AttendanceBadge extends StatelessWidget {
             style: TextStyle(
               color: color,
               fontWeight: FontWeight.w800,
-              fontSize: 15,
+              fontSize: 14,
             ),
           ),
           Text(
             label,
             style: const TextStyle(
               color: AppTheme.textSecondary,
-              fontSize: 12,
+              fontSize: 9.5,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -610,7 +609,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
       final results = await Future.wait([
         supabase
             .from('students')
-            .select('id, name, created_at, contact_number')
+            .select('id, name, stream, created_at, contact_number')
             .eq('batch_id', widget.batchId)
             .eq('is_archived', false)
             .order('name', ascending: true),
@@ -1190,35 +1189,46 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
                           ],
                         ),
                         const Divider(height: 22),
-                        Wrap(
-                          alignment: WrapAlignment.center,
-                          spacing: 7,
-                          runSpacing: 7,
+                        Row(
                           children: [
-                            _AttendanceBadge(
-                              label: 'Total',
-                              value: students.length,
-                              color: AppTheme.info,
+                            Expanded(
+                              child: _AttendanceBadge(
+                                label: 'Total',
+                                value: students.length,
+                                color: AppTheme.info,
+                              ),
                             ),
-                            _AttendanceBadge(
-                              label: 'Present',
-                              value: presentCount,
-                              color: AppTheme.success,
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: _AttendanceBadge(
+                                label: 'Present',
+                                value: presentCount,
+                                color: AppTheme.success,
+                              ),
                             ),
-                            _AttendanceBadge(
-                              label: 'Absent',
-                              value: absentCount,
-                              color: AppTheme.danger,
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: _AttendanceBadge(
+                                label: 'Absent',
+                                value: absentCount,
+                                color: AppTheme.danger,
+                              ),
                             ),
-                            _AttendanceBadge(
-                              label: 'Unmarked',
-                              value: unmarkedCount < 0 ? 0 : unmarkedCount,
-                              color: AppTheme.warning,
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: _AttendanceBadge(
+                                label: 'Unmarked',
+                                value: unmarkedCount < 0 ? 0 : unmarkedCount,
+                                color: AppTheme.warning,
+                              ),
                             ),
-                            _AttendanceBadge(
-                              label: 'Changed',
-                              value: modifiedStudents.length,
-                              color: AppTheme.fgGold,
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: _AttendanceBadge(
+                                label: 'Changed',
+                                value: modifiedStudents.length,
+                                color: AppTheme.fgGold,
+                              ),
                             ),
                           ],
                         ),
@@ -1377,6 +1387,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
                                           StudentTrackingBadges(
                                             student: student,
                                             longAbsent: followUp,
+                                            classLevel: widget.classLevel,
                                           ),
                                           if (followUp) ...[
                                             const SizedBox(height: 3),

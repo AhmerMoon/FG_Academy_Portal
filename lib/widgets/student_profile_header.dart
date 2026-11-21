@@ -3,6 +3,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
 import '../app_theme.dart';
 import '../services/student_profile_service.dart';
+import 'student_stream_badge.dart';
 
 class StudentProfileHeader extends StatelessWidget {
   final StudentProfileData data;
@@ -24,6 +25,10 @@ class StudentProfileHeader extends StatelessWidget {
     final name = data.student['name']?.toString().trim() ?? '';
     final phone = data.student['contact_number']?.toString().trim() ?? '';
     final archived = data.student['is_archived'] == true;
+    final classLevel = (data.batch['class_level'] as num?)?.toInt() ?? 0;
+    final subjects = ((data.student['stream'] as List?) ?? const []).map(
+      (item) => item.toString(),
+    );
     final status = archived
         ? 'Archived'
         : data.student['status'] == 'trial'
@@ -63,6 +68,12 @@ class StudentProfileHeader extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 5),
+        StudentStreamBadge(
+          classLevel: classLevel,
+          subjects: subjects,
+          onDark: true,
+        ),
+        const SizedBox(height: 6),
         Text(
           data.batch['name']?.toString() ?? 'Academy student',
           textAlign: desktop ? TextAlign.center : TextAlign.start,

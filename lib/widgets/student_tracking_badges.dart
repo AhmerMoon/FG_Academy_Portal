@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import 'student_stream_badge.dart';
 
 class StudentTrackingBadges extends StatelessWidget {
   const StudentTrackingBadges({
     super.key,
     required this.student,
     this.longAbsent = false,
+    this.classLevel,
   });
 
   final dynamic student;
   final bool longAbsent;
+  final int? classLevel;
 
   bool get _isNew {
     final created = DateTime.tryParse(
@@ -30,6 +33,15 @@ class StudentTrackingBadges extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final badges = <Widget>[];
+    final stream = student['stream'];
+    if (classLevel != null && stream is List) {
+      badges.add(
+        StudentStreamBadge(
+          classLevel: classLevel!,
+          subjects: stream.map((item) => item.toString()),
+        ),
+      );
+    }
     if (_isNew) badges.add(const _Badge('NEW', AppTheme.info));
     if (_missingContact) {
       badges.add(const _Badge('NO CONTACT', AppTheme.warning));
