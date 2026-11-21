@@ -61,6 +61,7 @@ class FakePrintablesService extends PrintablesService {
     required int copies,
     required String fileName,
     Uint8List? bytes,
+    required String paperType,
   }) async {
     editedCopies = copies;
     return true;
@@ -205,6 +206,25 @@ void main() {
       );
       expect(validatePrintableFile('paper.exe', 120), isNotNull);
       expect(validatePrintableFile('paper.pdf.exe', 120), isNotNull);
+    },
+  );
+
+  test(
+    'detects test-session filenames without misclassifying normal papers',
+    () {
+      expect(
+        inferPrintablePaperType('Physics Test 1.docx'),
+        printablePaperTestSession,
+      );
+      expect(
+        inferPrintablePaperType('Week_06 Chemistry.pdf'),
+        printablePaperTestSession,
+      );
+      expect(
+        inferPrintablePaperType('Chapter 3 test.pdf'),
+        printablePaperNormal,
+      );
+      expect(printableTestNumber('Math Test No. 12.docx'), 12);
     },
   );
 

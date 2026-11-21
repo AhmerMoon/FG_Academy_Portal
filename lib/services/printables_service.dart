@@ -36,6 +36,7 @@ class PrintablesService {
     required int copies,
     required String notes,
     required String fileName,
+    required String paperType,
     required Uint8List bytes,
   }) async {
     final reservation = await _upload(
@@ -52,6 +53,7 @@ class PrintablesService {
       'finalize_printable_request',
       params: {'p_request_id': reservation['id']},
     );
+    await _setPaperType(reservation['id'] as String, paperType);
   }
 
   Future<Map<String, dynamic>> _upload({
@@ -102,6 +104,7 @@ class PrintablesService {
     required int copies,
     required String fileName,
     Uint8List? bytes,
+    required String paperType,
   }) async {
     Map<String, dynamic>? replacement;
     if (bytes != null) {
@@ -127,6 +130,7 @@ class PrintablesService {
         'p_upload_id': replacement?['id'],
       },
     );
+    await _setPaperType(request.id, paperType);
     if (replacement != null) {
       try {
         await deleteRequests(requestId: replacement['id'] as String);
@@ -137,6 +141,17 @@ class PrintablesService {
       }
     }
     return true;
+  }
+
+  Future<void> _setPaperType(String requestId, String paperType) async {
+    if (paperType != printablePaperNormal &&
+        paperType != printablePaperTestSession) {
+      throw ArgumentError('Choose Normal Test or Test Session.');
+    }
+    await _client.rpc(
+      'set_printable_paper_type',
+      params: {'p_request_id': requestId, 'p_paper_type': paperType},
+    );
   }
 
   Future<int> deleteRequests({String? requestId, bool all = false}) async {

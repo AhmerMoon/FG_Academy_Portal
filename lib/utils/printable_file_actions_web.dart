@@ -20,8 +20,9 @@ Future<PlatformFile?> pickPrintableFile() => FilePicker.pickFile(
 Future<bool> savePrintable(
   Uint8List bytes,
   String name,
-  String mimeType,
-) async {
+  String mimeType, {
+  List<String> folders = const [],
+}) async {
   final blob = web.Blob([bytes.toJS].toJS, web.BlobPropertyBag(type: mimeType));
   final url = web.URL.createObjectURL(blob);
   final anchor = web.HTMLAnchorElement()

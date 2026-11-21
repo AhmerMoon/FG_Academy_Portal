@@ -13,8 +13,30 @@ Future<PlatformFile?> pickPrintableFile() => FilePicker.pickFile(
 Future<bool> savePrintable(
   Uint8List bytes,
   String name,
-  String mimeType,
-) async {
+  String mimeType, {
+  List<String> folders = const [],
+}) async {
+  if (Platform.isWindows) {
+    final appDirectory = File(Platform.resolvedExecutable).parent;
+    final safeFolders = folders
+        .map(_safePathPart)
+        .where((part) => part.isNotEmpty)
+        .toList();
+    final directory = Directory(
+      [
+        appDirectory.path,
+        'Academy Portal Data',
+        'Printables',
+        ...safeFolders,
+      ].join(Platform.pathSeparator),
+    );
+    await directory.create(recursive: true);
+    final file = File(
+      '${directory.path}${Platform.pathSeparator}${_safeFileName(name)}',
+    );
+    await file.writeAsBytes(bytes, flush: true);
+    return true;
+  }
   final path = await FilePicker.saveFile(
     dialogTitle: 'Save printable',
     fileName: name,
@@ -22,6 +44,16 @@ Future<bool> savePrintable(
     mimeType: mimeType,
   );
   return path != null;
+}
+
+String _safePathPart(String value) => value
+    .replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1F]'), '_')
+    .replaceAll(RegExp(r'[. ]+$'), '')
+    .trim();
+
+String _safeFileName(String value) {
+  final safe = _safePathPart(value);
+  return safe.isEmpty ? 'printable' : safe;
 }
 
 Future<void> openPrintableWord(

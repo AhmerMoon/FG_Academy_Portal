@@ -12,6 +12,26 @@ DateTime printableExpiry(DateTime testDate) => DateTime.utc(
 
 const printableMaxBytes = 20 * 1024 * 1024;
 const printableExtensions = ['pdf', 'doc', 'docx'];
+const printablePaperNormal = 'normal';
+const printablePaperTestSession = 'test_session';
+
+String inferPrintablePaperType(String fileName) {
+  final name = fileName.toLowerCase();
+  final sessionPattern = RegExp(
+    r'(?:test[\s_-]*session)|(?:^|[^a-z])(?:test|week)[\s_-]*(?:no\.?[\s_-]*)?\d+(?:[^0-9]|$)',
+  );
+  return sessionPattern.hasMatch(name)
+      ? printablePaperTestSession
+      : printablePaperNormal;
+}
+
+int? printableTestNumber(String fileName) {
+  final match = RegExp(
+    r'(?:^|[^a-z])(?:test|week)[\s_-]*(?:no\.?[\s_-]*)?(\d+)(?:[^0-9]|$)',
+    caseSensitive: false,
+  ).firstMatch(fileName);
+  return match == null ? null : int.tryParse(match.group(1)!);
+}
 
 String printableExtension(String name) => name.split('.').last.toLowerCase();
 
@@ -48,6 +68,7 @@ class PrintableRequest {
   final String notes;
   final String fileName;
   final String filePath;
+  final String paperType;
   final String status;
   final DateTime expiresAt;
 
@@ -62,11 +83,13 @@ class PrintableRequest {
     required this.notes,
     required this.fileName,
     required this.filePath,
+    this.paperType = printablePaperNormal,
     required this.status,
     required this.expiresAt,
   });
 
   bool get isPdf => printableExtension(fileName) == 'pdf';
+  bool get isTestSession => paperType == printablePaperTestSession;
   bool get isPrinted => status == 'printed';
   bool get isExpired => !expiresAt.isAfter(DateTime.now().toUtc());
 
@@ -82,6 +105,9 @@ class PrintableRequest {
         notes: row['notes'] as String? ?? '',
         fileName: row['file_name'] as String,
         filePath: row['file_path'] as String,
+        paperType:
+            row['paper_type']?.toString() ??
+            inferPrintablePaperType(row['file_name'] as String),
         status: row['status'] as String,
         expiresAt: DateTime.parse(row['expires_at'] as String).toUtc(),
       );

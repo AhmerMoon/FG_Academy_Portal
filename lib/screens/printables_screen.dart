@@ -125,6 +125,26 @@ class _PrintablesScreenState extends State<PrintablesScreen>
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  List<String> _downloadFolders(PrintableRequest request) {
+    final root = request.isTestSession ? 'Test Session' : 'Normal Tests';
+    final folders = <String>[
+      root,
+      request.batchName,
+      AuthService.subjectLabel(request.subjectCode),
+    ];
+    if (request.isTestSession) {
+      final number = printableTestNumber(request.fileName);
+      folders.add(
+        number == null
+            ? DateFormat('yyyy-MM-dd').format(request.testDate)
+            : 'Test $number',
+      );
+    } else {
+      folders.add(DateFormat('yyyy-MM-dd').format(request.testDate));
+    }
+    return folders;
+  }
+
   Future<void> _newRequest([PrintableRequest? editing]) async {
     if (_openingForm) return;
     setState(() => _openingForm = true);
@@ -234,8 +254,15 @@ class _PrintablesScreenState extends State<PrintablesScreen>
             bytes,
             request.fileName,
             printableMimeType(request.fileName),
+            folders: _downloadFolders(request),
           );
-          if (saved) _message(kIsWeb ? 'Download started.' : 'File saved.');
+          if (saved) {
+            _message(
+              kIsWeb
+                  ? 'Download started.'
+                  : 'File saved. On Windows it is in Academy Portal Data / Printables.',
+            );
+          }
         } else if (request.isPdf) {
           await Navigator.of(context).push(
             MaterialPageRoute<void>(
@@ -479,6 +506,18 @@ class _PrintablesScreenState extends State<PrintablesScreen>
                   '${request.copies} copies',
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
+                Chip(
+                  visualDensity: VisualDensity.compact,
+                  label: Text(
+                    request.isTestSession ? 'Test Session' : 'Normal Test',
+                  ),
+                  avatar: Icon(
+                    request.isTestSession
+                        ? Icons.event_note_rounded
+                        : Icons.assignment_outlined,
+                    size: 17,
+                  ),
+                ),
               ],
             ),
             if (request.notes.isNotEmpty)
@@ -628,6 +667,8 @@ class _SubmissionDialogState extends State<_SubmissionDialog> {
   String? _error;
   bool _submitting = false;
   bool _picking = false;
+  String _paperType = printablePaperNormal;
+  bool _paperTypeTouched = false;
 
   @override
   void initState() {
@@ -637,6 +678,8 @@ class _SubmissionDialogState extends State<_SubmissionDialog> {
       _copies.text = request.copies.toString();
       _date = request.testDate;
       _fileName = request.fileName;
+      _paperType = request.paperType;
+      _paperTypeTouched = true;
       final classLevel = RegExp(r'\d+').firstMatch(request.batchName)?.group(0);
       final index = widget.choices.indexWhere(
         (choice) =>
@@ -676,6 +719,9 @@ class _SubmissionDialogState extends State<_SubmissionDialog> {
       setState(() {
         _fileName = file.name;
         _bytes = bytes;
+        if (!_paperTypeTouched) {
+          _paperType = inferPrintablePaperType(file.name);
+        }
         _error = null;
       });
     } catch (error) {
@@ -706,6 +752,7 @@ class _SubmissionDialogState extends State<_SubmissionDialog> {
           copies: int.parse(_copies.text.trim()),
           fileName: _fileName!,
           bytes: _bytes,
+          paperType: _paperType,
         );
         if (!cleaned) widget.onCleanupPending?.call();
       } else {
@@ -719,6 +766,7 @@ class _SubmissionDialogState extends State<_SubmissionDialog> {
           copies: int.parse(_copies.text.trim()),
           notes: '',
           fileName: _fileName!,
+          paperType: _paperType,
           bytes: _bytes!,
         );
       }
@@ -817,6 +865,48 @@ class _SubmissionDialogState extends State<_SubmissionDialog> {
                         ? 'Enter 1 to 5000 copies.'
                         : null;
                   },
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Paper type',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(
+                      child: CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: const Text('Normal Test'),
+                        value: _paperType == printablePaperNormal,
+                        onChanged: _submitting
+                            ? null
+                            : (_) => setState(() {
+                                _paperType = printablePaperNormal;
+                                _paperTypeTouched = true;
+                              }),
+                      ),
+                    ),
+                    Expanded(
+                      child: CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: const Text('Test Session'),
+                        value: _paperType == printablePaperTestSession,
+                        onChanged: _submitting
+                            ? null
+                            : (_) => setState(() {
+                                _paperType = printablePaperTestSession;
+                                _paperTypeTouched = true;
+                              }),
+                      ),
+                    ),
+                  ],
+                ),
+                const Text(
+                  'Choose one. If untouched, names such as “Test 1” or “Week 1” are detected automatically.',
+                  style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
