@@ -358,7 +358,9 @@ void main() {
     await tester.ensureVisible(find.text('Subject results'));
     await tester.tap(find.text('Subject results'));
     await tester.pumpAndSettle();
-    expect(find.byType(DropdownButtonFormField<String>), findsOneWidget);
+    expect(find.byType(DropdownButtonFormField<String>), findsNothing);
+    expect(find.text('Chemistry results'), findsOneWidget);
+    expect(find.text('Physics results'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

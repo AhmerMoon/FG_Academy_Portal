@@ -12,6 +12,7 @@ import '../../widgets/academy_background.dart';
 import '../../widgets/add_student_dialog.dart';
 import '../../widgets/student_subject_selector.dart';
 import '../../widgets/student_profile_link.dart';
+import '../../widgets/student_profile_edit_dialog.dart';
 import '../../widgets/student_stream_badge.dart';
 import '../../widgets/student_tracking_badges.dart';
 import 'archive_students_view.dart';
@@ -404,6 +405,32 @@ class _StudentsTabState extends State<StudentsTab> {
     }
   }
 
+  Future<void> _editStudent(dynamic student) async {
+    final batchRows = batches
+        .map((batch) => Map<String, dynamic>.from(batch as Map))
+        .toList();
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => StudentProfileEditDialog(
+        student: Map<String, dynamic>.from(student as Map),
+        batches: batchRows,
+        service: StudentProfileService(client: supabase),
+      ),
+    );
+    if (saved == true && mounted) {
+      await fetchBatches();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Student updated.'),
+            backgroundColor: AppTheme.success,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (isLoading) {
@@ -551,7 +578,10 @@ class _StudentsTabState extends State<StudentsTab> {
           ),
         Expanded(
           child: _archiveMode
-              ? ArchiveStudentsView(onRestored: fetchBatches)
+              ? ArchiveStudentsView(
+                  onRestored: fetchBatches,
+                  onBack: () => setState(() => _archiveMode = false),
+                )
               : RefreshIndicator(
                   onRefresh: fetchBatches,
                   child: groups.isEmpty
@@ -690,14 +720,28 @@ class _StudentsTabState extends State<StudentsTab> {
                                                   student['id']?.toString(),
                                                 ),
                                           ),
-                                          trailing: IconButton(
-                                            tooltip: 'Archive student',
-                                            onPressed: () =>
-                                                _archiveStudent(student),
-                                            icon: const Icon(
-                                              Icons.archive_outlined,
-                                              size: 21,
-                                            ),
+                                          trailing: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              IconButton(
+                                                tooltip: 'Edit student',
+                                                onPressed: () =>
+                                                    _editStudent(student),
+                                                icon: const Icon(
+                                                  Icons.edit_outlined,
+                                                  size: 20,
+                                                ),
+                                              ),
+                                              IconButton(
+                                                tooltip: 'Archive student',
+                                                onPressed: () =>
+                                                    _archiveStudent(student),
+                                                icon: const Icon(
+                                                  Icons.archive_outlined,
+                                                  size: 21,
+                                                ),
+                                              ),
+                                            ],
                                           ),
                                         ),
                                       );

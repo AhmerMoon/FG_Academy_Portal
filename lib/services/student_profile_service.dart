@@ -97,6 +97,15 @@ class StudentProfileService {
               .select('role,is_active')
               .eq('user_id', userId)
               .maybeSingle();
+    final today = studentProfileToday();
+    final monthStart = DateTime(
+      today.year,
+      today.month,
+    ).toIso8601String().split('T').first;
+    final nextMonth = DateTime(
+      today.year,
+      today.month + 1,
+    ).toIso8601String().split('T').first;
 
     final responses = await Future.wait<dynamic>([
       _client.from('batches').select().eq('id', batchId).maybeSingle(),
@@ -105,6 +114,8 @@ class StudentProfileService {
             .from('attendance')
             .select('id,date,status,batch_id')
             .eq('student_id', studentId)
+            .gte('date', monthStart)
+            .lt('date', nextMonth)
             .order('date')
             .order('id')
             .range(start, end),

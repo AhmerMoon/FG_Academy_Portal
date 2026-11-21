@@ -39,11 +39,6 @@ class _StudentProfileScreenState extends State<StudentProfileScreen>
   String? _error;
   bool _loading = true;
   bool _openingEditor = false;
-  DateTime _month = DateTime(
-    studentProfileToday().year,
-    studentProfileToday().month,
-  );
-  String? _subject;
 
   @override
   void initState() {
@@ -69,9 +64,6 @@ class _StudentProfileScreenState extends State<StudentProfileScreen>
       if (!mounted) return;
       setState(() {
         _data = data;
-        if (!data.subjects.contains(_subject)) {
-          _subject = data.subjects.isEmpty ? null : data.subjects.first;
-        }
         _loading = false;
       });
     } catch (error) {
@@ -310,10 +302,19 @@ class _StudentProfileScreenState extends State<StudentProfileScreen>
     onCopy: _copyPhone,
   );
 
-  TabBar _profileTabs() => TabBar(
+  TabBar _profileTabs({bool onDark = false}) => TabBar(
     controller: _tabs,
     isScrollable: true,
     tabAlignment: TabAlignment.start,
+    labelColor: onDark ? Colors.white : AppTheme.fgNavyBlue,
+    unselectedLabelColor: onDark ? Colors.white70 : AppTheme.textSecondary,
+    indicatorColor: onDark ? AppTheme.fgGold : AppTheme.fgNavyBlue,
+    indicatorWeight: 3,
+    labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12.5),
+    unselectedLabelStyle: const TextStyle(
+      fontWeight: FontWeight.w600,
+      fontSize: 12.5,
+    ),
     tabs: const [
       Tab(icon: Icon(Icons.person_outline_rounded, size: 20), text: 'Student'),
       Tab(
@@ -363,7 +364,7 @@ class _StudentProfileScreenState extends State<StudentProfileScreen>
               icon: const Icon(Icons.refresh),
             ),
           ],
-          bottom: desktop ? null : _profileTabs(),
+          bottom: desktop ? null : _profileTabs(onDark: true),
         ),
         body: desktop && !_loading && _error == null
             ? Center(
@@ -533,10 +534,7 @@ class _StudentProfileScreenState extends State<StudentProfileScreen>
           _detail('UUID', student['id']),
           _detail('Batch', _data!.batch['name']),
           _detail('Class', _data!.batch['class_level']),
-          _detail(
-            'Status',
-            student['is_archived'] == true ? 'Archived' : student['status'],
-          ),
+          if (student['is_archived'] == true) _detail('Status', 'Archived'),
           _detail('Joined', _date(student['created_at'])),
           if (student['is_archived'] == true) ...[
             _detail('Archived', _date(student['archived_at'])),
@@ -565,13 +563,10 @@ class _StudentProfileScreenState extends State<StudentProfileScreen>
             ],
           ),
         ]),
-        for (final month in [
-          DateTime(today.year, today.month),
-          DateTime(today.year, today.month - 1),
-        ])
-          _section(DateFormat('MMMM yyyy').format(month), [
-            _attendanceSummary(month),
-          ]),
+        _section(
+          'Attendance · ${DateFormat('MMMM yyyy').format(DateTime(today.year, today.month))}',
+          [_attendanceSummary(DateTime(today.year, today.month))],
+        ),
         _section('All available test results', [
           _detail('Graded tests', totals.graded),
           _detail('Absent', totals.absent),
@@ -590,43 +585,28 @@ class _StudentProfileScreenState extends State<StudentProfileScreen>
   Widget _profileMetrics() {
     final today = studentProfileToday();
     final totals = StudentResultTotals(_data!.results);
+    final month = DateTime(today.year, today.month);
+    final attendance = _data!.attendanceFor(month);
+    final present = attendance.where((r) => r['status'] == 'present').length;
+    final absent = attendance.where((r) => r['status'] == 'absent').length;
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          for (final month in [
-            DateTime(today.year, today.month),
-            DateTime(today.year, today.month - 1),
-          ]) ...[
-            Expanded(
-              child: Builder(
-                builder: (_) {
-                  final rows = _data!.attendanceFor(month);
-                  final present = rows
-                      .where((r) => r['status'] == 'present')
-                      .length;
-                  final absent = rows
-                      .where((r) => r['status'] == 'absent')
-                      .length;
-                  return _metricCard(
-                    DateFormat('MMM yyyy').format(month),
-                    present + absent == 0
-                        ? '—'
-                        : '${(present * 100 / (present + absent)).toStringAsFixed(0)}%',
-                    '$present P · $absent A',
-                    Icons.calendar_month_outlined,
-                    AppTheme.info,
-                    () {
-                      setState(() => _month = month);
-                      _tabs.animateTo(1);
-                    },
-                  );
-                },
-              ),
+          Expanded(
+            child: _metricCard(
+              DateFormat('MMM yyyy').format(month),
+              present + absent == 0
+                  ? '—'
+                  : '${(present * 100 / (present + absent)).toStringAsFixed(0)}%',
+              '$present P · $absent A',
+              Icons.calendar_month_outlined,
+              AppTheme.info,
+              () => _tabs.animateTo(1),
             ),
-            const SizedBox(width: 8),
-          ],
+          ),
+          const SizedBox(width: 8),
           Expanded(
             child: _metricCard(
               'Test results',
@@ -721,52 +701,21 @@ class _StudentProfileScreenState extends State<StudentProfileScreen>
   }
 
   Widget _attendance() {
-    final rows = _data!.attendanceFor(_month);
+    final today = studentProfileToday();
+    final month = DateTime(today.year, today.month);
+    final rows = _data!.attendanceFor(month);
     final byDay = {
       for (final row in rows)
         DateTime.parse(row['date'].toString()).day: row['status'].toString(),
     };
-    final offset = DateTime(_month.year, _month.month).weekday - 1;
-    final days = DateTime(_month.year, _month.month + 1, 0).day;
-    final today = studentProfileToday();
+    final offset = month.weekday - 1;
+    final days = DateTime(month.year, month.month + 1, 0).day;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        _section('Attendance history', [
-          Row(
-            children: [
-              IconButton(
-                tooltip: 'Previous month',
-                onPressed: () => setState(
-                  () => _month = DateTime(_month.year, _month.month - 1),
-                ),
-                icon: const Icon(Icons.chevron_left),
-              ),
-              Expanded(
-                child: Text(
-                  DateFormat('MMMM yyyy').format(_month),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              IconButton(
-                tooltip: 'Next month',
-                onPressed:
-                    _month.year == today.year && _month.month == today.month
-                    ? null
-                    : () => setState(
-                        () => _month = DateTime(_month.year, _month.month + 1),
-                      ),
-                icon: const Icon(Icons.chevron_right),
-              ),
-            ],
-          ),
+        _section('Current month · ${DateFormat('MMMM yyyy').format(month)}', [
+          _attendanceSummary(month),
           const SizedBox(height: 12),
-          _attendanceSummary(_month),
-          const SizedBox(height: 16),
           Row(
             children: [
               for (final day in [
@@ -837,43 +786,52 @@ class _StudentProfileScreenState extends State<StudentProfileScreen>
             style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
           ),
         ]),
-        _section('Daily records', [
-          if (rows.isEmpty)
-            const Text('No attendance recorded for this month.'),
-          for (final row in rows.reversed)
-            ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: Text(_date(row['date'])),
-              trailing: Text(row['status'].toString()),
-            ),
-        ]),
       ],
     );
   }
 
-  Widget _individualResults() => Column(
-    children: [
-      Padding(
-        padding: const EdgeInsets.all(16),
-        child: DropdownButtonFormField<String>(
-          key: ValueKey(_subject),
-          initialValue: _subject,
-          decoration: const InputDecoration(labelText: 'Subject'),
-          items: _data!.subjects
-              .map(
-                (s) => DropdownMenuItem(
-                  value: s,
-                  child: Text(AuthService.subjectLabel(s)),
+  Widget _individualResults() {
+    final subjects = _data!.subjects;
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        if (subjects.isEmpty)
+          _section('Subject results', [
+            const Text('No subject test records available.'),
+          ]),
+        for (final subject in subjects)
+          Builder(
+            builder: (_) {
+              final rows = _data!.results
+                  .where((result) => result.subject == subject)
+                  .toList();
+              final totals = StudentResultTotals(rows);
+              return _section('${AuthService.subjectLabel(subject)} results', [
+                _detail(
+                  'Marks',
+                  totals.maximum > 0
+                      ? '${_number(totals.obtained)} / ${_number(totals.maximum)}'
+                      : '—',
                 ),
-              )
-              .toList(),
-          onChanged: (value) => setState(() => _subject = value),
-        ),
-      ),
-      Expanded(child: _results(subject: _subject, individual: true)),
-    ],
-  );
+                _detail(
+                  'Percentage',
+                  totals.percentage == null
+                      ? '—'
+                      : '${totals.percentage!.toStringAsFixed(1)}%',
+                ),
+                _detail(
+                  'Tests',
+                  '${totals.graded} graded · ${totals.absent} absent · ${totals.pending} not entered',
+                ),
+                const Divider(height: 24),
+                if (rows.isEmpty) const Text('No test records available.'),
+                for (final result in rows) _testRecordCard(result),
+              ]);
+            },
+          ),
+      ],
+    );
+  }
 
   Widget _results({String? subject, bool individual = false}) {
     final rows = _data!.results

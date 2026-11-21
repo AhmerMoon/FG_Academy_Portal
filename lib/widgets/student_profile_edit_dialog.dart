@@ -27,7 +27,6 @@ class _StudentProfileEditDialogState extends State<StudentProfileEditDialog> {
   late final TextEditingController _name;
   late final TextEditingController _phone;
   late String _batchId;
-  late String _status;
   late List<String> _subjects;
   bool _saving = false;
   String? _error;
@@ -50,7 +49,6 @@ class _StudentProfileEditDialogState extends State<StudentProfileEditDialog> {
     _batchId = widget.batches.any((b) => b['id'] == id)
         ? id!
         : widget.batches.first['id'] as String;
-    _status = widget.student['status'] == 'trial' ? 'trial' : 'enrolled';
     _subjects = normalizeStudentSubjects(
       _classLevel,
       ((widget.student['stream'] as List?) ?? []).map((s) => s.toString()),
@@ -81,7 +79,7 @@ class _StudentProfileEditDialogState extends State<StudentProfileEditDialog> {
         studentId: widget.student['id'].toString(),
         name: _name.text.trim(),
         batchId: _batchId,
-        status: _status,
+        status: 'enrolled',
         subjects: _subjects,
         contact: contact.isEmpty ? null : contact,
       );
@@ -156,21 +154,6 @@ class _StudentProfileEditDialogState extends State<StudentProfileEditDialog> {
                         }
                         _error = null;
                       });
-                    },
-                  ),
-                  const SizedBox(height: 14),
-                  DropdownButtonFormField<String>(
-                    initialValue: _status,
-                    decoration: const InputDecoration(labelText: 'Status'),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'enrolled',
-                        child: Text('Enrolled'),
-                      ),
-                      DropdownMenuItem(value: 'trial', child: Text('Trial')),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) setState(() => _status = value);
                     },
                   ),
                   const SizedBox(height: 14),

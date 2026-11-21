@@ -6,8 +6,9 @@ import '../../widgets/student_profile_link.dart';
 
 class ArchiveStudentsView extends StatefulWidget {
   final VoidCallback? onRestored;
+  final VoidCallback? onBack;
 
-  const ArchiveStudentsView({super.key, this.onRestored});
+  const ArchiveStudentsView({super.key, this.onRestored, this.onBack});
 
   @override
   State<ArchiveStudentsView> createState() => _ArchiveStudentsViewState();
@@ -320,27 +321,40 @@ class _ArchiveStudentsViewState extends State<ArchiveStudentsView> {
       children: [
         Padding(
           padding: const EdgeInsets.all(12),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: TextField(
-                  decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.search),
-                    labelText: 'Search archived students',
+              if (widget.onBack != null) ...[
+                TextButton.icon(
+                  onPressed: widget.onBack,
+                  icon: const Icon(Icons.arrow_back_rounded),
+                  label: const Text('Back to active students'),
+                ),
+                const SizedBox(height: 4),
+              ],
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      decoration: const InputDecoration(
+                        prefixIcon: Icon(Icons.search),
+                        labelText: 'Search archived students',
+                      ),
+                      onChanged: (value) => setState(() => _query = value),
+                    ),
                   ),
-                  onChanged: (value) => setState(() => _query = value),
-                ),
-              ),
-              const SizedBox(width: 10),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.danger,
-                ),
-                onPressed: _rows.isEmpty || _deleting
-                    ? null
-                    : () => _deleteArchived(),
-                icon: const Icon(Icons.delete_sweep_outlined),
-                label: const Text('Delete All'),
+                  const SizedBox(width: 10),
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.danger,
+                    ),
+                    onPressed: _rows.isEmpty || _deleting
+                        ? null
+                        : () => _deleteArchived(),
+                    icon: const Icon(Icons.delete_sweep_outlined),
+                    label: const Text('Delete All'),
+                  ),
+                ],
               ),
             ],
           ),

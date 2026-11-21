@@ -29,11 +29,6 @@ class StudentProfileHeader extends StatelessWidget {
     final subjects = ((data.student['stream'] as List?) ?? const []).map(
       (item) => item.toString(),
     );
-    final status = archived
-        ? 'Archived'
-        : data.student['status'] == 'trial'
-        ? 'Trial'
-        : 'Enrolled';
     final avatar = Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
@@ -67,12 +62,6 @@ class StudentProfileHeader extends StatelessWidget {
             fontWeight: FontWeight.w800,
           ),
         ),
-        const SizedBox(height: 5),
-        StudentStreamBadge(
-          classLevel: classLevel,
-          subjects: subjects,
-          onDark: true,
-        ),
         const SizedBox(height: 6),
         Text(
           data.batch['name']?.toString() ?? 'Academy student',
@@ -80,28 +69,32 @@ class StudentProfileHeader extends StatelessWidget {
           style: const TextStyle(color: Colors.white70, fontSize: 13),
         ),
         const SizedBox(height: 10),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.13),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                archived ? Icons.archive_outlined : Icons.verified_rounded,
-                size: 14,
-                color: AppTheme.fgGold,
-              ),
-              const SizedBox(width: 5),
-              Text(
-                status,
-                style: const TextStyle(color: Colors.white, fontSize: 12),
-              ),
-            ],
-          ),
+        StudentStreamBadge(
+          classLevel: classLevel,
+          subjects: subjects,
+          onDark: true,
         ),
+        if (archived) ...[
+          const SizedBox(height: 7),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.13),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.archive_outlined, size: 14, color: AppTheme.fgGold),
+                SizedBox(width: 5),
+                Text(
+                  'Archived',
+                  style: TextStyle(color: Colors.white, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ],
       ],
     );
     return Column(
