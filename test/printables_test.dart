@@ -11,6 +11,7 @@ PrintableRequest request({
   String status = 'pending',
   String teacher = 'Ali Khan',
   String title = 'Chapter 3 test',
+  String fileName = 'test.pdf',
   bool expired = false,
 }) => PrintableRequest(
   id: id,
@@ -21,7 +22,7 @@ PrintableRequest request({
   testDate: DateTime(2099, 12, 5),
   copies: 32,
   notes: 'Double sided',
-  fileName: 'test.pdf',
+  fileName: fileName,
   filePath: 'teacher/$id/document.pdf',
   status: status,
   expiresAt: expired ? DateTime.utc(2000) : DateTime.utc(2100),
@@ -250,6 +251,15 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+
+  testWidgets('DOCX papers offer compact-before-print action', (tester) async {
+    final service = FakePrintablesService()
+      ..rows = [request(fileName: 'Physics Test 1.docx')];
+    await showScreen(tester, service, admin: true);
+    expect(find.text('Compact / Open in Word'), findsOneWidget);
+    expect(find.text('Download'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets(
     'admin can mark printed and pending without a teacher submission button',

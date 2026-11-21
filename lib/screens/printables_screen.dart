@@ -9,6 +9,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../app_theme.dart';
 import '../models/printable_request.dart';
 import '../services/auth_service.dart';
+import '../services/docx_space_saver.dart';
 import '../services/printables_service.dart';
 import '../utils/dashboard_section_header.dart';
 import '../utils/error_state_view.dart';
@@ -274,16 +275,28 @@ class _PrintablesScreenState extends State<PrintablesScreen>
             ),
           );
         } else {
-          await openPrintableWord(
-            bytes,
-            request.fileName,
-            printableMimeType(request.fileName),
-          );
-          _message(
-            kIsWeb
-                ? 'Open the downloaded document in Word to print it.'
-                : 'Use Print in the document viewer. Requested copies: ${request.copies}.',
-          );
+          final isDocx = printableExtension(request.fileName) == 'docx';
+          if (isDocx) {
+            final compacted = await compactDocx(bytes, request.fileName);
+            await openPrintableWord(
+              compacted.bytes,
+              compacted.fileName,
+              printableMimeType(compacted.fileName),
+            );
+            _message(
+              'Space-saved copy created: ${compacted.optionGroupsCompacted} option group(s) arranged, '
+              '${compacted.blankLinesRemoved} extra blank line(s) removed. Review it in Word before printing ${request.copies} copies.',
+            );
+          } else {
+            await openPrintableWord(
+              bytes,
+              request.fileName,
+              printableMimeType(request.fileName),
+            );
+            _message(
+              'Legacy DOC opened unchanged. Save it as DOCX in Word to use automatic space saving.',
+            );
+          }
         }
       }
     } catch (error) {
@@ -562,7 +575,11 @@ class _PrintablesScreenState extends State<PrintablesScreen>
                     request.isPdf
                         ? 'Preview / Print'
                         : kIsWeb
-                        ? 'Download to print'
+                        ? printableExtension(request.fileName) == 'docx'
+                              ? 'Compact / Download'
+                              : 'Download to print'
+                        : printableExtension(request.fileName) == 'docx'
+                        ? 'Compact / Open in Word'
                         : 'Open in Word',
                   ),
                 ),

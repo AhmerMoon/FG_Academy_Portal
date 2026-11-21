@@ -1,0 +1,124 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:academy_portal/services/docx_space_saver.dart';
+import 'package:archive/archive.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:xml/xml.dart';
+
+Uint8List _docx(String documentXml) {
+  final archive = Archive()
+    ..add(ArchiveFile.string('word/document.xml', documentXml))
+    ..add(
+      ArchiveFile.string(
+        '[Content_Types].xml',
+        '<?xml version="1.0" encoding="UTF-8"?>'
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '</Types>',
+      ),
+    );
+  return Uint8List.fromList(ZipEncoder().encode(archive));
+}
+
+String _paragraph(String text) =>
+    '<w:p><w:r><w:t>${const HtmlEscape().convert(text)}</w:t></w:r></w:p>';
+
+void main() {
+  test(
+    'compacts safe MCQ options while preserving a presentable heading',
+    () async {
+      final input = _docx(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:body>'
+        '${_paragraph('FG ACADEMY TEST')}'
+        '${_paragraph('1. Choose the correct answer.')}'
+        '${_paragraph('(A) One')}'
+        '${_paragraph('(B) Two')}'
+        '${_paragraph('(C) Three')}'
+        '${_paragraph('(D) Four')}'
+        '${_paragraph('')}${_paragraph('')}'
+        '<w:sectPr><w:pgMar w:top="1440" w:left="1440" w:right="1440" w:bottom="1440"/></w:sectPr>'
+        '</w:body></w:document>',
+      );
+
+      final result = await compactDocx(input, 'Physics Test 1.docx');
+      expect(result.fileName, 'Physics Test 1_SPACE_SAVED.docx');
+      expect(result.optionGroupsCompacted, 1);
+      expect(result.blankLinesRemoved, 1);
+
+      final archive = ZipDecoder().decodeBytes(result.bytes);
+      final xml = XmlDocument.parse(
+        utf8.decode(
+          archive.files
+              .singleWhere((f) => f.name == 'word/document.xml')
+              .content,
+        ),
+      );
+      final text = xml.innerText;
+      for (final value in ['FG ACADEMY TEST', '(A) One', '(D) Four']) {
+        expect(text, contains(value));
+      }
+      final margin = xml.descendants.whereType<XmlElement>().singleWhere(
+        (element) => element.name.local == 'pgMar',
+      );
+      expect(
+        margin.attributes.singleWhere((a) => a.name.local == 'left').value,
+        '650',
+      );
+      final heading = xml.descendants.whereType<XmlElement>().firstWhere(
+        (element) =>
+            element.name.local == 'p' &&
+            element.innerText.contains('FG ACADEMY TEST'),
+      );
+      expect(
+        heading.descendants.whereType<XmlElement>().any(
+          (element) => element.name.local == 'b',
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test('does not merge option paragraphs containing drawings', () async {
+    final input = _docx(
+      '<?xml version="1.0" encoding="UTF-8"?>'
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+      '<w:body>'
+      '<w:p><w:r><w:t>(A) Diagram</w:t><w:drawing/></w:r></w:p>'
+      '${_paragraph('(B) Text')}'
+      '<w:sectPr/>'
+      '</w:body></w:document>',
+    );
+    final result = await compactDocx(input, 'paper.docx');
+    expect(result.optionGroupsCompacted, 0);
+  });
+
+  test('compacts options separated with manual Word line breaks', () async {
+    final input = _docx(
+      '<?xml version="1.0" encoding="UTF-8"?>'
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+      '<w:body><w:p><w:r>'
+      '<w:t>(A) Red</w:t><w:br/><w:t>(B) Blue</w:t><w:br/>'
+      '<w:t>(C) Green</w:t><w:br/><w:t>(D) Black</w:t>'
+      '</w:r></w:p><w:sectPr/>'
+      '</w:body></w:document>',
+    );
+    final result = await compactDocx(input, 'paper.docx');
+    expect(result.optionGroupsCompacted, 1);
+    final archive = ZipDecoder().decodeBytes(result.bytes);
+    final xml = XmlDocument.parse(
+      utf8.decode(
+        archive.files.singleWhere((f) => f.name == 'word/document.xml').content,
+      ),
+    );
+    expect(
+      xml.descendants
+          .whereType<XmlElement>()
+          .where((element) => element.name.local == 'tab')
+          .length,
+      6,
+    );
+  });
+}
