@@ -4,7 +4,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../app_theme.dart';
 import '../models/portal_user.dart';
 import '../services/auth_service.dart';
+import '../services/session_backup_service.dart';
 import '../utils/dashboard_section_header.dart';
+import '../utils/session_backup_actions.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String userRole;
@@ -35,6 +37,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _changingPassword = false;
 
   bool _managingData = false;
+
+  String? _dataManagementStatus;
 
   String? _error;
 
@@ -243,6 +247,75 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _endSession() async {
+    final prepareBackup = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Back up this session first'),
+        content: const SizedBox(
+          width: 480,
+          child: Text(
+            'The app will now create a ZIP containing student lists, all '
+            'currently available attendance, Award List data/reports and '
+            'Test Session data/reports.\n\nNothing will be promoted or deleted '
+            'unless the ZIP is successfully saved and you confirm again.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.archive_outlined),
+            label: const Text('Create Backup'),
+          ),
+        ],
+      ),
+    );
+    if (prepareBackup != true || !mounted) return;
+
+    SessionBackupResult backup;
+    setState(() {
+      _managingData = true;
+      _dataManagementStatus = 'Preparing session backup...';
+    });
+    try {
+      backup = await SessionBackupService().create(
+        preparedBy: _user,
+        onProgress: (message) {
+          if (mounted) setState(() => _dataManagementStatus = message);
+        },
+      );
+      if (!mounted) return;
+      setState(() => _dataManagementStatus = 'Waiting for backup save...');
+      final saved = await saveSessionBackup(backup.bytes, backup.fileName);
+      if (!mounted) return;
+      if (!saved) {
+        _showMessage(
+          'Backup was not saved. Session End was cancelled safely.',
+          error: true,
+        );
+        return;
+      }
+    } catch (error) {
+      debugPrint('Session backup error: $error');
+      if (!mounted) return;
+      _showMessage(
+        'Backup could not be completed. Session End was cancelled safely.',
+        error: true,
+      );
+      return;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _managingData = false;
+          _dataManagementStatus = null;
+        });
+      }
+    }
+
+    if (!mounted) return;
     final controller = TextEditingController();
     final route = DialogRoute<bool>(
       context: context,
@@ -259,13 +332,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'This permanent action will:\n'
+                    'Your backup ZIP has been saved. This permanent action will:\n'
                     '- clear all attendance, award-list and Test Session data\n'
                     '- move 9th to 10th, 10th to 11th and 11th to 12th\n'
                     '- keep only English and Physics for promoted 10th students\n'
                     '- archive current 12th students from active lists\n\n'
                     'Set each new 11th student stream later from their profile. '
-                    'Fee/payment history will remain safe. Take required prints first.',
+                    'Fee/payment history will remain safe.',
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    '${backup.fileName}\n'
+                    '${backup.activeStudents} active students • '
+                    '${backup.awardReports} Award reports • '
+                    '${backup.testSessionReports} Test Session reports'
+                    '${backup.warnings.isEmpty ? '' : '\n${backup.warnings.length} report warning(s) are recorded inside the ZIP.'}',
+                    style: const TextStyle(
+                      color: AppTheme.textSecondary,
+                      fontSize: 13,
+                    ),
                   ),
                   const SizedBox(height: 16),
                   TextField(
@@ -305,9 +390,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
     await route.completed;
     controller.dispose();
 
-    if (confirmed != true || !mounted) return;
+    if (confirmed != true || !mounted) {
+      if (mounted) {
+        _showMessage('Backup saved. Session data was not changed.');
+      }
+      return;
+    }
 
-    setState(() => _managingData = true);
+    setState(() {
+      _managingData = true;
+      _dataManagementStatus = 'Ending session safely...';
+    });
     try {
       final result = await Supabase.instance.client.rpc('admin_end_session');
       if (!mounted) return;
@@ -326,7 +419,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (!mounted) return;
       _showMessage('Session could not be completed.', error: true);
     } finally {
-      if (mounted) setState(() => _managingData = false);
+      if (mounted) {
+        setState(() {
+          _managingData = false;
+          _dataManagementStatus = null;
+        });
+      }
     }
   }
 
@@ -512,7 +610,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               icon: Icons.restart_alt_rounded,
                               title: 'End Academic Session',
                               subtitle:
-                                  'Promote classes, archive 12th and clear attendance/awards.',
+                                  'Download a full backup, then promote classes and clear session data.',
                               buttonLabel: 'Session End',
                               danger: true,
                               onPressed: _managingData ? null : _endSession,
@@ -520,6 +618,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             if (_managingData) ...[
                               const SizedBox(height: 14),
                               const LinearProgressIndicator(),
+                              if (_dataManagementStatus != null) ...[
+                                const SizedBox(height: 7),
+                                Text(
+                                  _dataManagementStatus!,
+                                  style: const TextStyle(
+                                    color: AppTheme.textSecondary,
+                                    fontSize: 12,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ],
                             ],
                           ],
 
