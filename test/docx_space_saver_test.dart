@@ -105,8 +105,9 @@ void main() {
       '<w:body><w:p><w:r>'
       '<w:t>1. Which colour is shown?</w:t><w:br/><w:tab/>'
       '<w:t>A) Red</w:t><w:br/><w:tab/><w:t>B) Blue</w:t><w:br/>'
-      '<w:tab/><w:t>C) Green</w:t><w:br/><w:tab/><w:t>D) Black</w:t>'
-      '</w:r></w:p><w:sectPr/>'
+      '<w:tab/><w:t>C) Green</w:t><w:br/><w:tab/></w:r>'
+      '<w:hyperlink><w:r><w:t>D) Black [1]</w:t></w:r></w:hyperlink>'
+      '</w:p><w:sectPr/>'
       '</w:body></w:document>',
     );
     final result = await compactDocx(input, 'paper.docx');

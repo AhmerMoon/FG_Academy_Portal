@@ -239,6 +239,7 @@ int _compactInlineOptionGroups(XmlElement body) {
       paragraph,
       allowLineBreaks: true,
       allowTabs: true,
+      allowTextHyperlinks: true,
     )) {
       continue;
     }
@@ -284,7 +285,13 @@ int _compactInlineOptionGroups(XmlElement body) {
 }
 
 _Option? _option(XmlElement paragraph) {
-  if (_hasProtectedContent(paragraph, allowTabs: true)) return null;
+  if (_hasProtectedContent(
+    paragraph,
+    allowTabs: true,
+    allowTextHyperlinks: true,
+  )) {
+    return null;
+  }
   final text = _paragraphText(paragraph).trim();
   final parsed = _optionText(text);
   if (parsed == null) return null;
@@ -589,6 +596,7 @@ bool _hasProtectedContent(
   XmlElement paragraph, {
   bool allowLineBreaks = false,
   bool allowTabs = false,
+  bool allowTextHyperlinks = false,
 }) => paragraph.descendants.whereType<XmlElement>().any(
   (element) => {
     'drawing',
@@ -598,7 +606,7 @@ bool _hasProtectedContent(
     'oMathPara',
     'fldChar',
     'instrText',
-    'hyperlink',
+    if (!allowTextHyperlinks) 'hyperlink',
     if (!allowLineBreaks) 'br',
     if (!allowTabs) 'tab',
     'sym',
