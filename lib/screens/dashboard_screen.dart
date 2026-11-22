@@ -15,6 +15,7 @@ import '../utils/dashboard_section_header.dart';
 import '../utils/error_state_view.dart';
 import '../utils/list_sorting.dart';
 import '../widgets/academy_background.dart';
+import '../widgets/admin_insights_panel.dart';
 import 'admin/admin_attendance_tab.dart';
 import 'admin/batches_tab.dart';
 import 'admin/students_tab.dart';
@@ -52,6 +53,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   int _unmarkedAttendanceBatches = 0;
   Timer? _printablesTimer;
   bool _countLoading = false;
+  int _insightsRevision = 0;
 
   bool get _isAdmin => widget.userRole == 'admin';
 
@@ -307,6 +309,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       setState(() {
         _isLoadingStats = true;
         _statsError = null;
+        _insightsRevision++;
       });
     }
 
@@ -1286,6 +1289,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                       );
                     },
                   ),
+
+                  const SizedBox(height: 14),
+                  AdminInsightsPanel(key: ValueKey(_insightsRevision)),
 
                   const SizedBox(height: 14),
                   _strengthCard(),

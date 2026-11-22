@@ -230,7 +230,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     setState(() => _managingData = true);
     try {
       final deleted = await Supabase.instance.client.rpc(
-        'admin_clear_old_attendance',
+        'admin_cleanup_previous_attendance',
       );
       if (!mounted) return;
       _showMessage('Previous attendance cleared ($deleted records).');
