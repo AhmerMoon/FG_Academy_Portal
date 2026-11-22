@@ -8,12 +8,16 @@ class DocxSpaceSaverResult {
   const DocxSpaceSaverResult({
     required this.bytes,
     required this.fileName,
+    required this.wasCompacted,
+    required this.detectedPages,
     required this.optionGroupsCompacted,
     required this.blankLinesRemoved,
   });
 
   final Uint8List bytes;
   final String fileName;
+  final bool wasCompacted;
+  final int detectedPages;
   final int optionGroupsCompacted;
   final int blankLinesRemoved;
 }
@@ -41,6 +45,8 @@ Future<DocxSpaceSaverResult> compactDocx(
   return DocxSpaceSaverResult(
     bytes: result['bytes']! as Uint8List,
     fileName: result['fileName']! as String,
+    wasCompacted: result['wasCompacted']! as bool,
+    detectedPages: result['detectedPages']! as int,
     optionGroupsCompacted: result['optionGroupsCompacted']! as int,
     blankLinesRemoved: result['blankLinesRemoved']! as int,
   );
@@ -76,6 +82,18 @@ Map<String, Object> _compactPayload(Map<String, Object> input) {
     throw StateError('The DOCX document body could not be read.');
   }
 
+  final detectedPages = _detectPageCount(archive, document);
+  if (detectedPages <= 1) {
+    return <String, Object>{
+      'bytes': bytes,
+      'fileName': fileName,
+      'wasCompacted': false,
+      'detectedPages': 1,
+      'optionGroupsCompacted': 0,
+      'blankLinesRemoved': 0,
+    };
+  }
+
   _normalizeMetadataWraps(body);
   _compactPageMargins(body);
   final blankLinesRemoved = _collapseBlankParagraphs(body);
@@ -95,6 +113,8 @@ Map<String, Object> _compactPayload(Map<String, Object> input) {
         utf8.encode(document.toXmlString()),
       ),
       'word/styles.xml' => _compactStyles(file.content),
+      _ when RegExp(r'^word/(?:header|footer)\d*\.xml$').hasMatch(file.name) =>
+        _compactHeaderOrFooter(file.content),
       _ => file.content,
     };
     final copy = ArchiveFile.bytes(file.name, content)
@@ -108,9 +128,90 @@ Map<String, Object> _compactPayload(Map<String, Object> input) {
   return <String, Object>{
     'bytes': encoded,
     'fileName': '${base}_SPACE_SAVED.docx',
+    'wasCompacted': true,
+    'detectedPages': detectedPages,
     'optionGroupsCompacted': optionGroupsCompacted,
     'blankLinesRemoved': blankLinesRemoved,
   };
+}
+
+int _detectPageCount(Archive archive, XmlDocument document) {
+  final appProperties = archive.files
+      .where((file) => file.name == 'docProps/app.xml' && file.isFile)
+      .firstOrNull;
+  if (appProperties != null) {
+    try {
+      final properties = XmlDocument.parse(utf8.decode(appProperties.content));
+      final pages = properties.descendants
+          .whereType<XmlElement>()
+          .where((element) => element.name.local == 'Pages')
+          .map((element) => int.tryParse(element.innerText.trim()))
+          .whereType<int>()
+          .firstOrNull;
+      if (pages != null && pages > 0) return pages;
+    } catch (_) {
+      // Fall through to layout markers and the conservative estimate.
+    }
+  }
+
+  var renderedBreaks = 0;
+  var manualPageBreaks = 0;
+  for (final element in document.descendants.whereType<XmlElement>()) {
+    if (element.name.local == 'lastRenderedPageBreak' ||
+        element.name.local == 'pageBreakBefore') {
+      renderedBreaks++;
+    } else if (element.name.local == 'br' &&
+        _attribute(element, 'type') == 'page') {
+      manualPageBreaks++;
+    }
+  }
+  final markedPages = renderedBreaks + manualPageBreaks + 1;
+  if (markedPages > 1) return markedPages;
+
+  var layoutLines = 0.0;
+  for (final paragraph in document.descendants.whereType<XmlElement>().where(
+    (element) => element.name.local == 'p',
+  )) {
+    final text = _paragraphText(paragraph).trim();
+    final wrappedLines = text.isEmpty
+        ? 0.55
+        : (text.length / 90).ceilToDouble();
+    final manualLines = paragraph.descendants
+        .whereType<XmlElement>()
+        .where((element) => element.name.local == 'br')
+        .length;
+    layoutLines += wrappedLines + manualLines + 0.18;
+  }
+  final images = document.descendants
+      .whereType<XmlElement>()
+      .where(
+        (element) =>
+            element.name.local == 'drawing' || element.name.local == 'pict',
+      )
+      .length;
+  final tableRows = document.descendants
+      .whereType<XmlElement>()
+      .where((element) => element.name.local == 'tr')
+      .length;
+  layoutLines += images * 9 + tableRows * 0.45;
+  return (layoutLines / 54).ceil().clamp(1, 1000);
+}
+
+Uint8List _compactHeaderOrFooter(Uint8List bytes) {
+  try {
+    final document = XmlDocument.parse(utf8.decode(bytes));
+    for (final paragraph in document.descendants.whereType<XmlElement>().where(
+      (element) => element.name.local == 'p',
+    )) {
+      if (_paragraphText(paragraph).trim().isNotEmpty) {
+        _setParagraphSpacing(paragraph, before: 0, after: 10, line: 220);
+      }
+    }
+    _compactTableMargins(document);
+    return Uint8List.fromList(utf8.encode(document.toXmlString()));
+  } catch (_) {
+    return bytes;
+  }
 }
 
 void _normalizeMetadataWraps(XmlElement body) {

@@ -6,7 +6,12 @@ import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:xml/xml.dart';
 
-Uint8List _docx(String documentXml, {String? stylesXml}) {
+Uint8List _docx(
+  String documentXml, {
+  String? stylesXml,
+  String? headerXml,
+  int pages = 2,
+}) {
   final archive = Archive()
     ..add(ArchiveFile.string('word/document.xml', documentXml))
     ..add(
@@ -17,9 +22,20 @@ Uint8List _docx(String documentXml, {String? stylesXml}) {
             '<Default Extension="xml" ContentType="application/xml"/>'
             '</Types>',
       ),
+    )
+    ..add(
+      ArchiveFile.string(
+        'docProps/app.xml',
+        '<?xml version="1.0" encoding="UTF-8"?>'
+            '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">'
+            '<Pages>$pages</Pages></Properties>',
+      ),
     );
   if (stylesXml != null) {
     archive.add(ArchiveFile.string('word/styles.xml', stylesXml));
+  }
+  if (headerXml != null) {
+    archive.add(ArchiveFile.string('word/header1.xml', headerXml));
   }
   return Uint8List.fromList(ZipEncoder().encode(archive));
 }
@@ -28,6 +44,21 @@ String _paragraph(String text) =>
     '<w:p><w:r><w:t>${const HtmlEscape().convert(text)}</w:t></w:r></w:p>';
 
 void main() {
+  test('leaves a saved one-page DOCX byte-for-byte unchanged', () async {
+    final input = _docx(
+      '<?xml version="1.0" encoding="UTF-8"?>'
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+      '<w:body>${_paragraph('A short one-page paper.')}<w:sectPr/></w:body>'
+      '</w:document>',
+      pages: 1,
+    );
+    final result = await compactDocx(input, 'short.docx');
+    expect(result.wasCompacted, isFalse);
+    expect(result.detectedPages, 1);
+    expect(result.fileName, 'short.docx');
+    expect(result.bytes, orderedEquals(input));
+  });
+
   test(
     'compacts safe MCQ options while preserving a presentable heading',
     () async {
@@ -184,5 +215,33 @@ void main() {
         .where((attribute) => attribute.name.local == 'val')
         .map((attribute) => attribute.value);
     expect(sizes, everyElement('22'));
+  });
+
+  test('tightens text spacing in real Word header parts', () async {
+    final input = _docx(
+      '<?xml version="1.0" encoding="UTF-8"?>'
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+      '<w:body>${_paragraph('Two-page paper body')}<w:sectPr/></w:body>'
+      '</w:document>',
+      headerXml:
+          '<?xml version="1.0" encoding="UTF-8"?>'
+          '<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+          '${_paragraph('FG Academy Examination')}</w:hdr>',
+    );
+    final result = await compactDocx(input, 'header.docx');
+    expect(result.wasCompacted, isTrue);
+    final archive = ZipDecoder().decodeBytes(result.bytes);
+    final header = XmlDocument.parse(
+      utf8.decode(
+        archive.files.singleWhere((f) => f.name == 'word/header1.xml').content,
+      ),
+    );
+    final spacing = header.descendants.whereType<XmlElement>().singleWhere(
+      (element) => element.name.local == 'spacing',
+    );
+    expect(
+      spacing.attributes.singleWhere((a) => a.name.local == 'after').value,
+      '10',
+    );
   });
 }

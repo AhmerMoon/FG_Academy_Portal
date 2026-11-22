@@ -284,8 +284,11 @@ class _PrintablesScreenState extends State<PrintablesScreen>
               printableMimeType(compacted.fileName),
             );
             _message(
-              'Space-saved copy created: ${compacted.optionGroupsCompacted} option group(s) arranged, '
-              '${compacted.blankLinesRemoved} extra blank line(s) removed. Review it in Word before printing ${request.copies} copies.',
+              compacted.wasCompacted
+                  ? 'Space-saved copy created from a ${compacted.detectedPages}-page paper: '
+                        '${compacted.optionGroupsCompacted} option group(s) arranged, '
+                        '${compacted.blankLinesRemoved} extra blank line(s) removed. Review it in Word before printing ${request.copies} copies.'
+                  : 'This paper is already detected as one page, so it was opened unchanged.',
             );
           } else {
             await openPrintableWord(
