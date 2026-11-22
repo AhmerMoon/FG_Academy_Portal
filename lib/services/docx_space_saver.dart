@@ -76,6 +76,7 @@ Map<String, Object> _compactPayload(Map<String, Object> input) {
     throw StateError('The DOCX document body could not be read.');
   }
 
+  _normalizeMetadataWraps(body);
   _compactPageMargins(body);
   final blankLinesRemoved = _collapseBlankParagraphs(body);
   final optionGroupsCompacted =
@@ -89,9 +90,13 @@ Map<String, Object> _compactPayload(Map<String, Object> input) {
       output.add(ArchiveFile.directory(file.name));
       continue;
     }
-    final content = file.name == 'word/document.xml'
-        ? Uint8List.fromList(utf8.encode(document.toXmlString()))
-        : file.content;
+    final content = switch (file.name) {
+      'word/document.xml' => Uint8List.fromList(
+        utf8.encode(document.toXmlString()),
+      ),
+      'word/styles.xml' => _compactStyles(file.content),
+      _ => file.content,
+    };
     final copy = ArchiveFile.bytes(file.name, content)
       ..compression = file.compression
       ..lastModTime = file.lastModTime
@@ -106,6 +111,22 @@ Map<String, Object> _compactPayload(Map<String, Object> input) {
     'optionGroupsCompacted': optionGroupsCompacted,
     'blankLinesRemoved': blankLinesRemoved,
   };
+}
+
+void _normalizeMetadataWraps(XmlElement body) {
+  final pattern = RegExp(
+    r'^\s*(Subject\s*:\s*.*?)\s{2,}(Time\s*(?:Allotted|Allowed|Alloted)\s*:\s*.*?)\s*$',
+    caseSensitive: false,
+  );
+  for (final paragraph in body.children.whereType<XmlElement>().toList()) {
+    if (paragraph.name.local != 'p' || _hasLineBreak(paragraph)) continue;
+    final match = pattern.firstMatch(_paragraphText(paragraph));
+    if (match == null) continue;
+    _replaceParagraph(paragraph, [
+      _textParagraphFrom(paragraph, match.group(1)!.trim()),
+      _textParagraphFrom(paragraph, match.group(2)!.trim()),
+    ]);
+  }
 }
 
 void _compactPageMargins(XmlElement body) {
@@ -214,14 +235,27 @@ int _compactInlineOptionGroups(XmlElement body) {
   var compacted = 0;
   for (final paragraph in body.children.whereType<XmlElement>().toList()) {
     if (paragraph.name.local != 'p' || !_hasLineBreak(paragraph)) continue;
-    if (_hasProtectedContent(paragraph, allowLineBreaks: true)) continue;
+    if (_hasProtectedContent(
+      paragraph,
+      allowLineBreaks: true,
+      allowTabs: true,
+    )) {
+      continue;
+    }
     final lines = _paragraphTextWithBreaks(paragraph)
         .split('\n')
         .map((line) => line.trim())
         .where((line) => line.isNotEmpty)
         .toList();
-    if (lines.length < 2 || lines.length > 4) continue;
-    final options = lines.map(_optionText).toList();
+    if (lines.length < 2 || lines.length > 5) continue;
+    final firstOptionIndex = lines.indexWhere(
+      (line) => _optionText(line) != null,
+    );
+    if (firstOptionIndex < 0 || firstOptionIndex > 1) continue;
+    final question = firstOptionIndex == 1 ? lines.first : null;
+    final optionLines = lines.sublist(firstOptionIndex);
+    if (optionLines.length < 2 || optionLines.length > 4) continue;
+    final options = optionLines.map(_optionText).toList();
     if (options.any((option) => option == null)) continue;
     final parsed = options.cast<_Option>();
     if (parsed.first.letter != 'a') continue;
@@ -236,25 +270,21 @@ int _compactInlineOptionGroups(XmlElement body) {
     if (!sequential) continue;
     final columns = _optionColumns(parsed);
     if (columns == 1) continue;
-    final replacements = <XmlElement>[];
+    final replacements = <XmlElement>[
+      if (question != null) _textParagraphFrom(paragraph, question),
+    ];
     for (var start = 0; start < parsed.length; start += columns) {
       final end = (start + columns).clamp(0, parsed.length);
       replacements.add(_optionRow(parsed.sublist(start, end), columns));
     }
-    paragraph.replace(replacements.first);
-    var anchor = replacements.first;
-    for (final replacement in replacements.skip(1)) {
-      final siblings = anchor.parent!.children;
-      siblings.insert(siblings.indexOf(anchor) + 1, replacement);
-      anchor = replacement;
-    }
+    _replaceParagraph(paragraph, replacements);
     compacted++;
   }
   return compacted;
 }
 
 _Option? _option(XmlElement paragraph) {
-  if (_hasProtectedContent(paragraph)) return null;
+  if (_hasProtectedContent(paragraph, allowTabs: true)) return null;
   final text = _paragraphText(paragraph).trim();
   final parsed = _optionText(text);
   if (parsed == null) return null;
@@ -355,6 +385,45 @@ XmlElement _optionRow(List<_Option> options, int columns) {
   return XmlElement.tag('w:p', children: children, isSelfClosing: false);
 }
 
+XmlElement _textParagraphFrom(XmlElement source, String text) {
+  final paragraphProperties = _directChild(source, 'pPr')?.copy();
+  final runProperties = source.descendants
+      .whereType<XmlElement>()
+      .where((element) => element.name.local == 'rPr')
+      .firstOrNull
+      ?.copy();
+  return XmlElement.tag(
+    'w:p',
+    children: [
+      ?paragraphProperties,
+      XmlElement.tag(
+        'w:r',
+        children: [
+          ?runProperties,
+          XmlElement.tag(
+            'w:t',
+            attributes: [XmlAttribute(XmlName('space', 'xml'), 'preserve')],
+            children: [XmlText(text)],
+            isSelfClosing: false,
+          ),
+        ],
+      ),
+    ],
+    isSelfClosing: false,
+  );
+}
+
+void _replaceParagraph(XmlElement paragraph, List<XmlElement> replacements) {
+  if (replacements.isEmpty) return;
+  paragraph.replace(replacements.first);
+  var anchor = replacements.first;
+  for (final replacement in replacements.skip(1)) {
+    final siblings = anchor.parent!.children;
+    siblings.insert(siblings.indexOf(anchor) + 1, replacement);
+    anchor = replacement;
+  }
+}
+
 void _compactParagraphFormatting(XmlDocument document) {
   final paragraphs = document.descendants.whereType<XmlElement>().where(
     (element) => element.name.local == 'p',
@@ -369,9 +438,54 @@ void _compactParagraphFormatting(XmlDocument document) {
     } else if (_isQuestion(text)) {
       _setParagraphSpacing(paragraph, before: 45, after: 10, line: 240);
       _ensureParagraphFlag(paragraph, 'keepNext');
+      _shrinkTwelvePointRuns(paragraph);
     } else {
       _setParagraphSpacing(paragraph, before: 0, after: 20, line: 240);
+      _shrinkTwelvePointRuns(paragraph);
     }
+  }
+}
+
+void _shrinkTwelvePointRuns(XmlElement paragraph) {
+  for (final properties in paragraph.descendants.whereType<XmlElement>().where(
+    (element) => element.name.local == 'rPr',
+  )) {
+    for (final sizeName in ['sz', 'szCs']) {
+      final size = _directChild(properties, sizeName);
+      if (_attribute(size, 'val') == '24') {
+        _setAttribute(size!, 'val', '22');
+      }
+    }
+  }
+}
+
+Uint8List _compactStyles(Uint8List bytes) {
+  try {
+    final styles = XmlDocument.parse(utf8.decode(bytes));
+    final targets = <XmlElement>[];
+    for (final style in styles.descendants.whereType<XmlElement>().where(
+      (element) => element.name.local == 'style',
+    )) {
+      final id = (_attribute(style, 'styleId') ?? '').toLowerCase();
+      if (id == 'normal') targets.add(style);
+    }
+    targets.addAll(
+      styles.descendants.whereType<XmlElement>().where(
+        (element) => element.name.local == 'docDefaults',
+      ),
+    );
+    for (final target in targets) {
+      for (final size in target.descendants.whereType<XmlElement>().where(
+        (element) => element.name.local == 'sz' || element.name.local == 'szCs',
+      )) {
+        if (_attribute(size, 'val') == '24') {
+          _setAttribute(size, 'val', '22');
+        }
+      }
+    }
+    return Uint8List.fromList(utf8.encode(styles.toXmlString()));
+  } catch (_) {
+    return bytes;
   }
 }
 
@@ -474,6 +588,7 @@ bool _isQuestion(String text) => RegExp(
 bool _hasProtectedContent(
   XmlElement paragraph, {
   bool allowLineBreaks = false,
+  bool allowTabs = false,
 }) => paragraph.descendants.whereType<XmlElement>().any(
   (element) => {
     'drawing',
@@ -485,7 +600,7 @@ bool _hasProtectedContent(
     'instrText',
     'hyperlink',
     if (!allowLineBreaks) 'br',
-    'tab',
+    if (!allowTabs) 'tab',
     'sym',
     'pageBreakBefore',
   }.contains(element.name.local),
@@ -502,6 +617,8 @@ String _paragraphTextWithBreaks(XmlElement paragraph) {
       buffer.write(element.innerText);
     } else if (element.name.local == 'br') {
       buffer.writeln();
+    } else if (element.name.local == 'tab') {
+      buffer.write(' ');
     }
   }
   return buffer.toString();

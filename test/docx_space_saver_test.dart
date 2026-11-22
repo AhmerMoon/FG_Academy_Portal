@@ -6,7 +6,7 @@ import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:xml/xml.dart';
 
-Uint8List _docx(String documentXml) {
+Uint8List _docx(String documentXml, {String? stylesXml}) {
   final archive = Archive()
     ..add(ArchiveFile.string('word/document.xml', documentXml))
     ..add(
@@ -18,6 +18,9 @@ Uint8List _docx(String documentXml) {
             '</Types>',
       ),
     );
+  if (stylesXml != null) {
+    archive.add(ArchiveFile.string('word/styles.xml', stylesXml));
+  }
   return Uint8List.fromList(ZipEncoder().encode(archive));
 }
 
@@ -100,8 +103,9 @@ void main() {
       '<?xml version="1.0" encoding="UTF-8"?>'
       '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
       '<w:body><w:p><w:r>'
-      '<w:t>(A) Red</w:t><w:br/><w:t>(B) Blue</w:t><w:br/>'
-      '<w:t>(C) Green</w:t><w:br/><w:t>(D) Black</w:t>'
+      '<w:t>1. Which colour is shown?</w:t><w:br/><w:tab/>'
+      '<w:t>A) Red</w:t><w:br/><w:tab/><w:t>B) Blue</w:t><w:br/>'
+      '<w:tab/><w:t>C) Green</w:t><w:br/><w:tab/><w:t>D) Black</w:t>'
       '</w:r></w:p><w:sectPr/>'
       '</w:body></w:document>',
     );
@@ -120,5 +124,64 @@ void main() {
           .length,
       6,
     );
+    expect(xml.innerText, contains('1. Which colour is shown?'));
+  });
+
+  test(
+    'separates subject and time fields that relied on space wrapping',
+    () async {
+      final input = _docx(
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:body>'
+        '${_paragraph('Subject: Chemistry       Time Alloted: 20 min')}'
+        '<w:sectPr/></w:body></w:document>',
+      );
+      final result = await compactDocx(input, 'chemistry.docx');
+      final archive = ZipDecoder().decodeBytes(result.bytes);
+      final xml = XmlDocument.parse(
+        utf8.decode(
+          archive.files
+              .singleWhere((f) => f.name == 'word/document.xml')
+              .content,
+        ),
+      );
+      final paragraphs = xml.descendants
+          .whereType<XmlElement>()
+          .where((element) => element.name.local == 'p')
+          .map((element) => element.innerText)
+          .toList();
+      expect(
+        paragraphs,
+        containsAllInOrder(['Subject: Chemistry', 'Time Alloted: 20 min']),
+      );
+    },
+  );
+
+  test('reduces only 12-point body text to 11-point', () async {
+    final input = _docx(
+      '<?xml version="1.0" encoding="UTF-8"?>'
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+      '<w:body><w:p><w:r><w:rPr><w:sz w:val="24"/><w:szCs w:val="24"/>'
+      '</w:rPr><w:t>Regular body sentence.</w:t></w:r></w:p>'
+      '<w:sectPr/></w:body></w:document>',
+    );
+    final result = await compactDocx(input, 'body.docx');
+    final archive = ZipDecoder().decodeBytes(result.bytes);
+    final xml = XmlDocument.parse(
+      utf8.decode(
+        archive.files.singleWhere((f) => f.name == 'word/document.xml').content,
+      ),
+    );
+    final sizes = xml.descendants
+        .whereType<XmlElement>()
+        .where(
+          (element) =>
+              element.name.local == 'sz' || element.name.local == 'szCs',
+        )
+        .expand((element) => element.attributes)
+        .where((attribute) => attribute.name.local == 'val')
+        .map((attribute) => attribute.value);
+    expect(sizes, everyElement('22'));
   });
 }
