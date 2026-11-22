@@ -50,6 +50,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   bool _isLoadingStats = true;
   String? _statsError;
   int _pendingPrintables = 0;
+  int _pendingTeacherRequests = 0;
   int _unmarkedAttendanceBatches = 0;
   Timer? _printablesTimer;
   bool _countLoading = false;
@@ -173,16 +174,27 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (!_isAdmin || _countLoading) return;
     _countLoading = true;
     try {
-      final count = await Supabase.instance.client
-          .from('printable_requests')
-          .count(CountOption.exact)
-          .eq('status', 'pending')
-          .gt('expires_at', DateTime.now().toUtc().toIso8601String());
-      if (mounted && count != _pendingPrintables) {
-        setState(() => _pendingPrintables = count);
+      final counts = await Future.wait<int>([
+        Supabase.instance.client
+            .from('printable_requests')
+            .count(CountOption.exact)
+            .eq('status', 'pending')
+            .gt('expires_at', DateTime.now().toUtc().toIso8601String()),
+        Supabase.instance.client
+            .from('teacher_registration_requests')
+            .count(CountOption.exact)
+            .eq('status', 'pending'),
+      ]);
+      if (mounted &&
+          (counts[0] != _pendingPrintables ||
+              counts[1] != _pendingTeacherRequests)) {
+        setState(() {
+          _pendingPrintables = counts[0];
+          _pendingTeacherRequests = counts[1];
+        });
       }
     } catch (error) {
-      debugPrint('Printable badge refresh failed: $error');
+      debugPrint('Admin badge refresh failed: $error');
     } finally {
       _countLoading = false;
     }
@@ -211,10 +223,24 @@ class _DashboardScreenState extends State<DashboardScreen>
     ),
   );
 
+  Widget _teacherRequestBadge({Widget? child}) => Tooltip(
+    message: '$_pendingTeacherRequests pending teacher access requests',
+    child: Badge.count(
+      count: _pendingTeacherRequests,
+      isLabelVisible: _pendingTeacherRequests > 0,
+      backgroundColor: AppTheme.danger,
+      textColor: Colors.white,
+      child: child,
+    ),
+  );
+
   Widget _navigationIcon(_NavigationItem item, {bool selected = false}) {
     final icon = Icon(selected ? item.selectedIcon : item.icon);
     if (_isAdmin && item.index == 8) return _printableBadge(child: icon);
     if (_isAdmin && item.index == 3) return _attendanceBadge(child: icon);
+    if (_isAdmin && item.index == 6) {
+      return _teacherRequestBadge(child: icon);
+    }
     return icon;
   }
 
@@ -503,7 +529,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           return AwardListsScreen(userRole: widget.userRole);
 
         case 6:
-          return const TeachersTab();
+          return TeachersTab(onChanged: _refreshPrintableCount);
 
         case 7:
           return _profile();
@@ -789,6 +815,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                                   item.index == 3 &&
                                   _unmarkedAttendanceBatches > 0)
                                 _attendanceBadge(),
+                              if (_isAdmin &&
+                                  item.index == 6 &&
+                                  _pendingTeacherRequests > 0)
+                                _teacherRequestBadge(),
                             ],
                           ),
                         ),
@@ -1037,6 +1067,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                               item.index == 3 &&
                               _unmarkedAttendanceBatches > 0
                         ? _attendanceBadge()
+                        : _isAdmin &&
+                              item.index == 6 &&
+                              _pendingTeacherRequests > 0
+                        ? _teacherRequestBadge()
                         : null,
                     onTap: () {
                       Navigator.of(context).pop();
@@ -1248,46 +1282,9 @@ class _DashboardScreenState extends State<DashboardScreen>
               padding: const EdgeInsets.fromLTRB(10, 8, 10, 26),
               sliver: SliverList(
                 delegate: SliverChildListDelegate([
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final columns = constraints.maxWidth >= 920
-                          ? 3
-                          : constraints.maxWidth >= 560
-                          ? 2
-                          : 1;
-
-                      return GridView.count(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        crossAxisCount: columns,
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 12,
-                        childAspectRatio: columns == 1 ? 2.55 : 2.15,
-                        children: [
-                          _MetricCard(
-                            title: 'Active Students',
-                            value: '$_totalStudents',
-                            subtitle: 'Current academy roster',
-                            icon: Icons.groups_2_rounded,
-                            color: AppTheme.info,
-                          ),
-                          _MetricCard(
-                            title: 'Academy Batches',
-                            value: '$_totalBatches',
-                            subtitle: 'Classes 9 to 12',
-                            icon: Icons.school_rounded,
-                            color: AppTheme.fgNavyBlue,
-                          ),
-                          _MetricCard(
-                            title: 'Average Strength',
-                            value: average.toStringAsFixed(1),
-                            subtitle: 'Students per batch',
-                            icon: Icons.analytics_rounded,
-                            color: AppTheme.success,
-                          ),
-                        ],
-                      );
-                    },
+                  _AcademyOverviewCard(
+                    totalStudents: _totalStudents,
+                    averageStrength: average,
                   ),
 
                   const SizedBox(height: 14),
@@ -1447,75 +1444,85 @@ class _NavigationItem {
   });
 }
 
-class _MetricCard extends StatelessWidget {
-  final String title;
-  final String value;
-  final String subtitle;
-  final IconData icon;
-  final Color color;
+class _AcademyOverviewCard extends StatelessWidget {
+  final int totalStudents;
+  final double averageStrength;
 
-  const _MetricCard({
-    required this.title,
-    required this.value,
-    required this.subtitle,
-    required this.icon,
-    required this.color,
+  const _AcademyOverviewCard({
+    required this.totalStudents,
+    required this.averageStrength,
   });
 
   @override
   Widget build(BuildContext context) {
     return Card(
+      clipBehavior: Clip.antiAlias,
       child: Container(
-        padding: const EdgeInsets.all(17),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          border: Border(top: BorderSide(color: color, width: 3)),
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
+        decoration: const BoxDecoration(gradient: AppTheme.brandGradient),
         child: Row(
           children: [
             Container(
-              width: 58,
-              height: 58,
+              width: 52,
+              height: 52,
               decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(15),
+                color: Colors.white.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(14),
               ),
-              child: Icon(icon, color: color, size: 31),
+              child: const Icon(
+                Icons.groups_2_rounded,
+                color: AppTheme.fgGold,
+                size: 29,
+              ),
             ),
-            const SizedBox(width: 14),
+            const SizedBox(width: 13),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: AppTheme.textSecondary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 1),
-                  Text(
-                    value,
+                  const Text(
+                    'ACTIVE STUDENTS',
                     style: TextStyle(
-                      color: color,
-                      fontSize: 36,
-                      height: 1.1,
-                      fontWeight: FontWeight.w900,
+                      color: Colors.white70,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.5,
                     ),
                   ),
-                  const SizedBox(height: 2),
                   Text(
-                    subtitle,
+                    '$totalStudents',
                     style: const TextStyle(
-                      color: AppTheme.textSecondary,
-                      fontSize: 12,
+                      color: Colors.white,
+                      fontSize: 32,
+                      height: 1.05,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
                 ],
               ),
+            ),
+            Container(width: 1, height: 45, color: Colors.white24),
+            const SizedBox(width: 16),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                const Text(
+                  'AVERAGE / CLASS',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  averageStrength.toStringAsFixed(1),
+                  style: const TextStyle(
+                    color: AppTheme.fgGold,
+                    fontSize: 26,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
             ),
           ],
         ),

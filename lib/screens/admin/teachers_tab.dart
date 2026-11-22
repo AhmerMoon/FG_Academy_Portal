@@ -7,7 +7,9 @@ import '../../utils/dashboard_section_header.dart';
 import '../../utils/error_state_view.dart';
 
 class TeachersTab extends StatefulWidget {
-  const TeachersTab({super.key});
+  final VoidCallback? onChanged;
+
+  const TeachersTab({super.key, this.onChanged});
 
   @override
   State<TeachersTab> createState() => _TeachersTabState();
@@ -201,6 +203,7 @@ class _TeachersTabState extends State<TeachersTab> {
       );
 
       await _load();
+      widget.onChanged?.call();
 
       _message('$name has been approved.');
     } catch (e) {
@@ -281,6 +284,7 @@ class _TeachersTabState extends State<TeachersTab> {
       );
 
       await _load();
+      widget.onChanged?.call();
 
       _message('Teacher request rejected.');
     } catch (e) {
@@ -296,10 +300,37 @@ class _TeachersTabState extends State<TeachersTab> {
     }
   }
 
-  Future<void> _setActive(Map<String, dynamic> teacher, bool active) async {
+  Future<void> _deleteTeacher(Map<String, dynamic> teacher) async {
     final id = teacher['user_id'].toString();
 
     if (_busyIds.contains(id)) return;
+
+    final name = teacher['full_name']?.toString() ?? 'Teacher';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete teacher access?'),
+        content: Text(
+          '$name will be removed from the portal teachers list and will no '
+          'longer be able to access the app. Teaching assignments will be '
+          'deleted, while historical tests, marks and printables remain safe.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.danger),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.delete_outline_rounded),
+            label: const Text('Delete Teacher'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
 
     setState(() {
       _busyIds.add(id);
@@ -307,19 +338,18 @@ class _TeachersTabState extends State<TeachersTab> {
 
     try {
       await _client.rpc(
-        'admin_set_portal_user_active',
-        params: {'p_user_id': id, 'p_active': active},
+        'admin_delete_teacher_portal',
+        params: {'p_user_id': id},
       );
 
       await _load();
+      widget.onChanged?.call();
 
-      _message(
-        active ? 'Teacher account enabled.' : 'Teacher account disabled.',
-      );
+      _message('$name has been removed from the portal.');
     } catch (e) {
-      debugPrint('Teacher active status error: $e');
+      debugPrint('Teacher deletion error: $e');
 
-      _message('Could not change account status.', error: true);
+      _message('Teacher could not be deleted.', error: true);
     } finally {
       if (mounted) {
         setState(() {
@@ -559,8 +589,6 @@ class _TeachersTabState extends State<TeachersTab> {
 
                 final email = teacher['email']?.toString() ?? '';
 
-                final active = teacher['is_active'] == true;
-
                 final busy = _busyIds.contains(id);
 
                 return ListTile(
@@ -597,30 +625,11 @@ class _TeachersTabState extends State<TeachersTab> {
                           height: 28,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : SizedBox(
-                          width: 125,
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              Text(
-                                active ? 'Active' : 'Disabled',
-                                style: TextStyle(
-                                  color: active
-                                      ? AppTheme.success
-                                      : AppTheme.danger,
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 12,
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              Switch.adaptive(
-                                value: active,
-                                onChanged: (value) {
-                                  _setActive(teacher, value);
-                                },
-                              ),
-                            ],
-                          ),
+                      : IconButton(
+                          tooltip: 'Delete teacher',
+                          color: AppTheme.danger,
+                          onPressed: () => _deleteTeacher(teacher),
+                          icon: const Icon(Icons.delete_outline_rounded),
                         ),
                 );
               }),
