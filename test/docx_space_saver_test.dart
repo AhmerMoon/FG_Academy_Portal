@@ -190,6 +190,52 @@ void main() {
     },
   );
 
+  test('pairs common paper metadata with a right-aligned tab stop', () async {
+    final input = _docx(
+      '<?xml version="1.0" encoding="UTF-8"?>'
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+      '<w:body>'
+      '${_paragraph('Total Marks: 100')}${_paragraph('Time Allowed: 3 hours')}'
+      '${_paragraph('Name: __________________')}${_paragraph('')}'
+      '${_paragraph('Roll No: __________')}'
+      '${_paragraph('Class: 10th')}${_paragraph('Section: Boys')}'
+      '<w:sectPr><w:pgSz w:w="11906"/><w:pgMar w:left="1440" w:right="1440"/></w:sectPr>'
+      '</w:body></w:document>',
+    );
+    final result = await compactDocx(input, 'metadata.docx');
+    final archive = ZipDecoder().decodeBytes(result.bytes);
+    final xml = XmlDocument.parse(
+      utf8.decode(
+        archive.files.singleWhere((f) => f.name == 'word/document.xml').content,
+      ),
+    );
+    final paragraphs = xml.descendants
+        .whereType<XmlElement>()
+        .where((element) => element.name.local == 'p')
+        .toList();
+    for (final labels in [
+      ['Total Marks: 100', 'Time Allowed: 3 hours'],
+      ['Name: __________________', 'Roll No: __________'],
+      ['Class: 10th', 'Section: Boys'],
+    ]) {
+      final row = paragraphs.singleWhere(
+        (paragraph) => labels.every(paragraph.innerText.contains),
+      );
+      final rightTab = row.descendants.whereType<XmlElement>().singleWhere(
+        (element) =>
+            element.name.local == 'tab' &&
+            element.attributes.any(
+              (attribute) =>
+                  attribute.name.local == 'val' && attribute.value == 'right',
+            ),
+      );
+      expect(
+        rightTab.attributes.singleWhere((a) => a.name.local == 'pos').value,
+        '10606',
+      );
+    }
+  });
+
   test('reduces only 12-point body text to 11-point', () async {
     final input = _docx(
       '<?xml version="1.0" encoding="UTF-8"?>'

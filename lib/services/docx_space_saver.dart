@@ -96,6 +96,7 @@ Map<String, Object> _compactPayload(Map<String, Object> input) {
 
   _normalizeMetadataWraps(body);
   _compactPageMargins(body);
+  _compactMetadataRows(body);
   final blankLinesRemoved = _collapseBlankParagraphs(body);
   final optionGroupsCompacted =
       _compactInlineOptionGroups(body) + _compactOptionGroups(body);
@@ -228,6 +229,207 @@ void _normalizeMetadataWraps(XmlElement body) {
       _textParagraphFrom(paragraph, match.group(2)!.trim()),
     ]);
   }
+}
+
+void _compactMetadataRows(XmlElement body) {
+  final tabPosition = _metadataRightTabPosition(body);
+
+  // First normalize fields that were visually separated only with spaces.
+  for (final paragraph in body.children.whereType<XmlElement>().toList()) {
+    if (paragraph.name.local != 'p' || _hasLineBreak(paragraph)) continue;
+    final pair = _inlineMetadataPair(_paragraphText(paragraph));
+    if (pair == null) continue;
+    paragraph.replace(
+      _metadataRow(paragraph, paragraph, pair.left, pair.right, tabPosition),
+    );
+  }
+
+  var index = 0;
+  while (true) {
+    final children = body.children.whereType<XmlElement>().toList();
+    if (index >= children.length) break;
+    final left = children[index];
+    if (left.name.local != 'p') {
+      index++;
+      continue;
+    }
+    final leftText = _paragraphText(left).trim();
+    final expectedRight = switch (_metadataKind(leftText)) {
+      _MetadataKind.marks => _MetadataKind.time,
+      _MetadataKind.name => _MetadataKind.roll,
+      _MetadataKind.className => _MetadataKind.section,
+      _ => null,
+    };
+    if (expectedRight == null) {
+      index++;
+      continue;
+    }
+
+    XmlElement? right;
+    final blanks = <XmlElement>[];
+    for (
+      var next = index + 1;
+      next < children.length && next <= index + 2;
+      next++
+    ) {
+      final candidate = children[next];
+      if (candidate.name.local != 'p') break;
+      final text = _paragraphText(candidate).trim();
+      if (text.isEmpty && !_hasProtectedContent(candidate)) {
+        blanks.add(candidate);
+        continue;
+      }
+      if (_metadataKind(text) == expectedRight) right = candidate;
+      break;
+    }
+    if (right == null ||
+        _hasProtectedContent(left) ||
+        _hasProtectedContent(right)) {
+      index++;
+      continue;
+    }
+    left.replace(
+      _metadataRow(
+        left,
+        right,
+        leftText,
+        _paragraphText(right).trim(),
+        tabPosition,
+      ),
+    );
+    right.remove();
+    for (final blank in blanks) {
+      blank.remove();
+    }
+    index++;
+  }
+}
+
+_MetadataPair? _inlineMetadataPair(String raw) {
+  final patterns = [
+    RegExp(
+      r'^\s*((?:Total|Maximum|Max)\s+Marks\s*:\s*.*?)\s{2,}(Time\s*(?:Allowed|Allotted|Alloted)\s*:\s*.*?)\s*$',
+      caseSensitive: false,
+    ),
+    RegExp(
+      r'^\s*((?:Student\s+)?Name\s*:\s*.*?)\s{2,}(Roll\s*(?:No\.?|Number)\s*:\s*.*?)\s*$',
+      caseSensitive: false,
+    ),
+    RegExp(
+      r'^\s*((?:Class|Grade)\s*:\s*.*?)\s{2,}(Section\s*:\s*.*?)\s*$',
+      caseSensitive: false,
+    ),
+  ];
+  for (final pattern in patterns) {
+    final match = pattern.firstMatch(raw);
+    if (match != null) {
+      return _MetadataPair(match.group(1)!.trim(), match.group(2)!.trim());
+    }
+  }
+  return null;
+}
+
+_MetadataKind? _metadataKind(String raw) {
+  final value = raw.trim().toLowerCase();
+  if (RegExp(r'^(total|maximum|max)\s+marks\s*:').hasMatch(value)) {
+    return _MetadataKind.marks;
+  }
+  if (RegExp(r'^time\s*(allowed|allotted|alloted)\s*:').hasMatch(value)) {
+    return _MetadataKind.time;
+  }
+  if (RegExp(r'^(student\s+)?name\s*:').hasMatch(value)) {
+    return _MetadataKind.name;
+  }
+  if (RegExp(r'^roll\s*(no\.?|number)\s*:').hasMatch(value)) {
+    return _MetadataKind.roll;
+  }
+  if (RegExp(r'^(class|grade)\s*:').hasMatch(value)) {
+    return _MetadataKind.className;
+  }
+  if (RegExp(r'^section\s*:').hasMatch(value)) return _MetadataKind.section;
+  return null;
+}
+
+int _metadataRightTabPosition(XmlElement body) {
+  final section = body.descendants
+      .whereType<XmlElement>()
+      .where((element) => element.name.local == 'sectPr')
+      .firstOrNull;
+  final width =
+      int.tryParse(_attribute(_directChild(section, 'pgSz'), 'w') ?? '') ??
+      11906;
+  final margins = _directChild(section, 'pgMar');
+  final left = int.tryParse(_attribute(margins, 'left') ?? '') ?? 650;
+  final right = int.tryParse(_attribute(margins, 'right') ?? '') ?? 650;
+  return (width - left - right).clamp(6000, 14000);
+}
+
+XmlElement _metadataRow(
+  XmlElement leftSource,
+  XmlElement rightSource,
+  String leftText,
+  String rightText,
+  int tabPosition,
+) {
+  final properties =
+      _directChild(leftSource, 'pPr')?.copy() ?? XmlElement.tag('w:pPr');
+  _directChild(properties, 'tabs')?.remove();
+  _directChild(properties, 'ind')?.remove();
+  _directChild(properties, 'jc')?.remove();
+  properties.children.add(
+    XmlElement.tag(
+      'w:ind',
+      attributes: [
+        _wAttribute('left', '0'),
+        _wAttribute('right', '0'),
+        _wAttribute('firstLine', '0'),
+      ],
+    ),
+  );
+  properties.children.add(
+    XmlElement.tag(
+      'w:tabs',
+      children: [
+        XmlElement.tag(
+          'w:tab',
+          attributes: [
+            _wAttribute('val', 'right'),
+            _wAttribute('pos', '$tabPosition'),
+          ],
+        ),
+      ],
+    ),
+  );
+  return XmlElement.tag(
+    'w:p',
+    children: [
+      properties,
+      _textRunFrom(leftSource, leftText),
+      XmlElement.tag('w:r', children: [XmlElement.tag('w:tab')]),
+      _textRunFrom(rightSource, rightText),
+    ],
+    isSelfClosing: false,
+  );
+}
+
+XmlElement _textRunFrom(XmlElement source, String text) {
+  final properties = source.descendants
+      .whereType<XmlElement>()
+      .where((element) => element.name.local == 'rPr')
+      .firstOrNull
+      ?.copy();
+  return XmlElement.tag(
+    'w:r',
+    children: [
+      ?properties,
+      XmlElement.tag(
+        'w:t',
+        attributes: [XmlAttribute(XmlName('space', 'xml'), 'preserve')],
+        children: [XmlText(text)],
+        isSelfClosing: false,
+      ),
+    ],
+  );
 }
 
 void _compactPageMargins(XmlElement body) {
@@ -834,6 +1036,15 @@ class _Option {
   final String letter;
   final String text;
   final XmlElement? runProperties;
+}
+
+enum _MetadataKind { marks, time, name, roll, className, section }
+
+class _MetadataPair {
+  const _MetadataPair(this.left, this.right);
+
+  final String left;
+  final String right;
 }
 
 extension _FirstOrNull<T> on Iterable<T> {
