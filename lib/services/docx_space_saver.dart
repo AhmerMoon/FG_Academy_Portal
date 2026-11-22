@@ -441,6 +441,16 @@ XmlElement _optionRow(List<_Option> options, int columns) {
   final paragraphProperties = XmlElement.tag('w:pPr');
   paragraphProperties.children.add(
     XmlElement.tag(
+      'w:ind',
+      attributes: [
+        _wAttribute('left', '0'),
+        _wAttribute('right', '0'),
+        _wAttribute('firstLine', '0'),
+      ],
+    ),
+  );
+  paragraphProperties.children.add(
+    XmlElement.tag(
       'w:spacing',
       attributes: [
         _wAttribute('before', '0'),
@@ -539,17 +549,46 @@ void _compactParagraphFormatting(XmlDocument document) {
   for (final paragraph in paragraphs) {
     final text = _paragraphText(paragraph).trim();
     if (text.isEmpty) continue;
-    if (_isHeading(paragraph, text)) {
+    final question = _isQuestion(text) || _hasNumbering(paragraph);
+    if (question) {
+      _setParagraphSpacing(paragraph, before: 45, after: 10, line: 240);
+      _ensureParagraphFlag(paragraph, 'keepNext');
+      _resetQuestionAlignment(paragraph);
+      _shrinkTwelvePointRuns(paragraph);
+    } else if (_isHeading(paragraph, text)) {
       _setParagraphSpacing(paragraph, before: 70, after: 45, line: 240);
       _ensureParagraphFlag(paragraph, 'keepNext');
       _ensureHeadingRuns(paragraph, prominent: _isProminentHeading(text));
-    } else if (_isQuestion(text)) {
-      _setParagraphSpacing(paragraph, before: 45, after: 10, line: 240);
-      _ensureParagraphFlag(paragraph, 'keepNext');
-      _shrinkTwelvePointRuns(paragraph);
     } else {
       _setParagraphSpacing(paragraph, before: 0, after: 20, line: 240);
       _shrinkTwelvePointRuns(paragraph);
+    }
+  }
+}
+
+bool _hasNumbering(XmlElement paragraph) {
+  final properties = _directChild(paragraph, 'pPr');
+  return _directChild(properties, 'numPr') != null;
+}
+
+void _resetQuestionAlignment(XmlElement paragraph) {
+  final properties = _paragraphProperties(paragraph);
+  _directChild(properties, 'tabs')?.remove();
+  final indentation =
+      _directChild(properties, 'ind') ??
+      _append(properties, XmlElement.tag('w:ind'));
+  _removeAttribute(indentation, 'hanging');
+  _setAttribute(indentation, 'left', '0');
+  _setAttribute(indentation, 'right', '0');
+  _setAttribute(indentation, 'firstLine', '0');
+
+  var reachedText = false;
+  for (final element
+      in paragraph.descendants.whereType<XmlElement>().toList()) {
+    if (element.name.local == 't' && element.innerText.trim().isNotEmpty) {
+      reachedText = true;
+    } else if (!reachedText && element.name.local == 'tab') {
+      element.remove();
     }
   }
 }
@@ -769,6 +808,13 @@ void _setAttribute(XmlElement element, String localName, String value) {
   } else {
     existing.value = value;
   }
+}
+
+void _removeAttribute(XmlElement element, String localName) {
+  final attribute = element.attributes.firstWhereOrNull(
+    (candidate) => candidate.name.local == localName,
+  );
+  if (attribute != null) element.attributes.remove(attribute);
 }
 
 String? _attribute(XmlElement? element, String localName) => element?.attributes

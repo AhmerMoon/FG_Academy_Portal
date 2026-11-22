@@ -217,6 +217,57 @@ void main() {
     expect(sizes, everyElement('22'));
   });
 
+  test('aligns questions and compacted options to the same left edge', () async {
+    final input = _docx(
+      '<?xml version="1.0" encoding="UTF-8"?>'
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+      '<w:body><w:p><w:pPr><w:ind w:left="720" w:hanging="360"/>'
+      '<w:tabs><w:tab w:val="left" w:pos="720"/></w:tabs></w:pPr>'
+      '<w:r><w:tab/><w:t>1. Which option is correct?</w:t></w:r></w:p>'
+      '${_paragraph('A) First')}${_paragraph('B) Second')}'
+      '${_paragraph('C) Third')}${_paragraph('D) Fourth')}'
+      '<w:sectPr/></w:body></w:document>',
+    );
+    final result = await compactDocx(input, 'aligned.docx');
+    final archive = ZipDecoder().decodeBytes(result.bytes);
+    final xml = XmlDocument.parse(
+      utf8.decode(
+        archive.files.singleWhere((f) => f.name == 'word/document.xml').content,
+      ),
+    );
+    final question = xml.descendants.whereType<XmlElement>().firstWhere(
+      (element) =>
+          element.name.local == 'p' &&
+          element.innerText.contains('Which option is correct?'),
+    );
+    final questionIndent = question.descendants
+        .whereType<XmlElement>()
+        .firstWhere((element) => element.name.local == 'ind');
+    expect(
+      questionIndent.attributes
+          .singleWhere((a) => a.name.local == 'left')
+          .value,
+      '0',
+    );
+    expect(
+      question.descendants.whereType<XmlElement>().where(
+        (element) => element.name.local == 'tab',
+      ),
+      isEmpty,
+    );
+    final options = xml.descendants.whereType<XmlElement>().firstWhere(
+      (element) =>
+          element.name.local == 'p' && element.innerText.contains('(A) First'),
+    );
+    final optionIndent = options.descendants.whereType<XmlElement>().firstWhere(
+      (element) => element.name.local == 'ind',
+    );
+    expect(
+      optionIndent.attributes.singleWhere((a) => a.name.local == 'left').value,
+      '0',
+    );
+  });
+
   test('tightens text spacing in real Word header parts', () async {
     final input = _docx(
       '<?xml version="1.0" encoding="UTF-8"?>'
