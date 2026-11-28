@@ -415,7 +415,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
                   Text(
                     unmarkedCount == 0
                         ? 'Attendance is complete. The monthly report will open automatically after saving.'
-                        : 'Marked attendance will be saved. Complete the remaining students later to generate the monthly report.',
+                        : 'Marked attendance will be saved and the permanent report link will update. Complete the remaining students later to open the final report.',
                     style: TextStyle(
                       color: AppTheme.textSecondary,
                       fontSize: 13,
@@ -506,12 +506,12 @@ class _StudentsScreenState extends State<StudentsScreen> {
 
       if (shouldOpenReport) {
         _showMessage('Attendance saved. Generating monthly report…');
-        await _openMonthlyReport();
       } else {
         _showMessage(
-          'Attendance saved. $unmarkedCount student(s) are still unmarked.',
+          'Attendance saved. Updating permanent link; $unmarkedCount student(s) are still unmarked.',
         );
       }
+      await _openMonthlyReport(showPreview: shouldOpenReport);
     } catch (e) {
       debugPrint('Attendance save error: $e');
 
@@ -528,7 +528,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
     }
   }
 
-  Future<void> _openMonthlyReport() async {
+  Future<void> _openMonthlyReport({bool showPreview = true}) async {
     if (_isGeneratingReport || students.isEmpty) return;
     setState(() => _isGeneratingReport = true);
     try {
@@ -548,6 +548,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
       } catch (error) {
         debugPrint('Attendance link publish skipped: $error');
       }
+      if (!showPreview) return;
       if (!mounted) return;
       final monthKey = DateFormat('MMM_yyyy').format(month);
       await Navigator.of(context).push(

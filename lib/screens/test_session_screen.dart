@@ -32,13 +32,16 @@ class _TestSessionScreenState extends State<TestSessionScreen> {
   PortalUser? _user;
   List<Map<String, dynamic>> _batches = [];
   List<TestSessionTest> _tests = [];
+  List<TestSessionTest> _adminTests = [];
   List<Map<String, dynamic>> _students = [];
   Map<String, TestSessionMark> _marks = {};
-  Map<String, TestSessionTest> _roundTests = {};
-  Set<String> _requiredRoundSubjects = {};
   String? _batchId;
   String? _subject;
   String? _testId;
+  String? _adminBatchId;
+  int? _adminWeek;
+  String _adminQuery = '';
+  bool _adminWeeklyView = false;
   String? _editingStudentId;
   String _filter = 'All';
   String _query = '';
@@ -137,7 +140,11 @@ class _TestSessionScreenState extends State<TestSessionScreen> {
         _loading = false;
       });
       _resetSubject();
-      await _loadTests();
+      if (user.isAdmin) {
+        await _loadAdminTests();
+      } else {
+        await _loadTests();
+      }
     } catch (error) {
       debugPrint('Test Session bootstrap: $error');
       if (mounted) {
@@ -156,6 +163,27 @@ class _TestSessionScreenState extends State<TestSessionScreen> {
         : values.isEmpty
         ? null
         : values.first;
+  }
+
+  Future<void> _loadAdminTests() async {
+    if (!mounted) return;
+    setState(() => _loadingTest = true);
+    try {
+      final tests = await _service.fetchAllTests();
+      if (mounted) {
+        setState(() {
+          _adminTests = tests;
+          if (_adminWeek != null &&
+              !tests.any((test) => test.testNo == _adminWeek)) {
+            _adminWeek = null;
+          }
+        });
+      }
+    } catch (error) {
+      if (mounted) _message(_friendly(error), error: true);
+    } finally {
+      if (mounted) setState(() => _loadingTest = false);
+    }
   }
 
   Future<void> _changeBatch(String id) async {
@@ -216,8 +244,6 @@ class _TestSessionScreenState extends State<TestSessionScreen> {
       setState(() {
         _students = [];
         _marks = {};
-        _roundTests = {};
-        _requiredRoundSubjects = {};
       });
       return;
     }
@@ -228,20 +254,11 @@ class _TestSessionScreenState extends State<TestSessionScreen> {
         testDate: test.testDate,
       ),
       _service.fetchMarks(test.id),
-      if (_isAdmin)
-        _service.fetchRoundStatus(batchId: test.batchId, testNo: test.testNo),
     ]);
     if (!mounted) return;
     setState(() {
       _students = responses[0] as List<Map<String, dynamic>>;
       _marks = responses[1] as Map<String, TestSessionMark>;
-      if (_isAdmin) {
-        final round =
-            responses[2]
-                as ({Set<String> required, Map<String, TestSessionTest> tests});
-        _requiredRoundSubjects = round.required;
-        _roundTests = round.tests;
-      }
       _editingStudentId = null;
     });
   }
@@ -525,18 +542,19 @@ class _TestSessionScreenState extends State<TestSessionScreen> {
     );
   }
 
-  Future<void> _combinedReport() async {
-    final batch = _batch;
-    final test = _test;
-    if (batch == null || test == null) {
-      _message('Select any subject test for the required Test Number.');
-      return;
-    }
-    await _generateReport(
-      () => _service.combinedReport(batch: batch, testNo: test.testNo),
-      'Test_${test.testNo}_Combined_${batch['name']}.png',
-    );
-  }
+  Future<void> _adminSubjectReport(
+    Map<String, dynamic> batch,
+    TestSessionTest test,
+  ) => _generateReport(
+    () => _service.subjectReport(batch: batch, test: test),
+    'Test_${test.testNo}_${test.subjectCode}_${batch['name']}.png',
+  );
+
+  Future<void> _adminWeeklyReport(Map<String, dynamic> batch, int week) =>
+      _generateReport(
+        () => _service.combinedReport(batch: batch, testNo: week),
+        'Test_${week}_Combined_${batch['name']}.png',
+      );
 
   Future<void> _generateReport(
     Future<TestSessionReportData> Function() load,
@@ -598,12 +616,314 @@ class _TestSessionScreenState extends State<TestSessionScreen> {
           trailing: IconButton(
             tooltip: 'Refresh',
             color: Colors.white,
-            onPressed: _loadingTest ? null : _loadTests,
+            onPressed: _loadingTest
+                ? null
+                : _isAdmin
+                ? _loadAdminTests
+                : _loadTests,
             icon: const Icon(Icons.refresh_rounded),
           ),
         ),
-        Expanded(child: _body()),
+        Expanded(child: _isAdmin ? _adminBody() : _body()),
       ],
+    );
+  }
+
+  Widget _adminBody() {
+    final batchById = {
+      for (final batch in _batches) batch['id'].toString(): batch,
+    };
+    final weeks = _adminTests.map((test) => test.testNo).toSet().toList()
+      ..sort((a, b) => b.compareTo(a));
+    final query = _adminQuery.trim().toLowerCase();
+    final visible = _adminTests.where((test) {
+      if (_adminBatchId != null && test.batchId != _adminBatchId) return false;
+      if (_adminWeek != null && test.testNo != _adminWeek) return false;
+      final batchName = batchById[test.batchId]?['name']?.toString() ?? '';
+      return query.isEmpty ||
+          batchName.toLowerCase().contains(query) ||
+          studentSubjectLabel(test.subjectCode).toLowerCase().contains(query) ||
+          'test ${test.testNo}'.contains(query) ||
+          'week ${test.testNo}'.contains(query);
+    }).toList();
+    final groups = <String, List<TestSessionTest>>{};
+    for (final test in visible) {
+      groups.putIfAbsent('${test.batchId}:${test.testNo}', () => []).add(test);
+    }
+    for (final test in _adminTests) {
+      final key = '${test.batchId}:${test.testNo}';
+      if (groups.containsKey(key) && !groups[key]!.contains(test)) {
+        groups[key]!.add(test);
+      }
+    }
+    return RefreshIndicator(
+      onRefresh: _loadAdminTests,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 30),
+        children: [
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _adminViewButton(
+                          'Individual Tests',
+                          Icons.assignment_outlined,
+                          false,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _adminViewButton(
+                          'Weekly Reports',
+                          Icons.table_chart_outlined,
+                          true,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search),
+                      hintText: 'Find class, subject or week',
+                      isDense: true,
+                    ),
+                    onChanged: (value) => setState(() => _adminQuery = value),
+                  ),
+                  const SizedBox(height: 8),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final filters = [
+                        DropdownButtonFormField<String>(
+                          initialValue: _adminBatchId ?? '',
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Class',
+                            isDense: true,
+                          ),
+                          items: [
+                            const DropdownMenuItem(
+                              value: '',
+                              child: Text('All classes'),
+                            ),
+                            for (final batch in _batches)
+                              DropdownMenuItem(
+                                value: batch['id'].toString(),
+                                child: Text(
+                                  batch['name']?.toString() ?? 'Class',
+                                ),
+                              ),
+                          ],
+                          onChanged: (value) => setState(
+                            () => _adminBatchId = value?.isEmpty == true
+                                ? null
+                                : value,
+                          ),
+                        ),
+                        DropdownButtonFormField<int>(
+                          initialValue: _adminWeek ?? 0,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Test / Week',
+                            isDense: true,
+                          ),
+                          items: [
+                            const DropdownMenuItem(
+                              value: 0,
+                              child: Text('All weeks'),
+                            ),
+                            for (final week in weeks)
+                              DropdownMenuItem(
+                                value: week,
+                                child: Text('Test $week'),
+                              ),
+                          ],
+                          onChanged: (value) => setState(
+                            () => _adminWeek = value == 0 ? null : value,
+                          ),
+                        ),
+                      ];
+                      if (constraints.maxWidth < 520) {
+                        return Row(
+                          children: [
+                            Expanded(child: filters[0]),
+                            const SizedBox(width: 8),
+                            Expanded(child: filters[1]),
+                          ],
+                        );
+                      }
+                      return Row(
+                        children: [
+                          Expanded(child: filters[0]),
+                          const SizedBox(width: 12),
+                          Expanded(child: filters[1]),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_loadingTest) const LinearProgressIndicator(),
+          if (groups.isEmpty && !_loadingTest)
+            const Card(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text(
+                  'No tests found for these filters.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          if (_adminWeeklyView)
+            for (final entry in groups.entries) ...[
+              const SizedBox(height: 7),
+              _adminWeekCard(
+                batchById[entry.value.first.batchId],
+                entry.value.first.testNo,
+                entry.value,
+              ),
+            ]
+          else
+            for (final test in visible) ...[
+              const SizedBox(height: 7),
+              _adminTestCard(batchById[test.batchId], test),
+            ],
+        ],
+      ),
+    );
+  }
+
+  Widget _adminViewButton(String label, IconData icon, bool weekly) {
+    final selected = _adminWeeklyView == weekly;
+    return OutlinedButton.icon(
+      onPressed: () => setState(() => _adminWeeklyView = weekly),
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 10),
+        backgroundColor: selected ? AppTheme.fgNavyBlue : null,
+        foregroundColor: selected ? Colors.white : AppTheme.fgNavyBlue,
+      ),
+      icon: Icon(icon, size: 17),
+      label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+    );
+  }
+
+  Widget _adminTestCard(Map<String, dynamic>? batch, TestSessionTest test) {
+    if (batch == null) return const SizedBox.shrink();
+    return Card(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: _reporting ? null : () => _adminSubjectReport(batch, test),
+        child: Padding(
+          padding: const EdgeInsets.all(13),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '${studentSubjectLabel(test.subjectCode)} · Test ${test.testNo}',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${batch['name']} · ${DateFormat('dd MMM yyyy').format(test.testDate)}',
+                style: const TextStyle(color: AppTheme.textSecondary),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 5,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Chip(label: Text(test.finalized ? 'Finalized' : 'Draft')),
+                  Chip(label: Text('Total ${_number(test.maxMarks)}')),
+                  const Text(
+                    'View subject PNG',
+                    style: TextStyle(
+                      color: AppTheme.fgNavyBlue,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: AppTheme.fgNavyBlue,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _adminWeekCard(
+    Map<String, dynamic>? batch,
+    int week,
+    List<TestSessionTest> tests,
+  ) {
+    if (batch == null) return const SizedBox.shrink();
+    final finalized = tests.where((test) => test.finalized).length;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${batch['name']} · Test $week',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    Text(
+                      '$finalized/${tests.length} submitted tests finalized',
+                      style: const TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+                OutlinedButton.icon(
+                  onPressed: _reporting
+                      ? null
+                      : () => _adminWeeklyReport(batch, week),
+                  icon: const Icon(Icons.table_chart_outlined, size: 18),
+                  label: const Text('Weekly PNG'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 5),
+            Text(
+              tests
+                  .map((test) => studentSubjectLabel(test.subjectCode))
+                  .join(' · '),
+              style: const TextStyle(
+                color: AppTheme.textSecondary,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -788,46 +1108,6 @@ class _TestSessionScreenState extends State<TestSessionScreen> {
               minHeight: 7,
               borderRadius: BorderRadius.circular(10),
             ),
-            if (_isAdmin && _requiredRoundSubjects.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              const Text(
-                'Class round completion',
-                style: TextStyle(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 7),
-              Wrap(
-                spacing: 7,
-                runSpacing: 7,
-                children: _requiredRoundSubjects.map((code) {
-                  final subjectTest = _roundTests[code];
-                  final finalized = subjectTest?.finalized == true;
-                  final draft = subjectTest != null && !finalized;
-                  final color = finalized
-                      ? AppTheme.success
-                      : draft
-                      ? AppTheme.warning
-                      : AppTheme.danger;
-                  return Chip(
-                    avatar: Icon(
-                      finalized
-                          ? Icons.check_circle_outline
-                          : draft
-                          ? Icons.edit_note
-                          : Icons.pending_outlined,
-                      color: color,
-                      size: 17,
-                    ),
-                    label: Text(
-                      '${studentSubjectLabel(code)}: ${finalized
-                          ? 'Final'
-                          : draft
-                          ? 'Draft'
-                          : 'Pending'}',
-                    ),
-                  );
-                }).toList(),
-              ),
-            ],
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
@@ -838,12 +1118,6 @@ class _TestSessionScreenState extends State<TestSessionScreen> {
                   icon: const Icon(Icons.image_outlined),
                   label: const Text('Subject PNG'),
                 ),
-                if (_isAdmin)
-                  OutlinedButton.icon(
-                    onPressed: _reporting ? null : _combinedReport,
-                    icon: const Icon(Icons.table_chart_outlined),
-                    label: const Text('Combined Class PNG'),
-                  ),
                 if (test.finalized)
                   OutlinedButton.icon(
                     onPressed: _reopen,

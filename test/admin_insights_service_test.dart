@@ -30,7 +30,7 @@ void main() {
         actorName: 'Sir Ali',
         action: 'UPDATE',
         entityType: 'attendance',
-        summary: 'Present',
+        summary: '9th Girls attendance',
         createdAt: now,
       ),
       ActivityEntry(
@@ -38,7 +38,7 @@ void main() {
         actorName: 'Sir Ali',
         action: 'UPDATE',
         entityType: 'attendance',
-        summary: 'Absent',
+        summary: '9th Girls attendance',
         createdAt: now.subtract(const Duration(minutes: 1)),
       ),
       ActivityEntry(
@@ -54,5 +54,29 @@ void main() {
     expect(groups, hasLength(2));
     expect(groups.first.count, 2);
     expect(groups.last.latest.entityType, 'students');
+  });
+
+  test('keeps activity for different classes separate', () {
+    final now = DateTime(2026, 11, 22, 10);
+    final groups = groupActivity([
+      ActivityEntry(
+        id: 2,
+        actorName: 'Sir Ali',
+        action: 'UPDATE',
+        entityType: 'attendance',
+        summary: '9th Girls attendance',
+        createdAt: now,
+      ),
+      ActivityEntry(
+        id: 1,
+        actorName: 'Sir Ali',
+        action: 'UPDATE',
+        entityType: 'attendance',
+        summary: '12th Boys attendance',
+        createdAt: now.subtract(const Duration(minutes: 1)),
+      ),
+    ]);
+
+    expect(groups, hasLength(2));
   });
 }

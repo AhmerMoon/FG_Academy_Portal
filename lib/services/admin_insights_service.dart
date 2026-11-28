@@ -178,7 +178,8 @@ List<ActivityGroup> groupActivity(List<ActivityEntry> entries) {
       final sameKind =
           previous.latest.actorName == entry.actorName &&
           previous.latest.action == entry.action &&
-          previous.latest.entityType == entry.entityType;
+          previous.latest.entityType == entry.entityType &&
+          previous.latest.summary == entry.summary;
       final closeInTime =
           previous.latest.createdAt.difference(entry.createdAt).abs() <=
           const Duration(minutes: 5);

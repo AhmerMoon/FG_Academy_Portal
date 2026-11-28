@@ -325,29 +325,38 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
               ],
             );
 
-            final stats = Wrap(
-              spacing: 8,
-              runSpacing: 7,
+            final stats = Row(
               children: [
-                _AttendanceBadge(
-                  label: 'Total',
-                  value: total,
-                  color: AppTheme.info,
+                Expanded(
+                  child: _AttendanceBadge(
+                    label: 'Total',
+                    value: total,
+                    color: AppTheme.info,
+                  ),
                 ),
-                _AttendanceBadge(
-                  label: 'Present',
-                  value: present,
-                  color: AppTheme.success,
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _AttendanceBadge(
+                    label: 'Present',
+                    value: present,
+                    color: AppTheme.success,
+                  ),
                 ),
-                _AttendanceBadge(
-                  label: 'Absent',
-                  value: absent,
-                  color: AppTheme.danger,
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _AttendanceBadge(
+                    label: 'Absent',
+                    value: absent,
+                    color: AppTheme.danger,
+                  ),
                 ),
-                _AttendanceBadge(
-                  label: 'Unmarked',
-                  value: unmarked < 0 ? 0 : unmarked,
-                  color: AppTheme.warning,
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _AttendanceBadge(
+                    label: 'Unmarked',
+                    value: unmarked < 0 ? 0 : unmarked,
+                    color: AppTheme.warning,
+                  ),
                 ),
               ],
             );
@@ -366,14 +375,17 @@ class _AdminAttendanceTabState extends State<AdminAttendanceTab> {
                             children: [
                               title,
                               const SizedBox(height: 12),
-                              stats,
+                              SizedBox(
+                                width: constraints.maxWidth * 0.75,
+                                child: stats,
+                              ),
                             ],
                           )
                         : Row(
                             children: [
                               Expanded(child: title),
                               const SizedBox(width: 14),
-                              stats,
+                              SizedBox(width: 320, child: stats),
                             ],
                           ),
                   ),
@@ -827,12 +839,12 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
 
       if (shouldOpenReport) {
         _showMessage('Attendance saved. Generating monthly report…');
-        await _openMonthlyReport();
       } else {
         _showMessage(
-          'Attendance saved. $unmarkedCount student(s) are still unmarked.',
+          'Attendance saved. Updating permanent link; $unmarkedCount student(s) are still unmarked.',
         );
       }
+      await _openMonthlyReport(showPreview: shouldOpenReport);
     } catch (e) {
       debugPrint('Attendance save error: $e');
 
@@ -844,7 +856,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
     }
   }
 
-  Future<void> _openMonthlyReport() async {
+  Future<void> _openMonthlyReport({bool showPreview = true}) async {
     if (_isGeneratingReport || students.isEmpty) return;
     setState(() => _isGeneratingReport = true);
     try {
@@ -863,6 +875,7 @@ class _EditAttendanceScreenState extends State<EditAttendanceScreen> {
       } catch (error) {
         debugPrint('Admin attendance link publish skipped: $error');
       }
+      if (!showPreview) return;
       if (!mounted) return;
       final monthKey = DateFormat('MMM_yyyy').format(currentDate);
       await Navigator.of(context).push(

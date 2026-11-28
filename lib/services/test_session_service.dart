@@ -39,6 +39,25 @@ class TestSessionService {
         .toList(growable: false);
   }
 
+  Future<List<TestSessionTest>> fetchAllTests() async {
+    const pageSize = 500;
+    final tests = <TestSessionTest>[];
+    for (var offset = 0; ; offset += pageSize) {
+      final rows = await _client
+          .from('test_session_tests')
+          .select(
+            'id,batch_id,subject_code,test_no,test_date,max_marks,'
+            'status,created_by',
+          )
+          .order('test_no', ascending: false)
+          .order('id')
+          .range(offset, offset + pageSize - 1);
+      tests.addAll(rows.map((row) => TestSessionTest.fromJson(row)));
+      if (rows.length < pageSize) break;
+    }
+    return tests;
+  }
+
   Future<List<Map<String, dynamic>>> fetchEligibleStudents({
     required String batchId,
     required String subjectCode,
@@ -76,38 +95,6 @@ class TestSessionService {
       for (final row in rows)
         row['student_id'].toString(): TestSessionMark.fromJson(row),
     };
-  }
-
-  Future<({Set<String> required, Map<String, TestSessionTest> tests})>
-  fetchRoundStatus({required String batchId, required int testNo}) async {
-    final responses = await Future.wait<dynamic>([
-      _client
-          .from('students')
-          .select('stream')
-          .eq('batch_id', batchId)
-          .eq('is_archived', false),
-      _client
-          .from('test_session_tests')
-          .select(
-            'id,batch_id,subject_code,test_no,test_date,max_marks,'
-            'status,created_by',
-          )
-          .eq('batch_id', batchId)
-          .eq('test_no', testNo),
-    ]);
-    final required = <String>{};
-    for (final row in responses[0] as List) {
-      required.addAll(
-        ((row['stream'] as List?) ?? []).map((value) => value.toString()),
-      );
-    }
-    final tests = (responses[1] as List)
-        .map((row) => TestSessionTest.fromJson(row))
-        .toList();
-    return (
-      required: required,
-      tests: {for (final test in tests) test.subjectCode: test},
-    );
   }
 
   Future<String> createTest({
