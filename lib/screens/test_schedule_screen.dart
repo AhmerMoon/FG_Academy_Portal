@@ -6,6 +6,7 @@ import '../app_theme.dart';
 import '../models/portal_user.dart';
 import '../services/auth_service.dart';
 import '../utils/dashboard_section_header.dart';
+import 'schedule_document_preview_screen.dart';
 
 class TestScheduleScreen extends StatefulWidget {
   final VoidCallback? onChanged;
@@ -95,34 +96,31 @@ class _TestScheduleScreenState extends State<TestScheduleScreen> {
     return null;
   }
 
-  Future<void> _openDocument(String url, {bool preview = false}) async {
+  Future<void> _openDocument(
+    String url, {
+    bool preview = false,
+    String title = 'Test Schedule',
+  }) async {
     final uri = Uri.tryParse(url);
     if (uri == null || uri.scheme != 'https' || uri.host != 'docs.google.com') {
       _notice('Admin needs to add a valid Google Docs link.');
       return;
     }
-    final target = preview
-        ? uri.replace(
-            path: uri.path.replaceFirst(RegExp(r'/edit/?$'), '/preview'),
-            query: '',
-          )
-        : uri;
-    try {
-      final opened = await launchUrl(
-        target,
-        mode: LaunchMode.externalApplication,
+    if (preview) {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) =>
+              ScheduleDocumentPreviewScreen(title: title, documentUri: uri),
+        ),
       );
+      return;
+    }
+    try {
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!opened) throw StateError('Could not open Google Docs.');
     } catch (_) {
-      try {
-        if (preview && await launchUrl(uri, mode: LaunchMode.platformDefault)) {
-          return;
-        }
-      } catch (_) {
-        // Show the same useful error if both launch modes fail.
-      }
       if (mounted) {
-        _notice('Could not open the document. Try again in Chrome.');
+        _notice('Could not open Google Docs. Try again in Chrome.');
       }
     }
   }
@@ -355,7 +353,7 @@ class _TestScheduleScreenState extends State<TestScheduleScreen> {
                 OutlinedButton.icon(
                   onPressed: url.isEmpty
                       ? null
-                      : () => _openDocument(url, preview: true),
+                      : () => _openDocument(url, preview: true, title: label),
                   icon: const Icon(Icons.visibility_outlined),
                   label: const Text('View Schedule'),
                 ),

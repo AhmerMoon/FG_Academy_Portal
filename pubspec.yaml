@@ -50,6 +50,7 @@ dependencies:
   web: ^1.1.1
   file_picker: ^13.3.3
   file_picker_web: ^4.2.1
+  http: ^1.6.0
   open_filex: ^5.0.0
   archive: ^4.0.9
   xml: ^6.6.1
