@@ -23,6 +23,7 @@ import 'login_screen.dart';
 import 'profile_screen.dart';
 import 'teacher_batches_screen.dart';
 import 'test_session_screen.dart';
+import 'test_schedule_screen.dart';
 import 'admin/teachers_tab.dart';
 import '../services/award_draft_store.dart';
 
@@ -51,6 +52,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   String? _statsError;
   int _pendingPrintables = 0;
   int _pendingTeacherRequests = 0;
+  int _pendingScheduleRequests = 0;
   int _unmarkedAttendanceBatches = 0;
   Timer? _printablesTimer;
   bool _countLoading = false;
@@ -109,6 +111,12 @@ class _DashboardScreenState extends State<DashboardScreen>
           icon: Icons.assignment_outlined,
           selectedIcon: Icons.assignment_rounded,
         ),
+        _NavigationItem(
+          index: 10,
+          label: 'Test Schedule',
+          icon: Icons.event_note_outlined,
+          selectedIcon: Icons.event_note_rounded,
+        ),
       ];
     }
 
@@ -136,6 +144,12 @@ class _DashboardScreenState extends State<DashboardScreen>
         label: 'Test Session',
         icon: Icons.assignment_outlined,
         selectedIcon: Icons.assignment_rounded,
+      ),
+      _NavigationItem(
+        index: 5,
+        label: 'Test Schedule',
+        icon: Icons.event_note_outlined,
+        selectedIcon: Icons.event_note_rounded,
       ),
     ];
   }
@@ -184,13 +198,20 @@ class _DashboardScreenState extends State<DashboardScreen>
             .from('teacher_registration_requests')
             .count(CountOption.exact)
             .eq('status', 'pending'),
+        Supabase.instance.client
+            .from('test_schedule_requests')
+            .count(CountOption.exact)
+            .eq('status', 'pending')
+            .catchError((_) => 0),
       ]);
       if (mounted &&
           (counts[0] != _pendingPrintables ||
-              counts[1] != _pendingTeacherRequests)) {
+              counts[1] != _pendingTeacherRequests ||
+              counts[2] != _pendingScheduleRequests)) {
         setState(() {
           _pendingPrintables = counts[0];
           _pendingTeacherRequests = counts[1];
+          _pendingScheduleRequests = counts[2];
         });
       }
     } catch (error) {
@@ -234,6 +255,17 @@ class _DashboardScreenState extends State<DashboardScreen>
     ),
   );
 
+  Widget _scheduleRequestBadge({Widget? child}) => Tooltip(
+    message: '$_pendingScheduleRequests pending schedule requests',
+    child: Badge.count(
+      count: _pendingScheduleRequests,
+      isLabelVisible: _pendingScheduleRequests > 0,
+      backgroundColor: AppTheme.danger,
+      textColor: Colors.white,
+      child: child,
+    ),
+  );
+
   Widget _navigationIcon(_NavigationItem item, {bool selected = false}) {
     final icon = Icon(selected ? item.selectedIcon : item.icon);
     if (_isAdmin && item.index == 8) return _printableBadge(child: icon);
@@ -241,6 +273,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     if (_isAdmin && item.index == 6) {
       return _teacherRequestBadge(child: icon);
     }
+    if (_isAdmin && item.index == 10) return _scheduleRequestBadge(child: icon);
     return icon;
   }
 
@@ -543,6 +576,9 @@ class _DashboardScreenState extends State<DashboardScreen>
         case 9:
           return TestSessionScreen(userRole: widget.userRole);
 
+        case 10:
+          return TestScheduleScreen(onChanged: _refreshPrintableCount);
+
         default:
           return _adminDashboard();
       }
@@ -563,6 +599,9 @@ class _DashboardScreenState extends State<DashboardScreen>
 
       case 4:
         return TestSessionScreen(userRole: widget.userRole);
+
+      case 5:
+        return const TestScheduleScreen();
 
       default:
         return const TeacherBatchesScreen();
@@ -819,6 +858,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                                   item.index == 6 &&
                                   _pendingTeacherRequests > 0)
                                 _teacherRequestBadge(),
+                              if (_isAdmin &&
+                                  item.index == 10 &&
+                                  _pendingScheduleRequests > 0)
+                                _scheduleRequestBadge(),
                             ],
                           ),
                         ),
@@ -918,6 +961,7 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
 
     return NavigationRail(
+      scrollable: true,
       selectedIndex: selectedPosition >= 0 ? selectedPosition : null,
       labelType: NavigationRailLabelType.all,
       minWidth: 82,
@@ -1071,6 +1115,10 @@ class _DashboardScreenState extends State<DashboardScreen>
                               item.index == 6 &&
                               _pendingTeacherRequests > 0
                         ? _teacherRequestBadge()
+                        : _isAdmin &&
+                              item.index == 10 &&
+                              _pendingScheduleRequests > 0
+                        ? _scheduleRequestBadge()
                         : null,
                     onTap: () {
                       Navigator.of(context).pop();
@@ -1103,7 +1151,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   Widget _mobileNavigation() {
     if (!_isAdmin) {
-      const order = [0, 1, 3, 4, 2];
+      const order = [0, 1, 3, 4, 5];
       return NavigationBar(
         selectedIndex: order.indexOf(_selectedIndex),
         onDestinationSelected: (index) => _selectSection(order[index]),
@@ -1129,9 +1177,9 @@ class _DashboardScreenState extends State<DashboardScreen>
             label: 'Tests',
           ),
           NavigationDestination(
-            icon: Icon(Icons.person_outline_rounded),
-            selectedIcon: Icon(Icons.person_rounded),
-            label: 'Profile',
+            icon: Icon(Icons.event_note_outlined),
+            selectedIcon: Icon(Icons.event_note_rounded),
+            label: 'Schedule',
           ),
         ],
       );

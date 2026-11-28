@@ -5,9 +5,7 @@ import 'dart:js_interop';
 import 'dart:typed_data';
 
 import 'package:academy_portal/utils/printable_file_actions_web.dart';
-import 'package:file_picker_web/file_picker_web.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_web_plugins/flutter_web_plugins.dart';
 import 'package:web/web.dart' as web;
 
 @JS('eval')
@@ -35,8 +33,6 @@ void main() {
           .toJS,
     );
   });
-  setUp(() => FilePickerWeb.registerWith(Registrar()));
-
   test('returning focus cannot cancel a delayed file selection', () async {
     final selection = pickPrintableFile();
     var completed = false;
@@ -47,7 +43,7 @@ void main() {
     expect(completed, isFalse);
 
     final input =
-        web.document.querySelector('#__file_picker_web-file-input input')!
+        web.document.querySelector('input[data-printable-picker]')!
             as web.HTMLInputElement;
     final bytes = Uint8List.fromList([37, 80, 68, 70, 45]);
     final transfer = web.DataTransfer();
@@ -70,7 +66,7 @@ void main() {
   test('actual browser cancellation completes normally', () async {
     final selection = pickPrintableFile();
     final input =
-        web.document.querySelector('#__file_picker_web-file-input input')!
+        web.document.querySelector('input[data-printable-picker]')!
             as web.HTMLInputElement;
     input.dispatchEvent(web.Event('cancel'));
     expect(await selection.timeout(const Duration(seconds: 3)), isNull);
