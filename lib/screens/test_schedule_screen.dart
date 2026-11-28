@@ -313,86 +313,163 @@ class _TestScheduleScreenState extends State<TestScheduleScreen> {
     final url = schedule?['document_url']?.toString() ?? '';
     final request = _latestRequest(key);
     final approved = request?['status'] == 'approved';
+    final isSsc = key.startsWith('ssc');
+    final accent = isSsc ? AppTheme.info : AppTheme.success;
+    final level = isSsc
+        ? 'Secondary | Classes 9-10'
+        : 'Higher Secondary | Classes 11-12';
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(
-                  Icons.event_note_outlined,
-                  color: AppTheme.fgNavyBlue,
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Text(
-                    label,
-                    style: const TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            if (request != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text(
-                  'Your request: ${request['status']}',
-                  style: const TextStyle(color: AppTheme.textSecondary),
-                ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [accent.withValues(alpha: 0.14), Colors.white],
               ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
+            ),
+            child: Row(
               children: [
-                OutlinedButton.icon(
-                  onPressed: url.isEmpty
-                      ? null
-                      : () => _openDocument(url, preview: true, title: label),
-                  icon: const Icon(Icons.visibility_outlined),
-                  label: const Text('View Schedule'),
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: accent,
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: const Icon(
+                    Icons.calendar_month_rounded,
+                    color: Colors.white,
+                  ),
                 ),
-                if (admin) ...[
-                  OutlinedButton.icon(
-                    onPressed: url.isEmpty ? null : () => _openDocument(url),
-                    icon: const Icon(Icons.edit_outlined),
-                    label: const Text('Edit in Docs'),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        label,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        level,
+                        style: const TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
                   ),
-                  TextButton.icon(
-                    onPressed: _busy ? null : () => _changeLink(key, url),
-                    icon: const Icon(Icons.link),
-                    label: const Text('Change Link'),
+                ),
+                if (url.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppTheme.success.withValues(alpha: 0.11),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.check_circle_rounded,
+                          size: 14,
+                          color: AppTheme.success,
+                        ),
+                        SizedBox(width: 4),
+                        Text(
+                          'Ready',
+                          style: TextStyle(
+                            color: AppTheme.success,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ] else ...[
-                  if (approved)
-                    OutlinedButton.icon(
-                      onPressed: () => _openDocument(url),
-                      icon: const Icon(Icons.edit_outlined),
-                      label: const Text('Edit in Docs'),
-                    ),
-                  if (approved && request != null)
-                    TextButton(
-                      onPressed: _busy
-                          ? null
-                          : () => _setStatus(request, 'completed'),
-                      child: const Text('Done Editing'),
-                    ),
-                  if (request == null)
-                    OutlinedButton.icon(
-                      onPressed: _busy ? null : () => _requestEdit(key),
-                      icon: const Icon(Icons.rate_review_outlined),
-                      label: const Text('Request Editing'),
-                    ),
-                ],
               ],
             ),
-          ],
-        ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (request != null) ...[
+                  Text(
+                    'Your request: ${request['status']}',
+                    style: TextStyle(
+                      color: approved ? AppTheme.success : AppTheme.warning,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 9),
+                ],
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton.tonalIcon(
+                      onPressed: url.isEmpty
+                          ? null
+                          : () =>
+                                _openDocument(url, preview: true, title: label),
+                      icon: const Icon(Icons.visibility_rounded),
+                      label: const Text('View Schedule'),
+                    ),
+                    if (admin) ...[
+                      OutlinedButton.icon(
+                        onPressed: url.isEmpty
+                            ? null
+                            : () => _openDocument(url),
+                        icon: const Icon(Icons.edit_outlined),
+                        label: const Text('Edit in Docs'),
+                      ),
+                      TextButton.icon(
+                        onPressed: _busy ? null : () => _changeLink(key, url),
+                        icon: const Icon(Icons.link),
+                        label: const Text('Change Link'),
+                      ),
+                    ] else ...[
+                      if (approved)
+                        OutlinedButton.icon(
+                          onPressed: () => _openDocument(url),
+                          icon: const Icon(Icons.edit_outlined),
+                          label: const Text('Edit in Docs'),
+                        ),
+                      if (approved && request != null)
+                        TextButton(
+                          onPressed: _busy
+                              ? null
+                              : () => _setStatus(request, 'completed'),
+                          child: const Text('Done Editing'),
+                        ),
+                      if (request == null)
+                        OutlinedButton.icon(
+                          onPressed: _busy ? null : () => _requestEdit(key),
+                          icon: const Icon(Icons.rate_review_outlined),
+                          label: const Text('Request Editing'),
+                        ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

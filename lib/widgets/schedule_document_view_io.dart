@@ -48,7 +48,7 @@ class _ScheduleDocumentViewState extends State<ScheduleDocumentView> {
     future: _pdf,
     builder: (context, snapshot) {
       if (snapshot.connectionState != ConnectionState.done) {
-        return const Center(child: CircularProgressIndicator());
+        return const _SchedulePreviewLoader();
       }
       if (snapshot.hasError || snapshot.data == null) {
         return Center(
@@ -85,5 +85,48 @@ class _ScheduleDocumentViewState extends State<ScheduleDocumentView> {
         dynamicLayout: false,
       );
     },
+  );
+}
+
+class _SchedulePreviewLoader extends StatelessWidget {
+  const _SchedulePreviewLoader();
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Container(
+      margin: const EdgeInsets.all(24),
+      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x16092A57),
+            blurRadius: 24,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: const Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 38,
+            height: 38,
+            child: CircularProgressIndicator(strokeWidth: 3),
+          ),
+          SizedBox(height: 16),
+          Text(
+            'Preparing latest schedule…',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+          ),
+          SizedBox(height: 5),
+          Text(
+            'This usually takes a few seconds.',
+            style: TextStyle(color: Color(0xFF536173)),
+          ),
+        ],
+      ),
+    ),
   );
 }
