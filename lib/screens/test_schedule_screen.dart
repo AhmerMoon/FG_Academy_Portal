@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -18,6 +19,8 @@ class TestScheduleScreen extends StatefulWidget {
 }
 
 class _TestScheduleScreenState extends State<TestScheduleScreen> {
+  static const _sscOneDocumentId =
+      '1LwVeUfvvaGEE8KYfamkcOwoBeZgFV6V_aN-dyv7ES7A';
   final _client = Supabase.instance.client;
   PortalUser? _user;
   List<Map<String, dynamic>> _schedules = [];
@@ -104,6 +107,26 @@ class _TestScheduleScreenState extends State<TestScheduleScreen> {
     final uri = Uri.tryParse(url);
     if (uri == null || uri.scheme != 'https' || uri.host != 'docs.google.com') {
       _notice('Admin needs to add a valid Google Docs link.');
+      return;
+    }
+    // SSC I contains floating header artwork that Google Docs' embedded HTML
+    // preview reflows incorrectly on narrow iPhone screens. Its exported PDF
+    // is correct, so web users should view that faithful version directly.
+    if (preview && kIsWeb && uri.path.contains(_sscOneDocumentId)) {
+      final pdfUri = uri.replace(
+        path: uri.path.replaceFirst(RegExp(r'/edit/?$'), '/export'),
+        queryParameters: const {'format': 'pdf'},
+      );
+      try {
+        final opened = await launchUrl(
+          pdfUri,
+          mode: LaunchMode.externalApplication,
+          webOnlyWindowName: '_blank',
+        );
+        if (!opened) throw StateError('Could not open the schedule PDF.');
+      } catch (_) {
+        _notice('Could not open the schedule PDF. Try again in Safari.');
+      }
       return;
     }
     if (preview) {
