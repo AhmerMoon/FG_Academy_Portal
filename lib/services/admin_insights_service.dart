@@ -125,11 +125,22 @@ class AdminInsightsService {
   }
 
   Future<List<ActivityGroup>> fetchActivity({int limit = 100}) async {
-    final rows = await _client
-        .from('activity_log')
-        .select('id,actor_name,action,entity_type,summary,created_at')
-        .order('created_at', ascending: false)
-        .limit(limit);
+    List<dynamic> rows;
+    try {
+      rows = await _client
+          .from('activity_log_enriched')
+          .select('id,actor_name,action,entity_type,summary,created_at')
+          .order('created_at', ascending: false)
+          .limit(limit);
+    } on PostgrestException catch (error) {
+      // Keep older deployments usable until the enrichment view is installed.
+      if (error.code != '42P01' && error.code != 'PGRST205') rethrow;
+      rows = await _client
+          .from('activity_log')
+          .select('id,actor_name,action,entity_type,summary,created_at')
+          .order('created_at', ascending: false)
+          .limit(limit);
+    }
     return groupActivity(
       rows
           .map((row) => ActivityEntry.fromJson(Map<String, dynamic>.from(row)))

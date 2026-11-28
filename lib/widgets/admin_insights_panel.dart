@@ -259,6 +259,7 @@ class _AdminInsightsPanelState extends State<AdminInsightsPanel> {
   Widget _activityTile(ActivityGroup group) {
     final entry = group.latest;
     final action = _actionLabel(entry.action);
+    final detail = entry.summary.trim();
     return ListTile(
       dense: true,
       leading: CircleAvatar(
@@ -268,11 +269,12 @@ class _AdminInsightsPanelState extends State<AdminInsightsPanel> {
       ),
       title: Text(
         '${entry.actorName} $action ${_entityLabel(entry.entityType)}'
+        '${detail.isEmpty ? '' : ' · $detail'}'
         '${group.count > 1 ? ' (${group.count} records)' : ''}',
         style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
       ),
       subtitle: Text(
-        '${entry.summary} • ${DateFormat('dd MMM, hh:mm a').format(entry.createdAt)}',
+        DateFormat('dd MMM, hh:mm a').format(entry.createdAt),
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
       ),
