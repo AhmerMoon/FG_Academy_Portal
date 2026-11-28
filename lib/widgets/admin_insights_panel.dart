@@ -37,16 +37,12 @@ class _AdminInsightsPanelState extends State<AdminInsightsPanel> {
         _error = null;
       });
     }
+    DataHealthSnapshot health;
     try {
-      final results = await Future.wait<dynamic>([
-        _service.fetchHealth(),
-        _service.fetchActivity(),
-      ]);
+      health = await _service.fetchHealth();
       if (!mounted) return;
-      final health = results[0] as DataHealthSnapshot;
       setState(() {
         _health = health;
-        _activity = results[1] as List<ActivityGroup>;
         _loading = false;
       });
       if (health.warning && !_alertShown) {
@@ -67,6 +63,17 @@ class _AdminInsightsPanelState extends State<AdminInsightsPanel> {
             ? 'Data Health setup is pending. Run the supplied Supabase query once.'
             : 'Data Health could not be loaded. Check the connection and retry.';
       });
+      return;
+    }
+
+    // Recent Activity is useful, but it must never prevent Data Health from
+    // loading if its optional enriched view is unavailable or misconfigured.
+    try {
+      final activity = await _service.fetchActivity();
+      if (!mounted) return;
+      setState(() => _activity = activity);
+    } catch (error) {
+      debugPrint('Recent activity error: $error');
     }
   }
 

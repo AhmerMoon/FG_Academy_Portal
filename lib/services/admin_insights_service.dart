@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'printables_service.dart';
@@ -133,8 +134,11 @@ class AdminInsightsService {
           .order('created_at', ascending: false)
           .limit(limit);
     } on PostgrestException catch (error) {
-      // Keep older deployments usable until the enrichment view is installed.
-      if (error.code != '42P01' && error.code != 'PGRST205') rethrow;
+      // The enriched view is optional. Fall back for missing-view, permission,
+      // schema-cache, or malformed-view errors so Data Health remains usable.
+      debugPrint(
+        'activity_log_enriched unavailable (${error.code}); using activity_log',
+      );
       rows = await _client
           .from('activity_log')
           .select('id,actor_name,action,entity_type,summary,created_at')
